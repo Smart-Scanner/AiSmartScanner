@@ -154,7 +154,31 @@ def get_live_prices(symbols: list[str] | None = None) -> dict:
 def get_live_price(symbol: str) -> dict | None:
     with _prices_lock:
         data = _live_prices.get(symbol)
-        return data.copy() if data else None
+        if data:
+            return data.copy()
+
+    # Fallback to yfinance if websocket not running/cached
+    try:
+        import yfinance as yf
+        clean = symbol.upper().replace(".NS", "")
+        ticker = yf.Ticker(f"{clean}.NS")
+        info = ticker.fast_info
+        ltp = info.get("lastPrice") or info.get("last_price")
+        if ltp:
+            tick = {
+                "symbol": symbol,
+                "ltp": float(ltp),
+                "price": float(ltp),
+                "change": float(info.get("dayPercentChange", 0.0) * 100),  # e.g. 1.5%
+                "volume": int(info.get("lastVolume", 0)),
+                "timestamp": datetime.now().isoformat()
+            }
+            with _prices_lock:
+                _live_prices[symbol] = tick
+            return tick.copy()
+    except Exception as exc:
+        log.debug("yfinance live fallback failed for %s: %s", symbol, exc)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -385,12 +409,32 @@ def fetch_historical(symbol: str, days: int = 365) -> "pd.DataFrame | None":
     Compatible with the old jugaad_data format.
     """
     import pandas as pd
+    import yfinance as yf
     global _hist_last_call
 
+    clean = symbol.upper().replace(".NS", "")
+
     if not ensure_session():
+        log.debug("No Angel One session. Using yfinance historical fallback for %s", symbol)
+        try:
+            ticker = yf.Ticker(f"{clean}.NS")
+            df_yf = ticker.history(period="1y")
+            if not df_yf.empty:
+                df_yf = df_yf.reset_index()
+                df_yf = df_yf.rename(columns={
+                    "Date": "DATE",
+                    "Open": "OPEN",
+                    "High": "HIGH",
+                    "Low": "LOW",
+                    "Close": "CLOSE",
+                    "Volume": "VOLUME"
+                })
+                df_yf["DATE"] = pd.to_datetime(df_yf["DATE"]).dt.tz_localize(None)
+                return df_yf[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
+        except Exception as exc:
+            log.warning("yfinance historical fallback failed for %s: %s", symbol, exc)
         return None
 
-    clean = symbol.upper().replace(".NS", "")
     token = get_token(clean)
     if not token:
         log.debug("No token for %s", clean)
@@ -428,8 +472,25 @@ def fetch_historical(symbol: str, days: int = 365) -> "pd.DataFrame | None":
         if not result or not result.get("status") or not result.get("data"):
             msg = result.get("message", "None") if result else "No response"
             ec = result.get("errorcode", "") if result else ""
-            log.warning("Candle fail %s: status=%s ec=%s msg=%s", clean,
+            log.warning("Candle fail %s: status=%s ec=%s msg=%s. Trying yfinance fallback...", clean,
                         result.get("status") if result else None, ec, msg)
+            try:
+                ticker = yf.Ticker(f"{clean}.NS")
+                df_yf = ticker.history(period="1y")
+                if not df_yf.empty:
+                    df_yf = df_yf.reset_index()
+                    df_yf = df_yf.rename(columns={
+                        "Date": "DATE",
+                        "Open": "OPEN",
+                        "High": "HIGH",
+                        "Low": "LOW",
+                        "Close": "CLOSE",
+                        "Volume": "VOLUME"
+                    })
+                    df_yf["DATE"] = pd.to_datetime(df_yf["DATE"]).dt.tz_localize(None)
+                    return df_yf[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
+            except Exception as yf_exc:
+                log.warning("yfinance fallback failed for %s: %s", symbol, yf_exc)
             return None
 
         candles = result["data"]
@@ -452,5 +513,22 @@ def fetch_historical(symbol: str, days: int = 365) -> "pd.DataFrame | None":
         return df
 
     except Exception as exc:
-        log.warning("Historical exception for %s: %s", clean, exc)
+        log.warning("Historical exception for %s: %s. Trying yfinance fallback...", clean, exc)
+        try:
+            ticker = yf.Ticker(f"{clean}.NS")
+            df_yf = ticker.history(period="1y")
+            if not df_yf.empty:
+                df_yf = df_yf.reset_index()
+                df_yf = df_yf.rename(columns={
+                    "Date": "DATE",
+                    "Open": "OPEN",
+                    "High": "HIGH",
+                    "Low": "LOW",
+                    "Close": "CLOSE",
+                    "Volume": "VOLUME"
+                })
+                df_yf["DATE"] = pd.to_datetime(df_yf["DATE"]).dt.tz_localize(None)
+                return df_yf[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
+        except Exception as yf_exc:
+            log.warning("yfinance fallback failed for %s: %s", symbol, yf_exc)
         return None
