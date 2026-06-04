@@ -46,6 +46,12 @@ def _get_finbert():
                     else:
                         device = -1
                         log.info("CUDA GPU not available or not configured in PyTorch. Loading FinBERT model on CPU...")
+                        try:
+                            torch.set_num_threads(2)
+                            torch.set_num_interop_threads(2)
+                            log.info("PyTorch CPU threads limited to 2 to prevent CPU starvation.")
+                        except Exception as thread_exc:
+                            log.warning("Could not limit PyTorch CPU threads: %s", thread_exc)
                     
                     _finbert = pipeline(
                         "text-classification",

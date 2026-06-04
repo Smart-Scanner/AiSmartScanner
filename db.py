@@ -56,11 +56,28 @@ def _get_sqlite_conn() -> sqlite3.Connection:
         _local.conn.execute("PRAGMA synchronous=NORMAL")
     return _local.conn
 
+def _to_native(val):
+    if hasattr(val, "item"):
+        try:
+            return val.item()
+        except Exception:
+            pass
+    if isinstance(val, list):
+        return [_to_native(v) for v in val]
+    if isinstance(val, tuple):
+        return tuple(_to_native(v) for v in val)
+    if isinstance(val, dict):
+        return {k: _to_native(v) for k, v in val.items()}
+    return val
+
 def execute_db(query: str, params: tuple = None, fetch: str = None):
     """
     Unified query executor for PostgreSQL and SQLite.
     Automatically translates '?' placeholders to '%s' for PG.
     """
+    if params is not None:
+        params = tuple(_to_native(v) for v in params)
+        
     pg = is_postgresql()
     conn = _get_conn()
     

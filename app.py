@@ -12,6 +12,18 @@ import threading
 from dotenv import load_dotenv
 load_dotenv()  # must run before any config import that reads env vars
 
+# Set Windows Process Priority to BELOW_NORMAL to prevent CPU starvation/laptop freezes
+import sys
+if sys.platform == "win32":
+    try:
+        import ctypes
+        # 0x00004000 = BELOW_NORMAL_PRIORITY_CLASS
+        ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x00004000)
+        logging.basicConfig(level=logging.INFO)
+        logging.getLogger("screener").info("System: Windows process priority set to BELOW_NORMAL to optimize responsiveness.")
+    except Exception:
+        pass
+
 from flask import Flask
 from werkzeug.middleware.proxy_fix import ProxyFix
 
