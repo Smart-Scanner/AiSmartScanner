@@ -567,8 +567,8 @@ def save_results(results: list[dict], meta: dict = None):
             sym, scan_date, r.get("rsi"), r.get("adx"), r.get("macd_signal"), r.get("volume_ratio"), r.get("atr_pct"),
             r.get("stoch_k"), r.get("stoch_d"), r.get("pct_1w"), r.get("pct_2w"), r.get("pct_1m"), r.get("bb_position"),
             r.get("dist_from_high"), r.get("rs_vs_nifty"), r.get("vwap_position"),
-            1 if r.get("is_breakout") else 0, 1 if r.get("vp_divergence") else 0, r.get("weekly_trend", "flat"),
-            1 if r.get("below_ema200") else 0, r.get("high_52w"), r.get("low_52w"), r.get("pullback_pct"), now
+            True if r.get("is_breakout") else False, True if r.get("vp_divergence") else False, r.get("weekly_trend", "flat"),
+            True if r.get("below_ema200") else False, r.get("high_52w"), r.get("low_52w"), r.get("pullback_pct"), now
         ))
 
         # 7. fundamentals
@@ -607,8 +607,8 @@ def save_results(results: list[dict], meta: dict = None):
         """, (
             sym, scan_date, r.get("news_sentiment_score", 0.0), r.get("news_spike_score", 0.0), r.get("technical_score", 0.0),
             r.get("fundamental_score", 0.0), r.get("macro_score", 0.0), r.get("marketaux_catalyst_score", 0.0),
-            r.get("score", 0), r.get("grade", ""), 1 if r.get("high_conviction") else 0, 1 if r.get("bear_play") else 0,
-            1 if r.get("is_golden") else 0, now
+            r.get("score", 0), r.get("grade", ""), True if r.get("high_conviction") else False, True if r.get("bear_play") else False,
+            True if r.get("is_golden") else False, now
         ))
 
     if meta:
