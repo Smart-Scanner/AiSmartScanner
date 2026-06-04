@@ -823,9 +823,43 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         risk_reward = round((target_price - current_price) / risk_distance, 1) if risk_distance > 0 else 0
         risk_score = calc_risk_score(rsi, atr_pct, dist_high, vol_ratio, pct_1m, below_ema200, adx)
 
+        # Enhanced trade plan
+        entry_low = round(current_price * 0.995, 2)
+        entry_high = round(current_price * 1.01, 2)
+        target_1 = round(target_price, 2)
+        target_2 = round(target_price * 1.08, 2) if weekly_trend == "up" else None
+
+        if regime == "bearish":
+            booking_plan = "Book 100% at Target 1 (Bear Market defensive play)"
+        elif weekly_trend == "up":
+            booking_plan = "Book 50% at Target 1, trail 50% to Target 2 with SL at Cost"
+        else:
+            booking_plan = "Book 70% at Target 1, trail 30% with tight trailing SL"
+
+        trade = {
+            "entry_low": entry_low,
+            "entry_high": entry_high,
+            "target_1": target_1,
+            "target_2": target_2,
+            "stop_loss": round(atr_stop, 2),
+            "booking_plan": booking_plan,
+            "risk_reward": risk_reward,
+        }
+
         # ── HIGH CONVICTION FLAG ──────────────────────────────────
         bullish_signals = sum(1 for s in signals if s[2] == "bullish")
         macd_is_bullish = macd_line > macd_sig_val
+
+        # Golden Stock Composite Rule
+        is_golden = (
+            score_100 >= 80
+            and tech_score_25 >= 18.0
+            and news_sentiment_30 >= 20.0
+            and fundamental_score_15 >= 10.0
+            and risk_reward >= 2.2
+            and risk_score <= 45
+        )
+
         high_conviction = (
             score_100 >= HC_MIN_SCORE
             and bullish_signals >= HC_MIN_SIGNALS_BULLISH
@@ -836,7 +870,8 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
             and risk_reward >= HC_MIN_RISK_REWARD
             and (not HC_REQUIRE_MACD_BULLISH or macd_is_bullish)
             and vol_ratio >= HC_REQUIRE_VOLUME
-        )
+        ) or is_golden
+
         bear_play = (
             regime == "bearish"
             and rsi < BP_RSI_MAX
@@ -915,6 +950,7 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
             "chart_data": chart_data,
             # Flags
             "high_conviction": high_conviction,
+            "is_golden": is_golden,
             "bear_play": bear_play,
             "is_breakout": is_breakout,
             "vp_divergence": vp_divergence,

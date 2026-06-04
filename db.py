@@ -164,6 +164,8 @@ def init_db():
                 target REAL,
                 status TEXT DEFAULT 'OPEN',
                 notes TEXT DEFAULT '',
+                scan_analysis TEXT DEFAULT 'Hold (Position Active)',
+                last_scan_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -275,6 +277,7 @@ def init_db():
                 grade TEXT,
                 high_conviction BOOLEAN,
                 bear_play BOOLEAN,
+                is_golden BOOLEAN DEFAULT FALSE,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (symbol, scan_date)
             );
@@ -337,6 +340,8 @@ def init_db():
                 target REAL,
                 status TEXT DEFAULT 'OPEN',
                 notes TEXT DEFAULT '',
+                scan_analysis TEXT DEFAULT 'Hold (Position Active)',
+                last_scan_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (portfolio_id) REFERENCES portfolios(id) ON DELETE CASCADE
@@ -449,6 +454,7 @@ def init_db():
                 grade TEXT,
                 high_conviction INTEGER,
                 bear_play INTEGER,
+                is_golden INTEGER DEFAULT 0,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (symbol, scan_date)
             );
@@ -572,18 +578,20 @@ def save_results(results: list[dict], meta: dict = None):
         execute_db("""
             INSERT INTO final_scores (
                 symbol, scan_date, news_sentiment_score, news_spike_score, technical_score,
-                fundamental_score, macro_score, marketaux_score, final_score, grade, high_conviction, bear_play, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fundamental_score, macro_score, marketaux_score, final_score, grade, high_conviction, bear_play, is_golden, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol, scan_date) DO UPDATE SET
                 news_sentiment_score=excluded.news_sentiment_score, news_spike_score=excluded.news_spike_score,
                 technical_score=excluded.technical_score, fundamental_score=excluded.fundamental_score,
                 macro_score=excluded.macro_score, marketaux_score=excluded.marketaux_score,
                 final_score=excluded.final_score, grade=excluded.grade,
-                high_conviction=excluded.high_conviction, bear_play=excluded.bear_play, updated_at=excluded.updated_at
+                high_conviction=excluded.high_conviction, bear_play=excluded.bear_play,
+                is_golden=excluded.is_golden, updated_at=excluded.updated_at
         """, (
             sym, scan_date, r.get("news_sentiment_score", 0.0), r.get("news_spike_score", 0.0), r.get("technical_score", 0.0),
             r.get("fundamental_score", 0.0), r.get("macro_score", 0.0), r.get("marketaux_catalyst_score", 0.0),
-            r.get("score", 0), r.get("grade", ""), 1 if r.get("high_conviction") else 0, 1 if r.get("bear_play") else 0, now
+            r.get("score", 0), r.get("grade", ""), 1 if r.get("high_conviction") else 0, 1 if r.get("bear_play") else 0,
+            1 if r.get("is_golden") else 0, now
         ))
 
     if meta:

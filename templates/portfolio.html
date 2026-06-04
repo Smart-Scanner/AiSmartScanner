@@ -187,6 +187,7 @@
                         <th>P&L</th>
                         <th>Day</th>
                         <th>Signal</th>
+                        <th>30-Min Scan Alert</th>
                         <th>SL (Auto)</th>
                         <th>Target (Auto)</th>
                         <th>RSI</th>
@@ -431,6 +432,11 @@ async function loadPositions(){
         const sigCls = sig==='SELL'||sig==='BOOK PROFIT'?'sig-sell':sig==='HOLD'?'sig-hold':sig==='TRAIL SL'?'sig-trail':'sig-caution';
         const sigReasons = (p.signal_reasons||[]).join(', ');
 
+        // 30-Min Scan Alert
+        const scanAlert = p.scan_analysis || 'Hold (Position Active)';
+        const lastScanTime = p.last_scan_at ? `<div style="font-size:8px;color:var(--text-muted);margin-top:2px">${p.last_scan_at}</div>` : '';
+        const scanAlertCls = scanAlert.includes('Exit') || scanAlert.includes('Stop Loss') ? 'sig-sell' : (scanAlert.includes('Book') || scanAlert.includes('Profit') ? 'sig-sell' : 'sig-hold');
+
         // Auto SL/Target
         const autoSL = p.auto_sl ? `₹${p.auto_sl.toLocaleString('en-IN')}<div style="font-size:9px;color:var(--text-muted)">${p.auto_sl_pct||''}%</div>` : '—';
         const autoTarget = p.auto_target ? `₹${p.auto_target.toLocaleString('en-IN')}<div style="font-size:9px;color:var(--text-muted)">+${p.auto_target_pct||''}%</div>` : '—';
@@ -459,6 +465,7 @@ async function loadPositions(){
             <td class="${pnlCls}" style="font-weight:700;font-size:14px">${pnlPct>0?'+':''}${pnlPct}%<div style="font-size:10px;font-weight:400">${pnl>0?'+':''}₹${pnl.toLocaleString('en-IN')}</div></td>
             <td class="${dayChgCls}" style="font-size:11px">${isOpen?(dayChg>0?'+':'')+dayChg+'%':'—'}</td>
             <td>${isOpen&&sig?`<div class="signal-badge ${sigCls}" title="${sigReasons}">${sig}</div>${sigReasons?`<div style="font-size:8px;color:var(--text-muted);max-width:100px;line-height:1.2;margin-top:2px">${sigReasons}</div>`:''}`:'—'}</td>
+            <td>${isOpen?`<div class="signal-badge ${scanAlertCls}">${scanAlert}</div>${lastScanTime}`:'—'}</td>
             <td style="font-size:11px">${isOpen?autoSL:'—'}</td>
             <td style="font-size:11px">${isOpen?autoTarget:'—'}</td>
             <td class="${rsiCls}" style="font-weight:600">${isOpen&&rsi?rsi:'—'}${isOpen&&p.adx?`<div style="font-size:9px;color:var(--text-muted)">ADX:${p.adx}</div>`:''}</td>

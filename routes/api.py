@@ -464,22 +464,26 @@ def get_all_scanned_stocks():
 
 @api_bp.route("/api/top-candidates")
 def get_top_candidates():
-    """Return candidates divided into Swing, News-based, Breakouts, and Underdogs."""
+    """Return candidates divided into Swing, News-based, Breakouts, Underdogs, and Golden Stocks."""
     results = db.load_results(TOP_N_RESULTS)
     candidates = [r for r in results if (r.get("volume_ratio", 0.0) > 1.5 or r.get("is_breakout", False) or r.get("gdelt", {}).get("spike", 1.0) > 3.0)]
     
-    # 1. Swing Candidates (Top 20)
+    # 1. Golden Candidates (Top 20)
+    golden_c = [r for r in results if r.get("is_golden", False)]
+    golden = sorted(golden_c, key=lambda x: x.get("score", 0), reverse=True)[:20]
+
+    # 2. Swing Candidates (Top 20)
     swing = sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)[:20]
     
-    # 2. News Candidates (Top 20)
+    # 3. News Candidates (Top 20)
     news_c = [c for c in candidates if (len(c.get("gdelt", {}).get("articles", [])) > 0 or c.get("news_sentiment_score", 15.0) != 15.0)]
     news = sorted(news_c, key=lambda x: x.get("news_sentiment_score", 0.0), reverse=True)[:20]
     
-    # 3. Breakout Candidates (Top 20)
+    # 4. Breakout Candidates (Top 20)
     breakout_c = [c for c in candidates if c.get("is_breakout", False)]
     breakout = sorted(breakout_c, key=lambda x: x.get("score", 0), reverse=True)[:20]
     
-    # 4. Underdog Candidates (Top 20)
+    # 5. Underdog Candidates (Top 20)
     underdog_c = []
     for c in candidates:
         mcap = c.get("fundamentals", {}).get("market_cap")
@@ -490,11 +494,21 @@ def get_top_candidates():
     underdog = sorted(underdog_c, key=lambda x: x.get("score", 0), reverse=True)[:20]
     
     return jsonify({
+        "golden": golden,
         "swing": swing,
         "news": news,
         "breakout": breakout,
         "underdog": underdog
     })
+
+
+@api_bp.route("/api/golden")
+def get_golden_list():
+    """Return top golden stocks."""
+    results = db.load_results(TOP_N_RESULTS)
+    golden_c = [r for r in results if r.get("is_golden", False)]
+    golden = sorted(golden_c, key=lambda x: x.get("score", 0), reverse=True)[:20]
+    return jsonify({"golden": golden})
 
 
 @api_bp.route("/api/news")

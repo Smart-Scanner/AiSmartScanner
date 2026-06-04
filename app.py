@@ -128,8 +128,66 @@ def _auto_scan_loop():
         time.sleep(interval)
 
 
+def _portfolio_scan_loop():
+    time.sleep(120)  # wait 2 mins for startup
+    while True:
+        try:
+            log.info("[PortfolioScan] Running 30-min portfolio check...")
+            positions = db.execute_db("SELECT id, symbol, buy_price, stop_loss, target FROM positions WHERE status = 'OPEN'", fetch="all")
+            if positions:
+                symbols = list(set(p["symbol"] for p in positions))
+                prices = live_feed.fetch_ltp_bulk(symbols)
+                scan_lookup = db.get_stocks_map(symbols)
+                from datetime import datetime
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                for pos in positions:
+                    sym = pos["symbol"]
+                    buy_price = pos["buy_price"]
+                    sl = pos["stop_loss"]
+                    tgt = pos["target"]
+                    pos_id = pos["id"]
+
+                    # Fallback to scanner values if position-specific values are not set
+                    scan = scan_lookup.get(sym, {})
+                    if (sl is None or sl == 0) and scan:
+                        sl = scan.get("stop_loss")
+                    if (tgt is None or tgt == 0) and scan:
+                        tgt = scan.get("target_price")
+
+                    price_data = prices.get(sym)
+                    if not price_data:
+                        price_data = live_feed.get_live_price(sym)
+
+                    if price_data:
+                        ltp = price_data.get("ltp") or price_data.get("price", 0.0)
+                        if not ltp:
+                            continue
+
+                        # Core hold, sell, book scenarios
+                        if tgt is not None and ltp >= tgt:
+                            rec = "Book Profit (Target Reached)"
+                        elif sl is not None and ltp <= sl:
+                            rec = "Exit / Stop Loss Triggered"
+                        elif ltp > buy_price * 1.05:
+                            rec = f"Hold (Trail SL to Cost: ₹{buy_price})"
+                        else:
+                            rec = "Hold (Position Active)"
+
+                        db.execute_db("UPDATE positions SET scan_analysis = ?, last_scan_at = ? WHERE id = ?", (rec, now_str, pos_id))
+                        log.info("[PortfolioScan] Checked %s: LTP=%s, Rec=%s", sym, ltp, rec)
+            else:
+                log.info("[PortfolioScan] No open positions to scan")
+        except Exception as exc:
+            log.warning("[PortfolioScan] Error in portfolio scan: %s", exc)
+        time.sleep(1800)  # every 30 mins
+
+
 threading.Thread(target=_auto_scan_loop, daemon=True, name="auto-scan").start()
 log.info("Auto-scan enabled: every %d minutes", AUTO_SCAN_INTERVAL)
+
+threading.Thread(target=_portfolio_scan_loop, daemon=True, name="portfolio-scan").start()
+log.info("Portfolio-scan enabled: every 30 minutes")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))

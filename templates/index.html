@@ -256,6 +256,16 @@
         .sug-item .sug-hc{color:var(--gold);font-size:9px;font-weight:700;margin-left:4px}
         .sug-empty{padding:16px;text-align:center;color:var(--text-muted);font-size:12px}
 
+        /* Responsive scrollable layout for smaller displays */
+        @media(max-height:1080px), (max-width:1280px) {
+            body { height: auto !important; overflow: auto !important; }
+            .layout { height: auto !important; overflow: visible !important; }
+            .sidebar { height: auto !important; overflow: visible !important; }
+            .main-content { height: auto !important; overflow: visible !important; }
+            .table-wrap { overflow: visible !important; }
+            table.stock-table thead { position: static !important; }
+        }
+
         /* Mobile */
         @media(max-width:768px){
             .sidebar{display:none}
@@ -350,25 +360,12 @@
             <!-- Filters -->
             <div class="sb-section">
                 <div class="sb-title">Filters</div>
-                <div class="sb-item hc-item" onclick="setFilter('hc',this)"><span class="dot" style="background:var(--gold)"></span> HIGH CONVICTION <span class="sb-count" id="hcFilterCount">0</span></div>
                 <div class="sb-item active" onclick="setFilter('all',this)"><span class="dot" style="background:var(--orange)"></span> All Stocks <span class="sb-count" id="allFilterCount">0</span></div>
-                <div class="sb-item" onclick="setFilter('high',this)"><span class="dot" style="background:var(--green)"></span> Score 70+ <span class="sb-count" id="highFilterCount">0</span></div>
-                <div class="sb-item" onclick="setFilter('bearplay',this)"><span class="dot" style="background:var(--red)"></span> Bear Play <span class="sb-count" id="bearPlayCount">0</span></div>
-                <div class="sb-item" onclick="setFilter('breakout',this)"><span class="dot" style="background:var(--blue)"></span> Breakout</div>
-                <div class="sb-item" onclick="setFilter('oversold',this)"><span class="dot" style="background:var(--green)"></span> Oversold (RSI&lt;40)</div>
-                <div class="sb-item" onclick="setFilter('volume',this)"><span class="dot" style="background:var(--blue)"></span> Volume Surge</div>
-                <div class="sb-item" onclick="setFilter('reversal',this)"><span class="dot" style="background:var(--purple)"></span> Reversal</div>
-                <div class="sb-item" onclick="setFilter('delivery',this)"><span class="dot" style="background:var(--green)"></span> Delivery &gt;50%</div>
-                <div class="sb-item" onclick="setFilter('fibonacci',this)"><span class="dot" style="background:var(--purple)"></span> Fibonacci Zone</div>
-                <div class="sb-item" onclick="setFilter('sector',this)"><span class="dot" style="background:var(--orange)"></span> Strong Sector</div>
-                <div class="sb-item" onclick="setFilter('lowrisk',this)"><span class="dot" style="background:var(--green)"></span> Low Risk</div>
-                <div class="sb-item" onclick="setFilter('outperform',this)"><span class="dot" style="background:var(--blue)"></span> Beat Nifty</div>
-                <div class="sb-item" onclick="setFilter('accumulation',this)"><span class="dot" style="background:var(--purple)"></span> Accumulation</div>
                 <div class="sb-item" onclick="setFilter('watchlist',this)"><span class="dot" style="background:var(--yellow)"></span> Watchlist</div>
                 <div class="sb-item" onclick="setFilter('custom',this)"><span class="dot" style="background:#2196F3"></span> My Stocks <span class="sb-count" id="customCount">0</span></div>
-                <div class="sb-item" onclick="setFilter('smallcap',this)"><span class="dot" style="background:var(--purple)"></span> Small Cap (&lt;5K Cr)</div>
+                <div class="sb-item" onclick="setFilter('smallcap',this)"><span class="dot" style="background:var(--purple)"></span> Small Cap (<5K Cr)</div>
                 <div class="sb-item" onclick="setFilter('midcap',this)"><span class="dot" style="background:var(--blue)"></span> Mid Cap (5K-20K Cr)</div>
-                <div class="sb-item" onclick="setFilter('largecap',this)"><span class="dot" style="background:var(--green)"></span> Large Cap (&gt;20K Cr)</div>
+                <div class="sb-item" onclick="setFilter('largecap',this)"><span class="dot" style="background:var(--green)"></span> Large Cap (>20K Cr)</div>
             </div>
 
             <!-- Add Stock -->
@@ -468,6 +465,7 @@
             <div id="candidateTabs" style="background:var(--bg-secondary);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;gap:8px;align-items:center;flex-shrink:0">
                 <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-right:8px">🔥 Candidates:</span>
                 <button class="topbar-btn primary" id="tab-all" onclick="selectCandidateTab('all')" style="padding:4px 12px;font-size:11px">All Scanned</button>
+                <button class="topbar-btn" id="tab-golden" onclick="selectCandidateTab('golden')" style="padding:4px 12px;font-size:11px;border-color:var(--gold);color:var(--gold)">👑 Golden Stocks</button>
                 <button class="topbar-btn" id="tab-swing" onclick="selectCandidateTab('swing')" style="padding:4px 12px;font-size:11px">Top 20 Swing</button>
                 <button class="topbar-btn" id="tab-news" onclick="selectCandidateTab('news')" style="padding:4px 12px;font-size:11px">Top 20 News-Based</button>
                 <button class="topbar-btn" id="tab-breakout" onclick="selectCandidateTab('breakout')" style="padding:4px 12px;font-size:11px">Top 20 Breakouts</button>
@@ -667,10 +665,10 @@ async function loadResults(){
     updateRegimeBadge(d.market_regime);
 
     // Sidebar counts
-    document.getElementById('allFilterCount').textContent=allResults.length;
-    document.getElementById('hcFilterCount').textContent=allResults.filter(s=>s.high_conviction).length;
-    document.getElementById('highFilterCount').textContent=allResults.filter(s=>s.score>=70).length;
-    document.getElementById('bearPlayCount').textContent=allResults.filter(s=>s.bear_play).length;
+    const allEl = document.getElementById('allFilterCount'); if(allEl) allEl.textContent=allResults.length;
+    const hcEl = document.getElementById('hcFilterCount'); if(hcEl) hcEl.textContent=allResults.filter(s=>s.high_conviction).length;
+    const highEl = document.getElementById('highFilterCount'); if(highEl) highEl.textContent=allResults.filter(s=>s.score>=70).length;
+    const bearEl = document.getElementById('bearPlayCount'); if(bearEl) bearEl.textContent=allResults.filter(s=>s.bear_play).length;
 
     const n1m=d.nifty50_1m||0;
     const nEl=document.getElementById('nifty1m');
@@ -1027,7 +1025,7 @@ let currentCandidateTab = 'all';
 
 function selectCandidateTab(tab) {
     currentCandidateTab = tab;
-    const tabs = ['all', 'swing', 'news', 'breakout', 'underdog'];
+    const tabs = ['all', 'golden', 'swing', 'news', 'breakout', 'underdog'];
     tabs.forEach(t => {
         const btn = document.getElementById('tab-' + t);
         if (btn) {
@@ -1046,7 +1044,10 @@ function filterResults(){
     let r=[...allResults];
     
     // Filter by Candidate Tab
-    if (currentCandidateTab === 'swing') {
+    if (currentCandidateTab === 'golden') {
+        r = r.filter(s => s.is_golden);
+        r = r.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 20);
+    } else if (currentCandidateTab === 'swing') {
         r = r.filter(s => (s.volume_ratio > 1.5 || s.is_breakout || (s.gdelt && s.gdelt.spike > 3.0)));
         r = r.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 20);
     } else if (currentCandidateTab === 'news') {
@@ -1561,9 +1562,9 @@ window.addEventListener('DOMContentLoaded',async()=>{
         updateFreshness(d.last_scan);
         updateRegimeBadge(d.market_regime);
 
-        document.getElementById('allFilterCount').textContent=allResults.length;
-        document.getElementById('hcFilterCount').textContent=allResults.filter(s=>s.high_conviction).length;
-        document.getElementById('highFilterCount').textContent=allResults.filter(s=>s.score>=70).length;
+        const allEl = document.getElementById('allFilterCount'); if(allEl) allEl.textContent=allResults.length;
+        const hcEl = document.getElementById('hcFilterCount'); if(hcEl) hcEl.textContent=allResults.filter(s=>s.high_conviction).length;
+        const highEl = document.getElementById('highFilterCount'); if(highEl) highEl.textContent=allResults.filter(s=>s.score>=70).length;
 
         const n1m=d.nifty50_1m||0;
         const nEl=document.getElementById('nifty1m');

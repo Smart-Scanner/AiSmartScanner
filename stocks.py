@@ -4,7 +4,42 @@ Auto-cleaned: Only symbols confirmed as active on NSE (via Angel One)
 Last updated: 2026-03-27
 """
 
-STOCK_UNIVERSE = [
+class DynamicStockUniverse(list):
+    def __init__(self, fallback_list):
+        self.fallback = fallback_list
+        super().__init__(fallback_list)
+
+    def _get_symbols(self):
+        import json
+        from pathlib import Path
+        token_file = Path(__file__).parent / "cache" / "angel_tokens.json"
+        if token_file.exists():
+            try:
+                token_map = json.loads(token_file.read_text())
+                # Filter to exclude any non-alphabetic/future/option symbols if necessary, but angel_tokens.json has clean stripped keys
+                symbols = sorted(list(token_map.keys()))
+                if len(symbols) > 1000:
+                    return symbols
+            except Exception:
+                pass
+        return self.fallback
+
+    def __iter__(self):
+        return iter(self._get_symbols())
+
+    def __len__(self):
+        return len(self._get_symbols())
+
+    def __getitem__(self, index):
+        return self._get_symbols()[index]
+
+    def __contains__(self, item):
+        return item in self._get_symbols()
+
+    def __repr__(self):
+        return repr(self._get_symbols())
+
+_HARDCODED_UNIVERSE = [
     "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "HINDUNILVR", "SBIN", "BHARTIARTL",
     "KOTAKBANK", "ITC", "LT", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI", "HCLTECH",
     "SUNPHARMA", "TITAN", "WIPRO", "ULTRACEMCO", "NTPC", "POWERGRID", "NESTLEIND", "TECHM",
@@ -45,7 +80,7 @@ STOCK_UNIVERSE = [
     "JYOTHYLAB", "BIKAJI", "DEVYANI", "MRPL", "VSTIND", "GODFRYPHLP", "RADICO", "EIDPARRY",
     "ZYDUSWELL", "KRBL", "LTFOODS", "DODLA", "HERITGFOOD", "UFLEX", "VENKEYS", "JUBLPHARMA",
     "WELCORP", "JINDALSTEL", "MOIL", "KIOCL", "SARDAEN", "GALLANTT", "JAMNAAUTO", "NSLNISP",
-    "HINDZINC", "MIDHANI", "RSYSTEMS", "MGL", "IGL", "OIL", "CHENNPETRO", "GSPL",
+    "HINDZINC", "MIDHANI", "RSYSTEMS", "MGL", "IGL", "OIL", "GRID", "CHENNPETRO", "GSPL",
     "ADANIPOWER", "GNFC", "ACC", "HEIDELBERG", "JKLAKSHMI", "NUVOCO", "ORIENTCEM", "GREENPLY",
     "ORIENTBELL", "CERA", "PRINCEPIPE", "NBCC", "IRCON", "PNCINFRA", "AHLUCONT", "NCC",
     "JKIL", "ENGINERSIN", "BLS", "HGINFRA", "GPIL", "BEML", "GRSE", "COCHINSHIP",
@@ -76,8 +111,10 @@ STOCK_UNIVERSE = [
     "GREAVESCOT", "NESCO", "ELECON", "BASF", "ASAHIINDIA", "VINATIORGA", "SHK", "SYMPHONY",
     "ORIENTELEC", "LAOPALA", "RAJRATAN", "ANANTRAJ", "ARVSMART", "PGIL", "STYL", "GIPCL",
     "TAJGVK", "ORIENTHOT", "DALMIASUG", "GOLDIAM", "KPRMILL", "WOCKPHARMA", "XPROINDIA", "ZFCVINDIA",
-    "STEL", "DCXINDIA", "PRECWIRE", "GATEWAY",
+    "STEL", "DCXINDIA", "PRECWIRE", "GATEWAY"
 ]
+
+STOCK_UNIVERSE = DynamicStockUniverse(_HARDCODED_UNIVERSE)
 
 
 SECTORS = {
