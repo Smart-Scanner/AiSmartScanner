@@ -36,13 +36,24 @@ def _get_finbert():
             if _finbert is None:
                 try:
                     from transformers import pipeline
-                    log.info("Loading FinBERT model (first time may take 30s)...")
+                    import torch
+                    
+                    # Detect if CUDA (NVIDIA GPU) is available and print details
+                    if torch.cuda.is_available():
+                        device = 0
+                        device_name = torch.cuda.get_device_name(0)
+                        log.info(f"CUDA GPU detected: {device_name}. Loading FinBERT model on GPU (CUDA:0)...")
+                    else:
+                        device = -1
+                        log.info("CUDA GPU not available or not configured in PyTorch. Loading FinBERT model on CPU...")
+                    
                     _finbert = pipeline(
                         "text-classification",
                         model="ProsusAI/finbert",
                         batch_size=_FINBERT_BATCH,   # set here, not later
                         truncation=True,
                         max_length=128,
+                        device=device,
                     )
                     log.info("FinBERT loaded OK")
                 except Exception as exc:
