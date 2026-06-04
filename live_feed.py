@@ -21,21 +21,10 @@ log = logging.getLogger("live_feed")
 ENV_FILE = Path(__file__).parent / ".env"
 TOKEN_FILE = Path(__file__).parent / "cache" / "angel_tokens.json"
 
-def _load_env():
-    """Load .env file into os.environ."""
-    if ENV_FILE.exists():
-        for line in ENV_FILE.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
-
-_load_env()
-
-API_KEY = os.environ.get("ANGEL_API_KEY", "")
-CLIENT_ID = os.environ.get("ANGEL_CLIENT_ID", "")
-MPIN = os.environ.get("ANGEL_MPIN", "")
-TOTP_SECRET = os.environ.get("ANGEL_TOTP_SECRET", "")
+API_KEY = ""
+CLIENT_ID = ""
+MPIN = ""
+TOTP_SECRET = ""
 
 _token_map = {}
 _reverse_map = {}
@@ -48,12 +37,38 @@ _last_login = 0
 
 _live_prices = {}
 _prices_lock = threading.Lock()
+
 _subscribers = set()
 _ws_thread = None
 _ws_running = False
 _sws = None
+
 _correlation_id = "smartscanner"
 _WS_MODE = 2  # 2 = Quote Mode (contains open, high, low, close, volume)
+MAX_WS_TOKENS_PER_SESSION = 1000
+MAX_WS_BATCH_SIZE = 50
+
+REST_GAP_SECONDS = 0.4
+_hist_lock = threading.Lock()
+_hist_last_call = 0.0
+
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+def _load_env():
+    global API_KEY, CLIENT_ID, MPIN, TOTP_SECRET
+    if not ENV_FILE.exists():
+        return
+    for line in ENV_FILE.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+    API_KEY = os.environ.get("ANGEL_API_KEY", "")
+    CLIENT_ID = os.environ.get("ANGEL_CLIENT_ID", "")
+    MPIN = os.environ.get("ANGEL_MPIN", "")
+    TOTP_SECRET = os.environ.get("ANGEL_TOTP_SECRET", "")
+
+_load_env()
 
 def load_token_map():
     global _token_map, _reverse_map
@@ -63,8 +78,8 @@ def load_token_map():
             _reverse_map = {v: k for k, v in _token_map.items()}
             log.info("Loaded %d symbol tokens", len(_token_map))
             return
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Token file load failed: %s", exc)
     refresh_token_map()
 
 def refresh_token_map():
@@ -89,20 +104,16 @@ def get_symbol(token: str):
 
 def _login():
     global _smart_api, _auth_token, _feed_token, _last_login
-
     if not all([API_KEY, CLIENT_ID, MPIN, TOTP_SECRET]):
         log.error("Angel One credentials not configured")
         return False
-
     try:
         totp = pyotp.TOTP(TOTP_SECRET).now()
         obj = SmartConnect(api_key=API_KEY)
         data = obj.generateSession(CLIENT_ID, MPIN, totp)
-
         if not data or not data.get("status"):
             log.error("Login failed: %s", data.get("message") if data else "no response")
             return False
-
         _smart_api = obj
         _auth_token = data["data"]["jwtToken"]
         _feed_token = obj.getfeedToken()
@@ -118,6 +129,13 @@ def ensure_session():
         if _smart_api is None or (time.time() - _last_login) > 6 * 3600:
             return _login()
         return True
+
+def is_market_open():
+    now = datetime.now(_IST)
+    if now.weekday() >= 5:
+        return False
+    mins = now.hour * 60 + now.minute
+    return 555 <= mins <= 930
 
 def get_live_prices(symbols=None):
     with _prices_lock:
@@ -162,7 +180,6 @@ def _on_data(wsapp, message):
     try:
         if not isinstance(message, dict):
             return
-
         token = str(message.get("token", ""))
         symbol = get_symbol(token)
         if not symbol:
@@ -196,14 +213,15 @@ def _on_data(wsapp, message):
 
 def _on_open(wsapp):
     log.info("WebSocket connected")
-    subscribe(list(_subscribers))
+    if _subscribers:
+        subscribe(list(_subscribers))
 
 def _on_error(wsapp, error):
     log.warning("WebSocket error: %s", error)
 
-def _on_close(wsapp):
+def _on_close(wsapp, close_status_code=None, close_msg=None):
     global _ws_running
-    log.info("WebSocket closed")
+    log.info("WebSocket closed: %s %s", close_status_code, close_msg)
     _ws_running = False
 
 def _subscribe_symbols(symbols):
@@ -211,18 +229,27 @@ def _subscribe_symbols(symbols):
     if not _sws:
         return
 
-    tokens = [get_token(sym) for sym in symbols if get_token(sym)]
-    if not tokens:
+    clean_symbols = []
+    for sym in symbols:
+        s = sym.upper().replace(".NS", "")
+        if get_token(s):
+            clean_symbols.append(s)
+
+    if not clean_symbols:
         return
 
+    if len(clean_symbols) > MAX_WS_TOKENS_PER_SESSION:
+        clean_symbols = clean_symbols[:MAX_WS_TOKENS_PER_SESSION]
+
     try:
-        # Subscribe in batches of 50
-        for i in range(0, len(tokens), 50):
-            batch = tokens[i:i+50]
-            # Standard SmartAPI WebSocket V2 payload format: [{"exchangeType": 1, "tokens": ["26009", ...]}]
-            token_list = [{"exchangeType": 1, "tokens": batch}]
+        for i in range(0, len(clean_symbols), MAX_WS_BATCH_SIZE):
+            batch_syms = clean_symbols[i:i + MAX_WS_BATCH_SIZE]
+            batch_tokens = [get_token(s) for s in batch_syms if get_token(s)]
+            if not batch_tokens:
+                continue
+            token_list = [{"exchangeType": 1, "tokens": batch_tokens}]
             _sws.subscribe(_correlation_id, _WS_MODE, token_list)
-        log.info("Subscribed to %d symbols", len(symbols))
+        log.info("Subscribed to %d symbols", len(clean_symbols))
     except Exception as exc:
         log.error("Subscribe error: %s", exc)
 
@@ -234,26 +261,21 @@ def subscribe(symbols):
         if clean not in _subscribers and get_token(clean):
             _subscribers.add(clean)
             new_syms.add(clean)
-
     if _ws_running and new_syms:
         _subscribe_symbols(new_syms)
 
 def start_websocket():
     global _ws_thread, _ws_running, _sws
-
     if _ws_running:
         return
-
     if not ensure_session():
         log.error("Cannot start WebSocket: login failed")
         return
-
     load_token_map()
 
     def _run():
         global _sws, _ws_running
         _ws_running = True
-
         while _ws_running:
             try:
                 _sws = SmartWebSocketV2(_auth_token, API_KEY, CLIENT_ID, _feed_token)
@@ -261,12 +283,10 @@ def start_websocket():
                 _sws.on_open = _on_open
                 _sws.on_error = _on_error
                 _sws.on_close = _on_close
-
                 log.info("Starting WebSocket connection...")
                 _sws.connect()
             except Exception as exc:
                 log.error("WebSocket crashed: %s", exc)
-
             if _ws_running:
                 time.sleep(5)
 
@@ -283,25 +303,21 @@ def stop_websocket():
         except Exception:
             pass
 
-_IST = timezone(timedelta(hours=5, minutes=30))
+def _rest_gap():
+    global _hist_last_call
+    with _hist_lock:
+        now = time.time()
+        wait = REST_GAP_SECONDS - (now - _hist_last_call)
+        if wait > 0:
+            time.sleep(wait)
+        _hist_last_call = time.time()
 
-def is_market_open():
-    now = datetime.now(_IST)
-    if now.weekday() >= 5:
-        return False
-    mins = now.hour * 60 + now.minute
-    return 555 <= mins <= 930
-
-# ---------------------------------------------------------------------------
-# Bulk LTP fallback (REST API, for when WebSocket hasn't caught up)
-# ---------------------------------------------------------------------------
 def fetch_ltp_bulk(symbols: list[str]) -> dict:
-    """Fetch LTP via REST API for symbols not yet in WebSocket cache."""
     if not ensure_session():
         return {}
-
     results = {}
     for sym in symbols:
+        _rest_gap()
         clean = sym.upper().replace(".NS", "")
         token = get_token(clean)
         if not token:
@@ -315,6 +331,7 @@ def fetch_ltp_bulk(symbols: list[str]) -> dict:
                 change = ltp - close_price if close_price else 0
                 change_pct = round((change / close_price) * 100, 2) if close_price else 0
                 results[clean] = {
+                    "symbol": clean,
                     "ltp": ltp,
                     "open": float(d.get("open", 0)),
                     "high": float(d.get("high", 0)),
@@ -328,63 +345,34 @@ def fetch_ltp_bulk(symbols: list[str]) -> dict:
             log.debug("LTP fetch failed for %s: %s", clean, exc)
     return results
 
-# ---------------------------------------------------------------------------
-# Historical Candle Data (replaces jugaad_data)
-# ---------------------------------------------------------------------------
-_hist_lock = threading.Lock()
-_hist_last_call = 0
-HIST_RATE_LIMIT = 0.5
-
-def fetch_historical(symbol: str, days: int = 365) -> "pd.DataFrame | None":
-    """
-    Fetch historical OHLCV candle data from Angel One.
-    Returns a DataFrame with columns: DATE, OPEN, HIGH, LOW, CLOSE, VOLUME
-    Compatible with the old jugaad_data format.
-    """
+def fetch_historical(symbol: str, days: int = 365):
     import pandas as pd
     import yfinance as yf
-    global _hist_last_call
 
     clean = symbol.upper().replace(".NS", "")
-
     if not ensure_session():
-        log.debug("No Angel One session. Using yfinance historical fallback for %s", symbol)
+        log.debug("No Angel session. Using yfinance for %s", clean)
         try:
-            ticker = yf.Ticker(f"{clean}.NS")
-            df_yf = ticker.history(period="1y")
-            if not df_yf.empty:
-                df_yf = df_yf.reset_index()
-                df_yf = df_yf.rename(columns={
-                    "Date": "DATE",
-                    "Open": "OPEN",
-                    "High": "HIGH",
-                    "Low": "LOW",
-                    "Close": "CLOSE",
-                    "Volume": "VOLUME"
-                })
-                df_yf["DATE"] = pd.to_datetime(df_yf["DATE"]).dt.tz_localize(None)
-                return df_yf[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
-        except Exception as exc:
-            log.warning("yfinance historical fallback failed for %s: %s", symbol, exc)
-        return None
+            df = yf.Ticker(f"{clean}.NS").history(period="1y")
+            if df.empty:
+                return None
+            df = df.reset_index().rename(columns={
+                "Date": "DATE", "Open": "OPEN", "High": "HIGH",
+                "Low": "LOW", "Close": "CLOSE", "Volume": "VOLUME"
+            })
+            df["DATE"] = pd.to_datetime(df["DATE"]).dt.tz_localize(None)
+            return df[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
+        except Exception:
+            return None
 
     token = get_token(clean)
     if not token:
-        log.debug("No token for %s", clean)
         return None
 
-    # Rate limiting
-    with _hist_lock:
-        now = time.time()
-        elapsed = now - _hist_last_call
-        if elapsed < HIST_RATE_LIMIT:
-            time.sleep(HIST_RATE_LIMIT - elapsed)
-        _hist_last_call = time.time()
-
+    _rest_gap()
     try:
         end_dt = datetime.now()
         start_dt = end_dt - timedelta(days=days)
-
         params = {
             "exchange": "NSE",
             "symboltoken": token,
@@ -392,73 +380,50 @@ def fetch_historical(symbol: str, days: int = 365) -> "pd.DataFrame | None":
             "fromdate": start_dt.strftime("%Y-%m-%d 09:15"),
             "todate": end_dt.strftime("%Y-%m-%d 15:30"),
         }
-
         result = _smart_api.getCandleData(params)
-
+        
+        # Retry once on rate limit
         if result and result.get("errorcode") == "AB1019":
             time.sleep(1.5)
-            with _hist_lock:
-                _hist_last_call = time.time()
+            _rest_gap()
             result = _smart_api.getCandleData(params)
 
         if not result or not result.get("status") or not result.get("data"):
-            msg = result.get("message", "None") if result else "No response"
-            ec = result.get("errorcode", "") if result else ""
-            log.warning("Candle fail %s: status=%s ec=%s msg=%s. Trying yfinance fallback...", clean,
-                        result.get("status") if result else None, ec, msg)
+            log.warning("Candle query fail for %s. Trying yfinance fallback...", clean)
             try:
-                ticker = yf.Ticker(f"{clean}.NS")
-                df_yf = ticker.history(period="1y")
-                if not df_yf.empty:
-                    df_yf = df_yf.reset_index()
-                    df_yf = df_yf.rename(columns={
-                        "Date": "DATE",
-                        "Open": "OPEN",
-                        "High": "HIGH",
-                        "Low": "LOW",
-                        "Close": "CLOSE",
-                        "Volume": "VOLUME"
+                df = yf.Ticker(f"{clean}.NS").history(period="1y")
+                if not df.empty:
+                    df = df.reset_index().rename(columns={
+                        "Date": "DATE", "Open": "OPEN", "High": "HIGH",
+                        "Low": "LOW", "Close": "CLOSE", "Volume": "VOLUME"
                     })
-                    df_yf["DATE"] = pd.to_datetime(df_yf["DATE"]).dt.tz_localize(None)
-                    return df_yf[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
-            except Exception as yf_exc:
-                log.warning("yfinance fallback failed for %s: %s", symbol, yf_exc)
+                    df["DATE"] = pd.to_datetime(df["DATE"]).dt.tz_localize(None)
+                    return df[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
+            except Exception:
+                pass
             return None
 
-        candles = result["data"]
-        rows = []
-        for c in candles:
-            rows.append({
-                "DATE": pd.Timestamp(c[0]),
-                "OPEN": float(c[1]),
-                "HIGH": float(c[2]),
-                "LOW": float(c[3]),
-                "CLOSE": float(c[4]),
-                "VOLUME": int(c[5]),
-            })
-
+        rows = [{
+            "DATE": pd.Timestamp(c[0]),
+            "OPEN": float(c[1]),
+            "HIGH": float(c[2]),
+            "LOW": float(c[3]),
+            "CLOSE": float(c[4]),
+            "VOLUME": int(c[5]),
+        } for c in result["data"]]
         df = pd.DataFrame(rows)
-        if df.empty:
-            return None
-        return df
-
+        return df if not df.empty else None
     except Exception as exc:
         log.warning("Historical exception for %s: %s. Trying yfinance fallback...", clean, exc)
         try:
-            ticker = yf.Ticker(f"{clean}.NS")
-            df_yf = ticker.history(period="1y")
-            if not df_yf.empty:
-                df_yf = df_yf.reset_index()
-                df_yf = df_yf.rename(columns={
-                    "Date": "DATE",
-                    "Open": "OPEN",
-                    "High": "HIGH",
-                    "Low": "LOW",
-                    "Close": "CLOSE",
-                    "Volume": "VOLUME"
+            df = yf.Ticker(f"{clean}.NS").history(period="1y")
+            if not df.empty:
+                df = df.reset_index().rename(columns={
+                    "Date": "DATE", "Open": "OPEN", "High": "HIGH",
+                    "Low": "LOW", "Close": "CLOSE", "Volume": "VOLUME"
                 })
-                df_yf["DATE"] = pd.to_datetime(df_yf["DATE"]).dt.tz_localize(None)
-                return df_yf[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
-        except Exception as yf_exc:
-            log.warning("yfinance fallback failed for %s: %s", symbol, yf_exc)
+                df["DATE"] = pd.to_datetime(df["DATE"]).dt.tz_localize(None)
+                return df[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
+        except Exception:
+            pass
         return None
