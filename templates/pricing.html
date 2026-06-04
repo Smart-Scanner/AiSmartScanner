@@ -1,0 +1,128 @@
+{% extends "_public_base.html" %}
+{% set active = 'pricing' %}
+{% block title %}Pricing — Smart Screener{% endblock %}
+
+{% block content %}
+<style>
+    .hero-sm{padding:72px 0 56px;text-align:center;position:relative}
+    .hero-sm::before{content:'';position:absolute;inset:0;background:radial-gradient(700px 350px at 50% 0%,rgba(255,108,55,0.1) 0%,transparent 60%);pointer-events:none}
+    .hero-sm .eyebrow{position:relative}
+    .hero-sm h1{position:relative;font-size:48px;font-weight:800;letter-spacing:-1.2px;margin:14px 0 14px}
+    .hero-sm p{position:relative;font-size:16.5px;color:var(--text-dim);max-width:620px;margin:0 auto;line-height:1.6}
+    @media (max-width:760px){.hero-sm h1{font-size:34px}}
+
+    .pricing-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin-top:32px}
+    .p-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);padding:32px 26px;transition:all 0.2s;display:flex;flex-direction:column;position:relative}
+    .p-card.featured{border-color:var(--orange);background:linear-gradient(180deg,rgba(255,108,55,0.08) 0%,var(--panel) 100%)}
+    .p-card.featured::before{content:'Most popular';position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--orange);color:#fff;font-size:10px;font-weight:700;padding:5px 14px;border-radius:99px;letter-spacing:0.7px;text-transform:uppercase}
+    .p-card .name{font-size:14px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px}
+    .p-card .amount{font-size:42px;font-weight:800;letter-spacing:-1.5px;margin-bottom:4px}
+    .p-card .amount .c{font-size:22px;font-weight:600;color:var(--text-dim);vertical-align:top;margin-right:2px}
+    .p-card .period{font-size:13px;color:var(--text-mute);margin-bottom:16px}
+    .p-card .per-day{font-size:11.5px;color:var(--orange);font-weight:600;background:var(--orange-soft);padding:4px 12px;border-radius:99px;align-self:flex-start;margin-bottom:22px}
+    .p-card ul{list-style:none;font-size:13px;color:var(--text-dim);margin-bottom:26px;line-height:2.1}
+    .p-card ul li{display:flex;align-items:center;gap:9px}
+    .p-card ul li svg{width:14px;height:14px;color:var(--green);flex-shrink:0}
+    .p-card .cta{display:block;text-align:center;padding:11px 14px;border:1px solid var(--border-light);border-radius:8px;font-size:13.5px;font-weight:600;color:var(--text);transition:all 0.15s;margin-top:auto}
+    .p-card .cta:hover{border-color:var(--orange);color:var(--orange)}
+    .p-card.featured .cta{background:var(--orange);border-color:var(--orange);color:#fff;box-shadow:0 6px 18px -6px var(--orange-glow)}
+    .p-card.featured .cta:hover{background:#ff7e4d;color:#fff}
+
+    .feature-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:36px;font-size:13px;color:var(--text-dim)}
+    .feature-grid div{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px}
+    .feature-grid div svg{width:14px;height:14px;color:var(--orange);flex-shrink:0}
+    @media (max-width:760px){.feature-grid{grid-template-columns:1fr}}
+
+    /* FAQ */
+    .faq{max-width:760px;margin:0 auto}
+    .faq-item{border:1px solid var(--border);border-radius:10px;margin-bottom:10px;background:var(--panel);transition:border-color 0.15s}
+    .faq-item:hover{border-color:var(--border-light)}
+    .faq-item summary{padding:18px 22px;font-size:15px;font-weight:500;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;color:var(--text)}
+    .faq-item summary::-webkit-details-marker{display:none}
+    .faq-item summary::after{content:'+';font-size:20px;font-weight:300;color:var(--text-mute);transition:transform 0.2s}
+    .faq-item[open] summary::after{transform:rotate(45deg)}
+    .faq-item .body{padding:0 22px 22px;font-size:14px;color:var(--text-dim);line-height:1.65}
+
+    .empty-state{text-align:center;padding:60px 20px;color:var(--text-mute)}
+</style>
+
+<section class="hero-sm section">
+    <div class="eyebrow">Pricing</div>
+    <h1>Simple, transparent pricing.</h1>
+    <p>Pay only for what you need. Every plan unlocks every feature — longer durations cost less per day.</p>
+</section>
+
+<section class="section" style="padding-bottom:80px">
+    {% if plans %}
+    <div class="pricing-grid">
+        {% for p in plans %}
+        <div class="p-card {% if loop.index == ((plans|length // 2) + 1) %}featured{% endif %}">
+            <div class="name">{{ p.name }}</div>
+            <div class="amount"><span class="c">₹</span>{{ p.price_inr }}</div>
+            <div class="period">one-time, for {{ p.duration_days }} days</div>
+            {% if p.duration_days >= 7 %}
+            <div class="per-day">₹{{ '%.0f'|format(p.price_inr / p.duration_days) }} / day</div>
+            {% endif %}
+            <ul>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg> Full 18-parameter scoring</li>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg> Live Angel One prices</li>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg> Portfolio tracking</li>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg> All smart filters</li>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg> Regime-aware signals</li>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg> Priority email support</li>
+            </ul>
+            <a href="{{ url_for('auth.local_login') }}" class="cta">Start with 3-day trial</a>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <h3 style="font-size:18px;font-weight:600;color:var(--text);margin-bottom:8px">Plans coming soon</h3>
+        <p style="font-size:14px">We're finalizing our pricing. Sign up to start your 3-day free trial and we'll notify you when subscription plans go live.</p>
+        <a href="{{ url_for('auth.local_login') }}" class="btn btn-primary btn-lg" style="margin-top:20px">Start free trial</a>
+    </div>
+    {% endif %}
+
+    <div class="feature-grid">
+        <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg> 3-day free trial, no card</div>
+        <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg> Pay via UPI or bank transfer</div>
+        <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg> No auto-renewal — opt-in only</div>
+        <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg> One device per account</div>
+        <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg> Cancel anytime, no charge</div>
+        <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg> Renewals stack — no lost days</div>
+    </div>
+</section>
+
+<section class="section" style="padding-bottom:80px">
+    <div class="section-head" style="margin-bottom:36px">
+        <div class="eyebrow">FAQ</div>
+        <h2>Quick answers.</h2>
+    </div>
+    <div class="faq">
+        <details class="faq-item">
+            <summary>How does the 3-day trial work?</summary>
+            <div class="body">Sign in with Google and you're in. The trial gives you every feature for 72 hours. No card. When the trial ends you're sent to the subscribe page — choose a plan and pay via UPI/bank transfer to continue.</div>
+        </details>
+        <details class="faq-item">
+            <summary>How do I pay?</summary>
+            <div class="body">Choose a plan, contact us via the email on the subscribe page, and we'll share UPI / bank details. Once payment is received, your subscription is activated within a few hours — usually under 30 minutes during market hours.</div>
+        </details>
+        <details class="faq-item">
+            <summary>What happens if I renew before my current subscription ends?</summary>
+            <div class="body">New days stack on top of your existing expiry. You never lose unused days. Renew on day 25 of a 30-day plan and you get 35 days of access total.</div>
+        </details>
+        <details class="faq-item">
+            <summary>Can I use one account on multiple devices?</summary>
+            <div class="body">No. Each account is bound to one device using browser fingerprinting. If you change devices (new laptop, lost phone), contact support to approve the new device — old device is auto-revoked.</div>
+        </details>
+        <details class="faq-item">
+            <summary>Is this financial advice?</summary>
+            <div class="body">No. We provide technical analysis tools — scores, signals, filters, charts. Nothing on the platform constitutes investment advice. We are not SEBI-registered advisors. Always do your own research and consult a qualified financial advisor before investing.</div>
+        </details>
+        <details class="faq-item">
+            <summary>Can I get a refund?</summary>
+            <div class="body">Use the 3-day free trial to evaluate the product before paying. Once a subscription is active, we don't offer refunds — but you can stop renewing anytime.</div>
+        </details>
+    </div>
+</section>
+{% endblock %}

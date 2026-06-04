@@ -1,0 +1,19 @@
+{
+  "name": "nifty-screener",
+  "version": "1.0.0",
+  "description": "**Find the best Nifty 250 stocks for short-term 10%+ returns in 2-4 weeks.**",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
+}
