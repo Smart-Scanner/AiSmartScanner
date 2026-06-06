@@ -58,17 +58,28 @@ _IST = timezone(timedelta(hours=5, minutes=30))
 
 def _load_env():
     global API_KEY, CLIENT_ID, MPIN, TOTP_SECRET
-    if not ENV_FILE.exists():
-        return
-    for line in ENV_FILE.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip())
+    # If .env file exists (local dev), parse it and set defaults
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+        log.info("Loaded .env file from %s", ENV_FILE)
+    else:
+        log.info("No .env file found — reading credentials from system environment variables")
+
+    # Always read from os.environ (works for both .env and Railway env vars)
     API_KEY = os.environ.get("ANGEL_API_KEY", "")
     CLIENT_ID = os.environ.get("ANGEL_CLIENT_ID", "")
     MPIN = os.environ.get("ANGEL_MPIN", "")
     TOTP_SECRET = os.environ.get("ANGEL_TOTP_SECRET", "")
+
+    log.info("Credentials loaded — API_KEY=%s, CLIENT_ID=%s, MPIN=%s, TOTP=%s",
+             "SET" if API_KEY else "EMPTY",
+             "SET" if CLIENT_ID else "EMPTY",
+             "SET" if MPIN else "EMPTY",
+             "SET" if TOTP_SECRET else "EMPTY")
 
 _load_env()
 
