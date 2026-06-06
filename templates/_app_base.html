@@ -8,6 +8,13 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/v3.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     {% block head %}{% endblock %}
+    <script>
+        // Apply theme before paint to prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('v3_theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
 </head>
 <body>
 <div class="v3-app">
@@ -128,6 +135,9 @@
                 <div class="v3-user-name">{{ user.name if user else 'User' }}</div>
                 <div class="v3-user-role">{{ 'Admin' if is_admin else 'Trader' }}</div>
             </div>
+            <a href="{{ url_for('auth.logout') }}" class="v3-logout-btn" title="Sign out" id="btnLogout">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            </a>
         </div>
     </aside>
 
@@ -170,6 +180,10 @@
             </div>
 
             <div class="v3-header-actions">
+                <button class="v3-action-btn" onclick="toggleDashTheme()" id="btnTheme" title="Toggle light/dark mode">
+                    <svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+                    <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                </button>
                 <button class="v3-action-btn" onclick="triggerScan()" id="btnScan" title="Run Scan">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                     Scan
@@ -262,6 +276,14 @@ function toggleSidebar() {
 }
 if (localStorage.getItem('v3_sidebar_collapsed') === 'true') {
     document.getElementById('v3Sidebar').classList.add('collapsed');
+}
+
+// ── Theme Toggle ────────────────────────────────────────────────
+function toggleDashTheme() {
+    var cur = document.documentElement.getAttribute('data-theme') || 'dark';
+    var next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('v3_theme', next);
 }
 
 // ── Global Search ───────────────────────────────────────────────

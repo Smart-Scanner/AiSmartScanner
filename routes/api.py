@@ -1,5 +1,7 @@
 """API routes — scan, results, live prices, stock detail, export."""
 
+import os
+
 import csv
 import io
 import json
@@ -89,6 +91,8 @@ import db
 import cache_layer
 
 api_bp = Blueprint("api", __name__)
+
+APP_VERSION = os.getenv("APP_VERSION", "v5")
 
 # ─── Phase 10: Detail Page Indicator Cache ───
 DETAIL_CACHE_DIR = Path("cache/detail")
@@ -214,12 +218,8 @@ def get_results():
     def _compute_results():
         results = db.load_results(TOP_N_RESULTS)
         state = scan_state.status()
-        try:
-            universe_size = len(STOCK_UNIVERSE)
-            if universe_size < 1000:
-                universe_size = 2200
-        except Exception:
-            universe_size = 2200
+        uni_stats = get_universe_stats()
+        universe_size = uni_stats.get("total_symbols", 2200)
         return {
             "results": results,
             "total_analyzed": db.get_result_count(),
@@ -556,6 +556,17 @@ def add_custom_stock():
     if not symbol:
         return jsonify({"error": "Symbol required"}), 400
 
+    # Rate limit: 10s cooldown between custom scans (process-local TTLCache)
+    if "last_scan" in cache_layer.custom_scan_limiter:
+        return jsonify({"error": "Too fast. Wait 10 seconds between additions."}), 429
+
+    # Cap total custom stocks
+    existing = db.get_custom_stocks()
+    if len(existing) >= 50:
+        return jsonify({"error": "Maximum 50 custom stocks allowed."}), 400
+
+    cache_layer.custom_scan_limiter["last_scan"] = True  # auto-expires in 10s
+
     db.add_custom_stock(symbol, "NSE", body.get("note", ""))
     try:
         nifty_1m = db.get_meta("nifty50_1m", 0)
@@ -587,6 +598,19 @@ def get_git_commit_sha():
 
 @api_bp.route("/api/health")
 def health():
+    """Ultra-lightweight health check for Railway and uptime monitors.
+    Zero DB calls — just confirms the process is alive."""
+    return jsonify({
+        "status": "ok",
+        "version": APP_VERSION,
+        "ts": int(time.time()),
+    })
+
+
+@api_bp.route("/api/debug/health")
+@admin_required
+def debug_health():
+    """Full diagnostics endpoint — admin only."""
     try:
         db_info = db.db_stats()
     except Exception:
@@ -601,7 +625,6 @@ def health():
     except Exception:
         yf_info = {}
     from metrics import timer
-    # Phase 8: MarketAux queue stats
     try:
         from scanner import get_marketaux_queue_depth, get_marketaux_overflow_count
         mx_depth = get_marketaux_queue_depth()
@@ -609,7 +632,6 @@ def health():
     except Exception:
         mx_depth = 0
         mx_overflow = 0
-    # Phase 11: Counters
     try:
         from metrics import counters
         app_counters = counters.get_all()
@@ -621,9 +643,10 @@ def health():
         dlq_count = 0
     return jsonify({
         "status": "ok",
-        "app_version": "v5.0-production",
+        "version": APP_VERSION,
         "git_commit_sha": get_git_commit_sha(),
-        "build_date": "2026-06-05",
+        "build_date": "2026-06-06",
+        "ts": int(time.time()),
         "universe": uni,
         "db_results": db_info.get("results", 0),
         "db_size_kb": db_info.get("db_size_kb", 0),
@@ -807,6 +830,7 @@ def get_all_scanned_stocks():
 
 
 @api_bp.route("/api/top-candidates")
+@admin_required
 def get_top_candidates():
     """Return candidates divided into Swing, News-based, Breakouts, Underdogs, and Golden Stocks."""
     results = db.load_results(TOP_N_RESULTS)
@@ -873,16 +897,18 @@ def get_watchlist_details():
 
 @api_bp.route("/api/news")
 def get_recent_news():
-    """Return recent news articles scanned from GDELT/MarketAux."""
-    rows = db.execute_db("SELECT symbol, title, url, source, raw_score as score, scanned_at FROM news_articles ORDER BY scanned_at DESC LIMIT 100", fetch="all")
-    return jsonify({"news": rows})
+    """Return recent news articles. Cached 60s."""
+    def _compute():
+        return db.execute_db("SELECT symbol, title, url, source, raw_score as score, scanned_at FROM news_articles ORDER BY scanned_at DESC LIMIT 100", fetch="all")
+    return jsonify({"news": cache_layer.get_or_compute(cache_layer.news_cache, "news", _compute)})
 
 
 @api_bp.route("/api/sentiment")
 def get_sentiments():
-    """Return recent news sentiment scores."""
-    rows = db.execute_db("SELECT symbol, gdelt_sentiment, gdelt_spike, final_sentiment_score as score, updated_at FROM sentiment_scores ORDER BY updated_at DESC LIMIT 100", fetch="all")
-    return jsonify({"sentiments": rows})
+    """Return recent news sentiment scores. Cached 60s."""
+    def _compute():
+        return db.execute_db("SELECT symbol, gdelt_sentiment, gdelt_spike, final_sentiment_score as score, updated_at FROM sentiment_scores ORDER BY updated_at DESC LIMIT 100", fetch="all")
+    return jsonify({"sentiments": cache_layer.get_or_compute(cache_layer.news_cache, "sentiment", _compute)})
 
 
 @api_bp.route("/api/breakouts")
@@ -894,6 +920,7 @@ def get_breakouts():
 
 
 @api_bp.route("/api/underdogs")
+@admin_required
 def get_underdog_list():
     """Return top underdog swing candidate picks."""
     results = db.load_results(TOP_N_RESULTS)
@@ -909,6 +936,7 @@ def get_underdog_list():
 
 
 @api_bp.route("/api/market-overview")
+@admin_required
 def get_market_overview():
     """Return macro and global indexes data."""
     try:

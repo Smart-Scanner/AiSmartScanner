@@ -63,6 +63,49 @@
     --glass-bg: rgba(26, 35, 50, 0.85);
 }
 
+/* ── Light Mode Tokens ─────────────────────────────────────────── */
+[data-theme="light"] {
+    --bg-primary: #F8FAFC;
+    --bg-secondary: #FFFFFF;
+    --bg-card: #FFFFFF;
+    --bg-card-hover: #F1F5F9;
+    --bg-elevated: #E2E8F0;
+    --border: #E2E8F0;
+    --border-light: #CBD5E1;
+    --border-subtle: #F1F5F9;
+
+    --text-primary: #0F172A;
+    --text-secondary: #475569;
+    --text-muted: #94A3B8;
+    --text-dim: #64748B;
+
+    --accent-blue: #2563EB;
+    --accent-blue-hover: #1D4ED8;
+    --accent-blue-soft: rgba(37, 99, 235, 0.08);
+    --accent-cyan: #0891B2;
+    --accent-cyan-soft: rgba(8, 145, 178, 0.08);
+
+    --success: #16A34A;
+    --success-soft: rgba(22, 163, 74, 0.08);
+    --success-border: rgba(22, 163, 74, 0.2);
+    --warning: #D97706;
+    --warning-soft: rgba(217, 119, 6, 0.08);
+    --warning-border: rgba(217, 119, 6, 0.2);
+    --danger: #DC2626;
+    --danger-soft: rgba(220, 38, 38, 0.08);
+    --danger-border: rgba(220, 38, 38, 0.2);
+    --golden: #D97706;
+    --golden-soft: rgba(217, 119, 6, 0.08);
+    --golden-border: rgba(217, 119, 6, 0.2);
+
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.06);
+    --shadow-lg: 0 8px 32px rgba(0,0,0,0.1);
+    --shadow-glow: 0 0 20px rgba(37, 99, 235, 0.08);
+
+    --glass-bg: rgba(255, 255, 255, 0.85);
+}
+
 /* ── Reset & Base ───────────────────────────────────────────────── */
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -292,6 +335,26 @@ a:hover { color: var(--accent-cyan); }
 
 .v3-sidebar.collapsed .v3-user-info { display: none; }
 
+/* ── Logout Button ─────────────────────────────────────────────── */
+.v3-logout-btn {
+    width: 32px; height: 32px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all var(--transition);
+    flex-shrink: 0;
+    margin-left: auto;
+    text-decoration: none;
+}
+.v3-logout-btn:hover {
+    border-color: var(--danger-border);
+    color: var(--danger);
+    background: var(--danger-soft);
+}
+
 /* ── Command Center Header ──────────────────────────────────────── */
 .v3-header {
     height: var(--header-height);
@@ -516,6 +579,17 @@ a:hover { color: var(--accent-cyan); }
 }
 
 .v3-action-btn svg { width: 14px; height: 14px; }
+
+/* ── Theme Toggle Icons ────────────────────────────────────────── */
+.theme-icon-sun { display: block; }
+.theme-icon-moon { display: none; }
+[data-theme="light"] .theme-icon-sun { display: none; }
+[data-theme="light"] .theme-icon-moon { display: block; }
+
+/* ── Light mode scrollbar ──────────────────────────────────────── */
+[data-theme="light"] .v3-content::-webkit-scrollbar-thumb { background: #CBD5E1; }
+[data-theme="light"] .v3-content::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+[data-theme="light"] .v3-sidebar-nav::-webkit-scrollbar-thumb { background: #CBD5E1; }
 
 /* ── KPI Cards ──────────────────────────────────────────────────── */
 .v3-kpi-grid {

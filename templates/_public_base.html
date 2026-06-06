@@ -116,9 +116,8 @@
                 <span class="wordmark">AI Smart Screener</span>
             </a>
             <div class="nav-links">
-                <a href="{{ url_for('pages.index') }}#features" class="{% if active=='home' %}active{% endif %}">Features</a>
+                <a href="{{ url_for('pages.index') }}#capabilities" class="{% if active=='home' %}active{% endif %}">Features</a>
                 <a href="{{ url_for('pages.about') }}" class="{% if active=='about' %}active{% endif %}">About</a>
-                <a href="{{ url_for('pages.contact') }}" class="{% if active=='contact' %}active{% endif %}">Contact</a>
             </div>
             <div class="nav-cta">
                 <button class="theme-toggle" onclick="toggleTheme()" title="Toggle light / dark mode" aria-label="Toggle theme">
@@ -131,7 +130,7 @@
                     </a>
                 {% else %}
                     <a href="{{ url_for('auth.local_login') }}" class="btn btn-ghost">Sign in</a>
-                    <a href="{{ url_for('auth.local_login') }}" class="btn btn-primary">Get started
+                    <a href="{{ url_for('auth.local_login') }}" class="btn btn-primary">Launch Dashboard
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                     </a>
                 {% endif %}
@@ -157,7 +156,6 @@
             <div class="footer-col">
                 <h4>Company</h4>
                 <a href="{{ url_for('pages.about') }}">About</a>
-                <a href="{{ url_for('pages.contact') }}">Contact</a>
             </div>
             <div class="footer-col">
                 <h4>Resources</h4>

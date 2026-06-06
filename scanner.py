@@ -459,6 +459,13 @@ def run_full_scan():
         # Subscribe all to live feed
         live_feed.subscribe([r["symbol"] for r in results])
 
+        # Clean up stale detail cache files (72h retention)
+        try:
+            from cache_layer import cleanup_detail_cache
+            cleanup_detail_cache()
+        except Exception:
+            pass
+
     except Exception as exc:
         log.error("Scan failed: %s", exc)
         scan_state.complete(success=False, error_message=str(exc)[:500])
