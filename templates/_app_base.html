@@ -778,24 +778,16 @@ function updateCommandCenter() {
         const regimeEl = document.getElementById('headerRegime');
         regimeEl.textContent = (data.market_regime || '—').toUpperCase();
         regimeEl.className = 'v3-regime-badge ' + (regime.includes('bull') ? 'bullish' : regime.includes('bear') ? 'bearish' : 'sideways');
-    }).catch(() => {});
 
-    // Load stock list for search
-    fetch('/api/results').then(r => r.json()).then(data => {
-        const results = data.results || (Array.isArray(data) ? data : []);
-        if (results.length) {
-            allStocks = results.map(s => ({ symbol: s.symbol, sector: s.sector || '', score: s.score || 0 }));
-            // Update sidebar badges
-            const hc = results.filter(s => s.high_conviction).length;
-            const golden = results.filter(s => s.is_golden).length;
-            document.getElementById('hcCount').textContent = hc || '—';
-            document.getElementById('goldenCount').textContent = golden || '—';
-            // Breadth
-            const adv = results.filter(s => (s.change_pct || s.price_change_pct || 0) > 0).length;
-            const dec = results.filter(s => (s.change_pct || s.price_change_pct || 0) < 0).length;
-            const ratio = dec > 0 ? (adv / dec).toFixed(2) : adv > 0 ? '∞' : '1.00';
-            document.getElementById('headerBreadth').textContent = ratio;
-        }
+        // Update sidebar badges from status directly
+        document.getElementById('hcCount').textContent = data.hc_count !== undefined ? data.hc_count : '—';
+        document.getElementById('goldenCount').textContent = data.golden_count !== undefined ? data.golden_count : '—';
+
+        // Breadth from status directly
+        const adv = data.adv_count || 0;
+        const dec = data.dec_count || 0;
+        const ratio = dec > 0 ? (adv / dec).toFixed(2) : adv > 0 ? '∞' : '1.00';
+        document.getElementById('headerBreadth').textContent = ratio;
     }).catch(() => {});
 
     // Leading sector
@@ -827,6 +819,11 @@ function exportPicks() {
 // ── Init ────────────────────────────────────────────────────────
 updateCommandCenter();
 setInterval(updateCommandCenter, 30000);
+
+// Load stock list for search once on page load
+fetch('/api/search-list').then(r => r.json()).then(data => {
+    allStocks = data || [];
+}).catch(() => {});
 </script>
 
 {% block scripts %}{% endblock %}

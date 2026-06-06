@@ -23,6 +23,8 @@ sector_cache = TTLCache(maxsize=5, ttl=30)
 stats_cache = TTLCache(maxsize=5, ttl=60)
 dashboard_cache = TTLCache(maxsize=5, ttl=10)
 status_cache = TTLCache(maxsize=5, ttl=5)
+search_cache = TTLCache(maxsize=5, ttl=60)
+
 
 
 def get_or_compute(cache, key, compute_fn):
@@ -47,7 +49,8 @@ def invalidate_results():
     """Call after scan completes to force fresh data on next request."""
     results_cache.clear()
     dashboard_cache.clear()
-    log.info("Cache invalidated: results + dashboard")
+    search_cache.clear()
+    log.info("Cache invalidated: results + dashboard + search")
 
 
 def invalidate_stats():
@@ -64,4 +67,6 @@ def invalidate_all():
     stats_cache.clear()
     dashboard_cache.clear()
     status_cache.clear()
+    search_cache.clear()
     log.info("Cache invalidated: ALL")
+

@@ -1018,8 +1018,9 @@ let symSugIdx = -1;
 
 async function loadStockList(){
     try{
-        const d = await api('/api/results');
-        if(d.results) allStocks = d.results;
+        const d = await api('/api/search-list');
+        if(Array.isArray(d)) allStocks = d;
+        else if(d.results) allStocks = d.results;
     }catch(e){}
 }
 loadStockList();

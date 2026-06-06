@@ -170,10 +170,15 @@ async function loadWatchlistData() {
     if (!wl.length) { renderWatchlist(); return; }
 
     try {
-        const resp = await fetch('/api/results');
+        const symbols = wl.map(w => w.symbol);
+        const resp = await fetch('/api/watchlist/details', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbols })
+        });
         const data = await resp.json();
-        const results = data.results || [];
-        results.forEach(r => { wlResults[r.symbol || r.name] = r; });
+        const stocks = data.stocks || {};
+        Object.entries(stocks).forEach(([sym, r]) => { wlResults[sym] = r; });
     } catch (e) {
         console.warn('Could not load results for watchlist:', e);
     }

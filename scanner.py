@@ -350,7 +350,6 @@ def run_full_scan():
                     if r:
                         results.append(r)
                         scored_set.add(sym)
-                        db.save_results([r])  # immediate DB write
                 else:
                     failed_symbols.append(sym)
             except Exception:

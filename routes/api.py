@@ -111,6 +111,33 @@ def force_scan():
 def scan_status():
     def _compute():
         state = scan_state.status()
+        hc_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE high_conviction = 1", fetch="count")
+        
+        # Use PG syntax when available and healthy; fallback to SQLite-safe syntax
+        # to avoid crashes when execute_db silently falls back to SQLite
+        use_pg = db.is_postgresql() and not db.pg_cooldown_active()
+        try:
+            if use_pg:
+                golden_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE (data->>'is_golden')::text = 'true' OR (data->>'is_golden')::text = '1'", fetch="count")
+            else:
+                raise Exception("use sqlite")
+        except Exception:
+            golden_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE json_extract(data, '$.is_golden') = 1 OR json_extract(data, '$.is_golden') = 'true'", fetch="count")
+        try:
+            if use_pg:
+                adv_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE (data->>'change_pct')::numeric > 0 OR (data->>'price_change_pct')::numeric > 0", fetch="count")
+            else:
+                raise Exception("use sqlite")
+        except Exception:
+            adv_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE CAST(json_extract(data, '$.change_pct') AS REAL) > 0 OR CAST(json_extract(data, '$.price_change_pct') AS REAL) > 0", fetch="count")
+        try:
+            if use_pg:
+                dec_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE (data->>'change_pct')::numeric < 0 OR (data->>'price_change_pct')::numeric < 0", fetch="count")
+            else:
+                raise Exception("use sqlite")
+        except Exception:
+            dec_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE CAST(json_extract(data, '$.change_pct') AS REAL) < 0 OR CAST(json_extract(data, '$.price_change_pct') AS REAL) < 0", fetch="count")
+            
         return {
             "scanning": state["scanning"],
             "progress": state["progress"],
@@ -118,8 +145,32 @@ def scan_status():
             "last_scan": db.get_meta("last_scan"),
             "market_regime": db.get_meta("market_regime", "unknown"),
             "login_status": db.get_meta("angel_login_status", {}),
+            "hc_count": hc_count,
+            "golden_count": golden_count,
+            "adv_count": adv_count,
+            "dec_count": dec_count,
         }
     return jsonify(cache_layer.get_or_compute(cache_layer.status_cache, "status", _compute))
+
+
+@api_bp.route("/api/search-list")
+def get_search_list():
+    def _compute():
+        results = db.get_all_results()
+        search_list = []
+        for r in results:
+            search_list.append({
+                "symbol": r.get("symbol"),
+                "sector": r.get("sector", ""),
+                "score": r.get("score", 0),
+                "price": r.get("price", 0.0),
+                "high_conviction": bool(r.get("high_conviction", False)),
+                "is_golden": bool(r.get("is_golden", False))
+            })
+        return search_list
+    data = cache_layer.get_or_compute(cache_layer.search_cache, "search-list", _compute)
+    return jsonify(data)
+
 
 
 @api_bp.route("/api/results")
@@ -762,10 +813,26 @@ def get_top_candidates():
 @api_bp.route("/api/golden")
 def get_golden_list():
     """Return top golden stocks."""
-    results = db.load_results(TOP_N_RESULTS)
-    golden_c = [r for r in results if r.get("is_golden", False)]
-    golden = sorted(golden_c, key=lambda x: x.get("score", 0), reverse=True)[:20]
+    golden = db.load_golden_results(100)
     return jsonify({"golden": golden})
+
+
+@api_bp.route("/api/high-conviction")
+def get_high_conviction():
+    """Return top high conviction stocks."""
+    hc = db.load_high_conviction_results(100)
+    return jsonify({"high_conviction": hc})
+
+
+@api_bp.route("/api/watchlist/details", methods=["POST"])
+def get_watchlist_details():
+    """Return stock metadata for a list of watchlist symbols."""
+    body = request.get_json(silent=True) or {}
+    symbols = body.get("symbols", [])
+    if not symbols:
+        return jsonify({"stocks": {}})
+    stocks_map = db.get_stocks_map(symbols)
+    return jsonify({"stocks": stocks_map})
 
 
 @api_bp.route("/api/news")
@@ -785,9 +852,9 @@ def get_sentiments():
 @api_bp.route("/api/breakouts")
 def get_breakouts():
     """Return stocks currently triggering breakout alerts."""
-    results = db.load_results(TOP_N_RESULTS)
-    breakouts = [r for r in results if r.get("is_breakout", False)]
+    breakouts = db.load_breakout_results(100)
     return jsonify({"breakouts": breakouts})
+
 
 
 @api_bp.route("/api/underdogs")

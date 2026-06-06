@@ -154,6 +154,8 @@ def execute_db(query: str, params=None, fetch: str = None):
     - SQLite path: fresh connect() per call (WAL mode, thread-safe reads).
     - Automatically translates '?' placeholders to '%s' for PG.
     - Falls through to SQLite on any PG failure (with 60s cooldown).
+    - Pool exhaustion: if getconn() would block, falls through to SQLite
+      immediately instead of hanging the Flask request thread.
     """
     global _pg_cooldown_until, _pg_pool
     from metrics import counters
@@ -175,17 +177,24 @@ def execute_db(query: str, params=None, fetch: str = None):
                     cur.execute(query_pg, params or ())
                     return _collect_result(cur, fetch)
             except Exception as exc:
-                log.error("PG execute failed: %s | Query: %.200s", exc, query)
-                counters.inc("db_failures")
-                _pg_cooldown_until = time.time() + 60
-                # Destroy the failed connection so the pool doesn't reuse it
-                if conn:
-                    try:
-                        pool.putconn(conn, close=True)
-                    except Exception:
-                        pass
-                    conn = None
-                # fall through to SQLite
+                if "PoolError" in type(exc).__name__ or "connection pool exhausted" in str(exc).lower():
+                    # Pool exhausted — all connections in use
+                    log.warning("PG pool exhausted, falling back to SQLite | Query: %.100s", query)
+                    counters.inc("db_pool_exhausted")
+                    conn = None  # no connection to return
+                    # fall through to SQLite (no cooldown — pool is fine, just busy)
+                else:
+                    log.error("PG execute failed: %s | Query: %.200s", exc, query)
+                    counters.inc("db_failures")
+                    _pg_cooldown_until = time.time() + 60
+                    # Destroy the failed connection so the pool doesn't reuse it
+                    if conn:
+                        try:
+                            pool.putconn(conn, close=True)
+                        except Exception:
+                            pass
+                        conn = None
+                    # fall through to SQLite
             finally:
                 if conn:
                     try:
@@ -549,6 +558,7 @@ def init_db():
                     CREATE INDEX IF NOT EXISTS idx_scan_results_score ON scan_results(score DESC);
                     CREATE INDEX IF NOT EXISTS idx_scan_results_hc ON scan_results(high_conviction) WHERE high_conviction = 1;
                     CREATE INDEX IF NOT EXISTS idx_paper_trades_model ON paper_trades(model_version);
+                    CREATE INDEX IF NOT EXISTS idx_news_articles_symbol ON news_articles(symbol);
                 """)
 
                 log.info("PostgreSQL tables checked/created.")
@@ -904,6 +914,7 @@ def _init_sqlite():
         conn.executescript("""
             CREATE INDEX IF NOT EXISTS idx_scan_results_score ON scan_results(score DESC);
             CREATE INDEX IF NOT EXISTS idx_scan_results_hc ON scan_results(high_conviction);
+            CREATE INDEX IF NOT EXISTS idx_news_articles_symbol ON news_articles(symbol);
         """)
 
         log.info("SQLite Database initialized: %s", DB_PATH)
@@ -1650,6 +1661,72 @@ def _parse_data_column(val):
 def load_results(limit: int = 750) -> list[dict]:
     """Load scan results from DB, ordered by score."""
     rows = execute_db("SELECT data FROM scan_results ORDER BY score DESC LIMIT ?", (limit,), fetch="all")
+    results = []
+    for row in rows:
+        try:
+            r = _parse_data_column(row["data"])
+            if r:
+                _ensure_trade_populated(r)
+                results.append(r)
+        except Exception:
+            pass
+    return results
+
+
+def load_golden_results(limit: int = 100) -> list[dict]:
+    """Load Golden stocks from DB, ordered by score.
+    
+    Uses PG JSONB syntax when PostgreSQL is active, with automatic
+    fallback to SQLite json_extract if PG connection fails mid-request.
+    """
+    pg_query = "SELECT data FROM scan_results WHERE (data->>'is_golden')::text = 'true' OR (data->>'is_golden')::text = '1' ORDER BY score DESC LIMIT ?"
+    sqlite_query = "SELECT data FROM scan_results WHERE json_extract(data, '$.is_golden') = 1 OR json_extract(data, '$.is_golden') = 'true' ORDER BY score DESC LIMIT ?"
+    try:
+        query = pg_query if is_postgresql() and not pg_cooldown_active() else sqlite_query
+        rows = execute_db(query, (limit,), fetch="all")
+    except Exception:
+        rows = _execute_sqlite(sqlite_query, (limit,), "all")
+    results = []
+    for row in (rows or []):
+        try:
+            r = _parse_data_column(row["data"])
+            if r:
+                _ensure_trade_populated(r)
+                results.append(r)
+        except Exception:
+            pass
+    return results
+
+
+def load_breakout_results(limit: int = 100) -> list[dict]:
+    """Load Breakout stocks from DB, ordered by score.
+    
+    Uses PG JSONB syntax when PostgreSQL is active, with automatic
+    fallback to SQLite json_extract if PG connection fails mid-request.
+    """
+    pg_query = "SELECT data FROM scan_results WHERE (data->>'is_breakout')::text = 'true' OR (data->>'is_breakout')::text = '1' ORDER BY score DESC LIMIT ?"
+    sqlite_query = "SELECT data FROM scan_results WHERE json_extract(data, '$.is_breakout') = 1 OR json_extract(data, '$.is_breakout') = 'true' ORDER BY score DESC LIMIT ?"
+    try:
+        query = pg_query if is_postgresql() and not pg_cooldown_active() else sqlite_query
+        rows = execute_db(query, (limit,), fetch="all")
+    except Exception:
+        rows = _execute_sqlite(sqlite_query, (limit,), "all")
+    results = []
+    for row in (rows or []):
+        try:
+            r = _parse_data_column(row["data"])
+            if r:
+                _ensure_trade_populated(r)
+                results.append(r)
+        except Exception:
+            pass
+    return results
+
+
+def load_high_conviction_results(limit: int = 100) -> list[dict]:
+    """Load High Conviction stocks from DB, ordered by score."""
+    query = "SELECT data FROM scan_results WHERE high_conviction = 1 ORDER BY score DESC LIMIT ?"
+    rows = execute_db(query, (limit,), fetch="all")
     results = []
     for row in rows:
         try:
