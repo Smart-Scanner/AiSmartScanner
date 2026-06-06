@@ -214,6 +214,14 @@ function confBadge(score) {
     return `<div class="v3-confidence ${level}" style="margin-top:4px"><span class="v3-confidence-dot"></span>${Math.round(score)}% ${label}</div>`;
 }
 
+function calcConfidence(s) {
+    const tech100 = Math.min(100, (s.technical_score || 0) / 30 * 100);
+    const earn100 = Math.min(100, (s.earnings_momentum_score || 0) / 15 * 100);
+    const sm100 = s.smart_money_100 || Math.min(100, (s.smart_money_score || 0) / 10 * 100);
+    const fund100 = Math.min(100, (s.fundamental_score || 0) / 10 * 100);
+    return Math.round(Math.min(100, Math.max(0, tech100 * 0.30 + earn100 * 0.25 + sm100 * 0.25 + fund100 * 0.20)));
+}
+
 function scoreBadge(score) {
     const cls = score >= 80 ? 'excellent' : score >= 65 ? 'good' : score >= 50 ? 'average' : 'poor';
     return `<div class="v3-score ${cls}">${score}</div>`;
@@ -274,7 +282,7 @@ async function loadPageData() {
             document.getElementById('breadthUnch').textContent = unch;
 
             document.getElementById('briefSummary').textContent = `${results.length} stocks scanned. Regime: ${status.market_regime||'Unknown'}. A/D ${ratio}. ${adv} advancing, ${dec} declining.`;
-            const avgConf = Math.round(results.filter(s => s.confidence_score).reduce((a,s) => a + (s.confidence_score||0), 0) / (results.filter(s => s.confidence_score).length || 1));
+            const avgConf = Math.round(results.reduce((a,s) => a + calcConfidence(s), 0) / (results.length || 1));
             document.getElementById('briefInsight').textContent = `Focus on Score 75+. ${hc.length} HC picks, ${golden.length} golden. Avg confidence: ${avgConf}%.`;
             const highRisk = results.filter(s => (s.risk_score||0) > 50).length;
             document.getElementById('briefRisk').textContent = `${highRisk} stocks elevated risk (>50). ${dec} declining in universe.`;
@@ -295,7 +303,7 @@ async function loadPageData() {
             ].filter(c => c.stock);
 
             document.getElementById('researchPriorities').innerHTML = priorities.map(c => {
-                const s = c.stock; const conf = s.confidence_score || 0;
+                const s = c.stock; const conf = calcConfidence(s);
                 return `<div class="v3-opportunity-card" onclick="openDrawerForSymbol('${s.symbol}')">
                     <div class="v3-opportunity-type">${c.type}</div>
                     <div style="display:flex;justify-content:space-between;align-items:flex-start">
@@ -311,7 +319,7 @@ async function loadPageData() {
             }).join('');
 
             if (sorted[0]) {
-                const best = sorted[0]; const bConf = best.confidence_score || 0;
+                const best = sorted[0]; const bConf = calcConfidence(best);
                 document.getElementById('briefBestOpp').textContent = `${best.symbol} (Score ${best.score}, Confidence ${Math.round(bConf)}%) " ${sigText((best.signals||[])[0]) || 'Top ranked'}`;
             }
 

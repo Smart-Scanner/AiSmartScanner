@@ -29,12 +29,6 @@ log = logging.getLogger("db")
 DB_PATH = Path(__file__).parent / "cache" / "screener.db"
 
 DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
-print("DATABASE_URL EXISTS:", bool(DATABASE_URL))
-
-if DATABASE_URL:
-    print("DATABASE_URL STARTS WITH POSTGRES:",
-          DATABASE_URL.startswith(("postgres://", "postgresql://")))
-    print("DATABASE_URL LENGTH:", len(DATABASE_URL))
 
 
 def is_postgresql() -> bool:
@@ -74,7 +68,7 @@ def _get_pg_pool():
         try:
             import psycopg2.pool
             url = _normalize_pg_url(DATABASE_URL)
-            max_conn = int(os.getenv("MAX_DB_CONNECTIONS", "10"))
+            max_conn = int(os.getenv("MAX_DB_CONNECTIONS", "15"))
             _pg_pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=1,
                 maxconn=max_conn,
@@ -190,11 +184,26 @@ def execute_db(query: str, params=None, fetch: str = None):
                     return _collect_result(cur, fetch)
             except Exception as exc:
                 if "PoolError" in type(exc).__name__ or "connection pool exhausted" in str(exc).lower():
-                    # Pool exhausted — all connections in use
-                    log.warning("PG pool exhausted, falling back to SQLite | Query: %.100s", query)
-                    counters.inc("db_pool_exhausted")
+                    # Pool exhausted — retry once after 50ms (connection likely freed)
                     conn = None  # no connection to return
-                    # fall through to SQLite (no cooldown — pool is fine, just busy)
+                    time.sleep(0.05)
+                    try:
+                        conn = pool.getconn()
+                        conn.autocommit = True
+                        query_pg = query.replace("?", "%s")
+                        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                            cur.execute(query_pg, params or ())
+                            return _collect_result(cur, fetch)
+                    except Exception:
+                        log.warning("PG pool exhausted after retry, falling back to SQLite | Query: %.100s", query)
+                        counters.inc("db_pool_exhausted")
+                        if conn:
+                            try:
+                                pool.putconn(conn)
+                            except Exception:
+                                pass
+                            conn = None
+                        # fall through to SQLite (no cooldown — pool is fine, just busy)
                 else:
                     log.error("PG execute failed: %s | Query: %.200s", exc, query)
                     counters.inc("db_failures")
@@ -578,9 +587,9 @@ def init_db():
                 conn.close()
         except Exception as exc:
             log.error("init_db PG failed: %s — falling back to SQLite init", exc)
-            _init_sqlite()
-    else:
-        _init_sqlite()
+
+    # Always init SQLite tables as safety net for pool-exhaustion fallback
+    _init_sqlite()
 
     auto_clear_daily_cache()
 
