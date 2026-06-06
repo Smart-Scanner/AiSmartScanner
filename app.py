@@ -43,7 +43,7 @@ from analyzer import fetch_and_analyze
 from routes.pages import pages_bp
 from routes.api import api_bp
 from routes.portfolio import portfolio_bp
-from routes.auth import auth_bp, init_oauth
+from routes.auth import auth_bp
 from routes.admin import admin_bp
 
 # ---------------------------------------------------------------------------
@@ -81,9 +81,6 @@ app.register_blueprint(admin_bp)
 app.register_blueprint(pages_bp)
 app.register_blueprint(api_bp)
 app.register_blueprint(portfolio_bp)
-
-# Initialize Google OAuth client
-init_oauth(app)
 
 
 @app.context_processor

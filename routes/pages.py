@@ -61,9 +61,6 @@ def index():
         plans = auth_db.list_plans(active_only=True)
         return render_template("landing.html", plans=plans, active="home")
 
-    if not user["is_admin"] and not session.get("device_verified"):
-        return redirect(url_for("auth.device_verify"))
-
     if not user["is_admin"] and not _has_access(user):
         return redirect(url_for("pages.subscribe"))
 

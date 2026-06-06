@@ -120,7 +120,6 @@ def dashboard():
     users = auth_db.list_all_users_with_plan()
     plans = auth_db.list_plans()
     admins = auth_db.list_admins()
-    pending_devices = auth_db.list_pending_devices()
     pending_payments = auth_db.list_pending_payments()
 
     enriched_users = []
@@ -138,7 +137,6 @@ def dashboard():
         users=enriched_users,
         plans=plans,
         admins=admins,
-        pending_devices=pending_devices,
         pending_payments=pending_payments,
         trial_days=trial_days,
     )
@@ -254,25 +252,6 @@ def admins_demote(user_id):
         return _redir("admins", "no-self-demote")
     auth_db.set_user_admin(user_id, False)
     return _redir("admins", "admin-demoted")
-
-
-# ───────────────────────── devices ─────────────────────────
-
-@admin_bp.route("/devices/<int:device_id>/approve", methods=["POST"])
-@admin_required
-def devices_approve(device_id):
-    approver = session.get("email", "")
-    msg = "device-approved" if auth_db.approve_pending_device(device_id, approver) else "device-not-found"
-    return _redir("devices", msg)
-
-
-@admin_bp.route("/devices/<int:device_id>/reject", methods=["POST"])
-@admin_required
-def devices_reject(device_id):
-    rejector = session.get("email", "")
-    msg = "device-rejected" if auth_db.reject_pending_device(device_id, rejector) else "device-not-found"
-    return _redir("devices", msg)
-
 
 # ───────────────────────── users (subscription actions) ─────────────────────────
 

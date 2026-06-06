@@ -4,20 +4,10 @@ import os
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Auth — Google OAuth
-# Admins live in auth.db (users.is_admin); seed initial admins with
-#   python scripts/add_admin.py <email>
 # ---------------------------------------------------------------------------
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+# Auth — Session Secret Key
+# ---------------------------------------------------------------------------
 FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "")
-
-# fingerprint.com Pro (device binding). Public key is embedded in HTML; secret
-# key is used server-side to verify the visitorId via the Server API.
-# Without the secret key the system falls back to trusting the client (OSS-equivalent).
-FINGERPRINT_PUBLIC_KEY = os.environ.get("FINGERPRINT_PUBLIC_KEY", "")
-FINGERPRINT_SECRET_KEY = os.environ.get("FINGERPRINT_SECRET_KEY", "")
-FINGERPRINT_API_REGION = os.environ.get("FINGERPRINT_API_REGION", "us").lower()  # us|eu|ap
 
 # Paths
 CACHE_DIR = Path(__file__).parent / "cache"

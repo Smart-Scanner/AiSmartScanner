@@ -158,7 +158,6 @@
 <nav class="tabs">
     <button class="tab" data-tab="payments">Payments {% if pending_payments %}<span class="count" style="margin-left:6px;background:rgba(0,200,255,0.2);color:#00C8FF;border-color:rgba(0,200,255,0.4)">{{ pending_payments|length }}</span>{% endif %}</button>
     <button class="tab" data-tab="users">Users <span class="count" style="margin-left:6px">{{ users|length }}</span></button>
-    <button class="tab" data-tab="devices">Devices {% if pending_devices %}<span class="count" style="margin-left:6px;background:rgba(0,200,255,0.2);color:#00C8FF;border-color:rgba(0,200,255,0.4)">{{ pending_devices|length }}</span>{% endif %}</button>
     <button class="tab" data-tab="plans">Plans <span class="count" style="margin-left:6px">{{ plans|length }}</span></button>
     <button class="tab" data-tab="settings">Settings</button>
     <button class="tab" data-tab="admins">Admins <span class="count" style="margin-left:6px">{{ admins|length }}</span></button>
@@ -304,54 +303,6 @@
         </div>
     </section>
 
-    <!-- ====================== DEVICES ====================== -->
-    <section class="pane" data-pane="devices">
-        <div class="pane-head">
-            <h2>Pending devices</h2>
-            <span class="count">{{ pending_devices|length }} awaiting approval</span>
-        </div>
-        <div class="panel">
-        {% if pending_devices %}
-        <table>
-            <thead>
-                <tr>
-                    <th>User</th>
-                    <th>Device fingerprint</th>
-                    <th>Browser / IP</th>
-                    <th>First seen</th>
-                    <th style="text-align:right">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-            {% for d in pending_devices %}
-                <tr>
-                    <td class="col-email">{{ d.user_email }}<div class="small">{{ d.user_name }}</div></td>
-                    <td class="mono" style="max-width:160px;overflow:hidden;text-overflow:ellipsis" title="{{ d.visitor_id }}">{{ d.visitor_id[:18] }}…</td>
-                    <td class="col-sub" style="max-width:280px">
-                        <div style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ d.user_agent }}">{{ d.user_agent }}</div>
-                        <div class="mono small">{{ d.ip }}</div>
-                    </td>
-                    <td class="mono">{{ d.first_seen_at[:19] }}</td>
-                    <td class="actions" style="text-align:right">
-                        <form method="POST" action="{{ url_for('admin.devices_approve', device_id=d.id) }}"
-                              onsubmit="return confirm('Approve this device? The user\'s current active device will be revoked.')">
-                            <button type="submit" class="btn btn-sm btn-primary">Approve</button>
-                        </form>
-                        <form method="POST" action="{{ url_for('admin.devices_reject', device_id=d.id) }}"
-                              onsubmit="return confirm('Reject this device claim?')">
-                            <button type="submit" class="btn btn-sm btn-danger">Reject</button>
-                        </form>
-                    </td>
-                </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="empty">No devices awaiting approval.</div>
-        {% endif %}
-        </div>
-        <p class="small" style="margin-top:10px">Approving a new device automatically revokes the user's existing active device.</p>
-    </section>
 
     <!-- ====================== PLANS ====================== -->
     <section class="pane" data-pane="plans">
