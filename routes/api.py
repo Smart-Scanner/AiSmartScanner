@@ -212,33 +212,58 @@ def get_search_list():
 
 @api_bp.route("/api/results")
 def get_results():
+    t_start = time.perf_counter()
     sort_by = request.args.get("sort", "score")
     order = request.args.get("order", "desc")
 
+    timings = {"cache_hit": True, "load_results": 0.0, "status": 0.0, "universe": 0.0, "meta": 0.0}
+
     def _compute_results():
+        timings["cache_hit"] = False
+        
+        t0 = time.perf_counter()
         results = db.load_results(TOP_N_RESULTS)
+        timings["load_results"] = round((time.perf_counter() - t0) * 1000, 2)
+        
+        t0 = time.perf_counter()
         state = scan_state.status()
+        timings["status"] = round((time.perf_counter() - t0) * 1000, 2)
+        
+        t0 = time.perf_counter()
         uni_stats = get_universe_stats()
         universe_size = uni_stats.get("total_symbols", 2200)
+        timings["universe"] = round((time.perf_counter() - t0) * 1000, 2)
+        
+        t0 = time.perf_counter()
+        last_scan = db.get_meta("last_scan")
+        nifty50_1m = db.get_meta("nifty50_1m", 0)
+        summary = db.get_meta("summary", "")
+        heatmap = db.get_meta("heatmap", [])
+        regime = db.get_meta("market_regime", "unknown")
+        login_status = db.get_meta("angel_login_status", {})
+        total_analyzed = db.get_result_count()
+        timings["meta"] = round((time.perf_counter() - t0) * 1000, 2)
+        
         return {
             "results": results,
-            "total_analyzed": db.get_result_count(),
+            "total_analyzed": total_analyzed,
             "universe_size": universe_size,
-            "last_scan": db.get_meta("last_scan"),
+            "last_scan": last_scan,
             "errors": state.get("errors", 0),
-            "nifty50_1m": db.get_meta("nifty50_1m", 0),
-            "summary": db.get_meta("summary", ""),
-            "heatmap": db.get_meta("heatmap", []),
-            "market_regime": db.get_meta("market_regime", "unknown"),
-            "login_status": db.get_meta("angel_login_status", {}),
+            "nifty50_1m": nifty50_1m,
+            "summary": summary,
+            "heatmap": heatmap,
+            "market_regime": regime,
+            "login_status": login_status,
         }
 
     data = cache_layer.get_or_compute(cache_layer.results_cache, "results", _compute_results)
 
-    # Strip heavy drawer-only fields (chart_data, signals, etc.) → ~88% size reduction
+    t_slim_start = time.perf_counter()
     slim = {**data, "results": _slim_results(data.get("results", []))}
+    t_slim_ms = round((time.perf_counter() - t_slim_start) * 1000, 2)
 
-    # Apply client-requested sorting (on cached data)
+    t_sort_start = time.perf_counter()
     valid_sorts = [
         "score", "price", "rsi", "adx", "volume_ratio", "pct_1w", "pct_1m",
         "delivery_pct", "risk_score", "rs_vs_nifty", "risk_reward", "target_pct",
@@ -246,9 +271,22 @@ def get_results():
     ]
     if sort_by in valid_sorts and sort_by != "score":
         sorted_results = sorted(slim["results"], key=lambda x: x.get(sort_by) or 0, reverse=(order == "desc"))
-        return jsonify(sanitize_nan({**slim, "results": sorted_results}))
+        res_dict = {**slim, "results": sorted_results}
+    else:
+        res_dict = slim
+    t_sort_ms = round((time.perf_counter() - t_sort_start) * 1000, 2)
 
-    return jsonify(sanitize_nan(slim))
+    t_serialize_start = time.perf_counter()
+    resp = jsonify(sanitize_nan(res_dict))
+    t_serialize_ms = round((time.perf_counter() - t_serialize_start) * 1000, 2)
+
+    total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+    if not timings["cache_hit"]:
+        print(f"[RESULTS PERF] load_results={timings['load_results']} ms | status={timings['status']} ms | universe={timings['universe']} ms | meta={timings['meta']} ms | slim={t_slim_ms} ms | sort={t_sort_ms} ms | serialize={t_serialize_ms} ms | total={total_ms} ms", flush=True)
+        logging.getLogger("screener").info("[RESULTS PERF] load_results=%s ms | status=%s ms | universe=%s ms | meta=%s ms | slim=%s ms | sort=%s ms | serialize=%s ms | total=%s ms", timings['load_results'], timings['status'], timings['universe'], timings['meta'], t_slim_ms, t_sort_ms, t_serialize_ms, total_ms)
+
+    return resp
 
 
 @api_bp.route("/api/export/csv")
@@ -1018,9 +1056,40 @@ def get_dashboard():
     Returns status + results summary + heatmap + sector + paper stats
     in ONE request instead of 5+. Cached for 10s.
     """
+    t_start = time.perf_counter()
+    timings = {"cache_hit": True, "status": 0.0, "load_results": 0.0, "sector_rotation": 0.0, "paper_stats": 0.0}
+
     def _compute():
+        timings["cache_hit"] = False
+        
         # Status
+        t0 = time.perf_counter()
         state = scan_state.status()
+        timings["status"] = round((time.perf_counter() - t0) * 1000, 2)
+
+        # Results (pre-sorted by score)
+        t0 = time.perf_counter()
+        results = db.load_results(TOP_N_RESULTS)
+        total_analyzed = db.get_result_count()
+        timings["load_results"] = round((time.perf_counter() - t0) * 1000, 2)
+
+        # Sector rotation
+        t0 = time.perf_counter()
+        try:
+            from intelligence.sector_rotation import get_rrg_data
+            sectors = get_rrg_data() or []
+        except Exception:
+            sectors = []
+        timings["sector_rotation"] = round((time.perf_counter() - t0) * 1000, 2)
+
+        # Paper trade stats
+        t0 = time.perf_counter()
+        try:
+            paper_stats = db.get_paper_trade_stats()
+        except Exception:
+            paper_stats = {}
+        timings["paper_stats"] = round((time.perf_counter() - t0) * 1000, 2)
+
         status = {
             "scanning": state["scanning"],
             "progress": state["progress"],
@@ -1028,23 +1097,6 @@ def get_dashboard():
             "last_scan": db.get_meta("last_scan"),
             "market_regime": db.get_meta("market_regime", "unknown"),
         }
-
-        # Results (pre-sorted by score)
-        results = db.load_results(TOP_N_RESULTS)
-        total_analyzed = db.get_result_count()
-
-        # Sector rotation
-        try:
-            from intelligence.sector_rotation import get_rrg_data
-            sectors = get_rrg_data() or []
-        except Exception:
-            sectors = []
-
-        # Paper trade stats
-        try:
-            paper_stats = db.get_paper_trade_stats()
-        except Exception:
-            paper_stats = {}
 
         return {
             "status": status,
@@ -1054,7 +1106,19 @@ def get_dashboard():
             "paper_stats": paper_stats,
         }
 
-    return jsonify(cache_layer.get_or_compute(cache_layer.dashboard_cache, "dashboard", _compute))
+    data = cache_layer.get_or_compute(cache_layer.dashboard_cache, "dashboard", _compute)
+
+    t_serialize_start = time.perf_counter()
+    resp = jsonify(data)
+    t_serialize_ms = round((time.perf_counter() - t_serialize_start) * 1000, 2)
+
+    total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+    if not timings["cache_hit"]:
+        print(f"[DASH PERF] status={timings['status']} ms | load_results={timings['load_results']} ms | sector_rotation={timings['sector_rotation']} ms | paper_stats={timings['paper_stats']} ms | serialize={t_serialize_ms} ms | total={total_ms} ms", flush=True)
+        logging.getLogger("screener").info("[DASH PERF] status=%s ms | load_results=%s ms | sector_rotation=%s ms | paper_stats=%s ms | serialize=%s ms | total=%s ms", timings['status'], timings['load_results'], timings['sector_rotation'], timings['paper_stats'], t_serialize_ms, total_ms)
+
+    return resp
 
 
 @api_bp.route("/api/paper-trades/equity-curve")

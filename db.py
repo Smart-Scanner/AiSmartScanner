@@ -1681,7 +1681,11 @@ def _parse_data_column(val):
 
 def load_results(limit: int = 750) -> list[dict]:
     """Load scan results from DB, ordered by score."""
+    t0 = time.perf_counter()
     rows = execute_db("SELECT data FROM scan_results ORDER BY score DESC LIMIT ?", (limit,), fetch="all")
+    t_query = round((time.perf_counter() - t0) * 1000, 2)
+    
+    t0 = time.perf_counter()
     results = []
     for row in rows:
         try:
@@ -1691,6 +1695,10 @@ def load_results(limit: int = 750) -> list[dict]:
                 results.append(r)
         except Exception:
             pass
+    t_parse = round((time.perf_counter() - t0) * 1000, 2)
+    
+    log.info("[DB PERF] load_results limit=%d | query=%s ms | parse_json=%s ms | total_rows=%d", limit, t_query, t_parse, len(results))
+    print(f"[DB PERF] load_results limit={limit} | query={t_query} ms | parse_json={t_parse} ms | total_rows={len(results)}", flush=True)
     return results
 
 
@@ -2381,6 +2389,9 @@ def save_portfolio_daily(nifty_price: float = None):
 
 def get_paper_trade_stats() -> dict:
     """Get aggregated paper trading statistics."""
+    t_start = time.perf_counter()
+    
+    t0 = time.perf_counter()
     total = execute_db("SELECT COUNT(*) as cnt FROM paper_trades", fetch="one")
     closed = execute_db("SELECT COUNT(*) as cnt FROM paper_trades WHERE status='CLOSED'", fetch="one")
     wins = execute_db("SELECT COUNT(*) as cnt FROM paper_trades WHERE status='CLOSED' AND return_pct > 0", fetch="one")
@@ -2390,11 +2401,13 @@ def get_paper_trade_stats() -> dict:
     avg_alpha = execute_db("SELECT AVG(alpha_pct) as avg FROM paper_trades WHERE status='CLOSED' AND alpha_pct IS NOT NULL", fetch="one")
     best = execute_db("SELECT symbol, return_pct FROM paper_trades WHERE status='CLOSED' ORDER BY return_pct DESC LIMIT 1", fetch="one")
     worst = execute_db("SELECT symbol, return_pct FROM paper_trades WHERE status='CLOSED' ORDER BY return_pct ASC LIMIT 1", fetch="one")
+    t_basic = round((time.perf_counter() - t0) * 1000, 2)
 
     total_cnt = (total or {}).get("cnt") or 0
     closed_cnt = (closed or {}).get("cnt") or 0
     win_cnt = (wins or {}).get("cnt") or 0
 
+    t0 = time.perf_counter()
     # Profit Factor & Expectancy
     sum_wins = execute_db("SELECT SUM(return_pct) as total FROM paper_trades WHERE status='CLOSED' AND return_pct > 0", fetch="one")
     sum_losses = execute_db("SELECT SUM(ABS(return_pct)) as total FROM paper_trades WHERE status='CLOSED' AND return_pct <= 0", fetch="one")
@@ -2406,7 +2419,9 @@ def get_paper_trade_stats() -> dict:
     avg_loss = total_loss / loss_cnt if loss_cnt > 0 else 0
     win_rate_dec = win_cnt / closed_cnt if closed_cnt > 0 else 0
     expectancy = round((win_rate_dec * avg_win) - ((1 - win_rate_dec) * avg_loss), 2) if closed_cnt > 0 else 0
+    t_expectancy = round((time.perf_counter() - t0) * 1000, 2)
 
+    t0 = time.perf_counter()
     # Golden Stock win rate
     golden_total = execute_db("SELECT COUNT(*) as cnt FROM paper_trades WHERE status='CLOSED' AND is_golden=1", fetch="one")
     golden_wins = execute_db("SELECT COUNT(*) as cnt FROM paper_trades WHERE status='CLOSED' AND is_golden=1 AND return_pct > 0", fetch="one")
@@ -2418,7 +2433,9 @@ def get_paper_trade_stats() -> dict:
     hc_wins = execute_db("SELECT COUNT(*) as cnt FROM paper_trades WHERE status='CLOSED' AND high_conviction=1 AND return_pct > 0", fetch="one")
     hc_cnt = (hc_total or {}).get("cnt") or 0
     hc_win_cnt = (hc_wins or {}).get("cnt") or 0
+    t_conviction = round((time.perf_counter() - t0) * 1000, 2)
 
+    t0 = time.perf_counter()
     # Factor attribution: winning vs losing trades
     factor_win = execute_db("""
         SELECT AVG(technical_score) as tech, AVG(fundamental_score) as fund,
@@ -2432,7 +2449,9 @@ def get_paper_trade_stats() -> dict:
                AVG(risk_score) as risk, AVG(score_at_entry) as score
         FROM paper_trades WHERE status='CLOSED' AND return_pct <= 0
     """, fetch="one") or {}
+    t_factor = round((time.perf_counter() - t0) * 1000, 2)
 
+    t0 = time.perf_counter()
     # Max single-trade drawdown
     max_dd = execute_db("SELECT MIN(max_drawdown_pct) as dd FROM paper_trades WHERE status='CLOSED'", fetch="one")
 
@@ -2461,6 +2480,11 @@ def get_paper_trade_stats() -> dict:
         FROM paper_trades WHERE status='CLOSED'
         GROUP BY market_regime
     """, fetch="all") or []
+    t_groups = round((time.perf_counter() - t0) * 1000, 2)
+
+    total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+    log.info("[DB PERF] get_paper_trade_stats | total_queries=21 | t_basic=%s ms | t_expectancy=%s ms | t_conviction=%s ms | t_factor=%s ms | t_groups=%s ms | total=%s ms", t_basic, t_expectancy, t_conviction, t_factor, t_groups, total_ms)
+    print(f"[DB PERF] get_paper_trade_stats | total_queries=21 | t_basic={t_basic} ms | t_expectancy={t_expectancy} ms | t_conviction={t_conviction} ms | t_factor={t_factor} ms | t_groups={t_groups} ms | total={total_ms} ms", flush=True)
 
     def _r(v): return round(v or 0, 2)
 
