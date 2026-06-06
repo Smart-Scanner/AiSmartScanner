@@ -20,6 +20,39 @@ from jugaad_data.nse import stock_df
 import math
 
 
+# ── Heavy fields that should only load in drawer via /api/stock/<symbol> ──
+# These 12 fields account for ~92% of the /api/results payload (3.3MB of 3.6MB)
+# but are never rendered in card/list views.
+_HEAVY_FIELDS = frozenset({
+    "chart_data",           # 1609 KB (50%) — sparkline arrays
+    "signals",              #  618 KB (19%) — full signal history
+    "fundamentals",         #  231 KB  (7%) — PE/PB/ROE details
+    "trade",                #  187 KB  (6%) — entry/exit/SL details
+    "order_book",           #   80 KB  (3%) — bid/ask data
+    "seasonal",             #   67 KB  (2%) — seasonal patterns
+    "news_sentiment",       #   63 KB  (2%) — news scores
+    "support_resistance",   #   48 KB  (2%) — S/R levels
+    "sector_rotation",      #   28 KB  (1%) — per-stock RRG
+    "gdelt",                #   27 KB  (1%) — GDELT articles
+    "macro_event",          #   22 KB  (1%) — macro events
+    "earnings_signals",     #   19 KB  (1%) — earnings data
+})
+
+
+def _slim_result(stock: dict) -> dict:
+    """Return a stock dict stripped of heavy drawer-only fields.
+
+    Keeps all card-essential fields (~65 lightweight fields) like symbol, score,
+    price, sector, risk_reward, confidence sub-scores, etc.
+    """
+    return {k: v for k, v in stock.items() if k not in _HEAVY_FIELDS}
+
+
+def _slim_results(results: list) -> list:
+    """Strip heavy fields from a list of stock results."""
+    return [_slim_result(r) for r in results]
+
+
 def sanitize_nan(obj):
     if isinstance(obj, dict):
         return {k: sanitize_nan(v) for k, v in obj.items()}
@@ -202,6 +235,9 @@ def get_results():
 
     data = cache_layer.get_or_compute(cache_layer.results_cache, "results", _compute_results)
 
+    # Strip heavy drawer-only fields (chart_data, signals, etc.) → ~88% size reduction
+    slim = {**data, "results": _slim_results(data.get("results", []))}
+
     # Apply client-requested sorting (on cached data)
     valid_sorts = [
         "score", "price", "rsi", "adx", "volume_ratio", "pct_1w", "pct_1m",
@@ -209,10 +245,10 @@ def get_results():
         "atr_pct", "stoch_k", "bb_position",
     ]
     if sort_by in valid_sorts and sort_by != "score":
-        sorted_results = sorted(data["results"], key=lambda x: x.get(sort_by) or 0, reverse=(order == "desc"))
-        return jsonify(sanitize_nan({**data, "results": sorted_results}))
+        sorted_results = sorted(slim["results"], key=lambda x: x.get(sort_by) or 0, reverse=(order == "desc"))
+        return jsonify(sanitize_nan({**slim, "results": sorted_results}))
 
-    return jsonify(sanitize_nan(data))
+    return jsonify(sanitize_nan(slim))
 
 
 @api_bp.route("/api/export/csv")
@@ -975,7 +1011,7 @@ def get_dashboard():
 
         return {
             "status": status,
-            "results": results,
+            "results": _slim_results(results),
             "total_analyzed": total_analyzed,
             "sector_rotation": {"sectors": sectors},
             "paper_stats": paper_stats,
