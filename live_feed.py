@@ -15,6 +15,8 @@ import pyotp
 import requests
 from SmartApi import SmartConnect
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
+from metrics.timer import timed
+from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success
 
 log = logging.getLogger("live_feed")
 
@@ -48,7 +50,7 @@ _WS_MODE = 2  # 2 = Quote Mode (contains open, high, low, close, volume)
 MAX_WS_TOKENS_PER_SESSION = 1000
 MAX_WS_BATCH_SIZE = 50
 
-REST_GAP_SECONDS = 0.4
+REST_GAP_SECONDS = 0.5
 _hist_lock = threading.Lock()
 _hist_last_call = 0.0
 
@@ -102,18 +104,103 @@ def get_token(symbol: str):
 def get_symbol(token: str):
     return _reverse_map.get(str(token))
 
+_login_failures = 0
+_login_cooldown_until = 0.0
+_circuit_broken = False
+_circuit_breaker_error = ""
+_circuit_lock = threading.Lock()
+
+def reset_login_circuit_breaker(force_retry=True):
+    global _login_failures, _login_cooldown_until, _circuit_broken, _circuit_breaker_error
+    with _circuit_lock:
+        # If force_retry is True (manual trigger), we set failures to 1 to allow exactly one retry.
+        # This prevents accidental login spams if the credentials are still incorrect.
+        _login_failures = 1 if force_retry else 0
+        _login_cooldown_until = 0.0
+        _circuit_broken = False
+        _circuit_breaker_error = ""
+        log.info("Angel login circuit breaker has been reset (failures set to %d to restrict retries).", _login_failures)
+        try:
+            import db
+            db.set_meta("angel_login_status", {
+                "status": "reset",
+                "failures": _login_failures,
+                "message": "Reset (Single retry allowed)",
+                "circuit_broken": False,
+                "cooldown_until": 0.0,
+                "error_details": ""
+            })
+        except Exception:
+            pass
+
 def _login():
     global _smart_api, _auth_token, _feed_token, _last_login
+    global _login_failures, _login_cooldown_until, _circuit_broken, _circuit_breaker_error
     if not all([API_KEY, CLIENT_ID, MPIN, TOTP_SECRET]):
         log.error("Angel One credentials not configured")
         return False
+        
+    with _circuit_lock:
+        now = time.time()
+        if _circuit_broken:
+            log.warning("Angel login circuit breaker is ACTIVE. Registration of attempts blocked to prevent lockout. Error: %s", _circuit_breaker_error)
+            return False
+        if now < _login_cooldown_until:
+            wait_remain = int(_login_cooldown_until - now)
+            log.warning("Angel login in cooldown. Remaining time: %d seconds", wait_remain)
+            return False
+
     try:
         totp = pyotp.TOTP(TOTP_SECRET).now()
         obj = SmartConnect(api_key=API_KEY)
         data = obj.generateSession(CLIENT_ID, MPIN, totp)
         if not data or not data.get("status"):
-            log.error("Login failed: %s", data.get("message") if data else "no response")
+            err_msg = data.get("message") if data else "no response"
+            log.error("Login failed: %s", err_msg)
+            with _circuit_lock:
+                _login_failures += 1
+                now = time.time()
+                if _login_failures == 1:
+                    _login_cooldown_until = now + 150  # 2.5 minutes cooldown
+                    _circuit_breaker_error = f"First login failed: {err_msg}. Cooldown active for 2.5 minutes."
+                    log.warning("Angel login: 1 failure. Cooldown active for 150s.")
+                else:
+                    _circuit_broken = True
+                    _login_cooldown_until = now + 900  # 15 minutes
+                    _circuit_breaker_error = f"Multiple failures ({_login_failures}). Circuit broken to prevent permanent lockout. Error: {err_msg}."
+                    log.error("Angel login: %d failures. Circuit broken!", _login_failures)
+                try:
+                    import db
+                    db.set_meta("angel_login_status", {
+                        "status": "failed",
+                        "failures": _login_failures,
+                        "message": err_msg,
+                        "circuit_broken": _circuit_broken,
+                        "cooldown_until": _login_cooldown_until,
+                        "error_details": _circuit_breaker_error
+                    })
+                except Exception:
+                    pass
             return False
+            
+        with _circuit_lock:
+            _login_failures = 0
+            _login_cooldown_until = 0.0
+            _circuit_broken = False
+            _circuit_breaker_error = ""
+            try:
+                import db
+                db.set_meta("angel_login_status", {
+                    "status": "success",
+                    "failures": 0,
+                    "message": "Connected",
+                    "circuit_broken": False,
+                    "cooldown_until": 0.0,
+                    "error_details": ""
+                })
+            except Exception:
+                pass
+                
         _smart_api = obj
         _auth_token = data["data"]["jwtToken"]
         _feed_token = obj.getfeedToken()
@@ -121,7 +208,30 @@ def _login():
         log.info("Angel One login successful")
         return True
     except Exception as exc:
+        err_msg = str(exc)
         log.exception("Login error: %s", exc)
+        with _circuit_lock:
+            _login_failures += 1
+            now = time.time()
+            if _login_failures == 1:
+                _login_cooldown_until = now + 150
+                _circuit_breaker_error = f"Login exception: {err_msg}. Cooldown active for 2.5 minutes."
+            else:
+                _circuit_broken = True
+                _login_cooldown_until = now + 900
+                _circuit_breaker_error = f"Multiple exceptions ({_login_failures}). Circuit broken. Error: {err_msg}."
+            try:
+                import db
+                db.set_meta("angel_login_status", {
+                    "status": "failed",
+                    "failures": _login_failures,
+                    "message": err_msg,
+                    "circuit_broken": _circuit_broken,
+                    "cooldown_until": _login_cooldown_until,
+                    "error_details": _circuit_breaker_error
+                })
+            except Exception:
+                pass
         return False
 
 def ensure_session():
@@ -151,6 +261,9 @@ def get_live_price(symbol):
             return data.copy()
 
     # Fallback to yfinance if not in WebSocket cache
+    if not yf_is_available():
+        log.debug("get_live_price: yf_guard OPEN for %s", clean)
+        return None
     try:
         import yfinance as yf
         ticker = yf.Ticker(f"{clean}.NS")
@@ -171,9 +284,11 @@ def get_live_price(symbol):
             }
             with _prices_lock:
                 _live_prices[clean] = tick
+            yf_record_success()
             return tick.copy()
     except Exception as exc:
         log.debug("yfinance live fallback failed for %s: %s", clean, exc)
+        yf_record_failure()
     return None
 
 def _on_data(wsapp, message):
@@ -345,6 +460,7 @@ def fetch_ltp_bulk(symbols: list[str]) -> dict:
             log.debug("LTP fetch failed for %s: %s", clean, exc)
     return results
 
+@timed("fetch_historical")
 def fetch_historical(symbol: str, days: int = 365):
     import pandas as pd
     import yfinance as yf
@@ -352,17 +468,23 @@ def fetch_historical(symbol: str, days: int = 365):
     clean = symbol.upper().replace(".NS", "")
     if not ensure_session():
         log.debug("No Angel session. Using yfinance for %s", clean)
+        if not yf_is_available():
+            log.debug("fetch_historical: yf_guard OPEN for %s — skipping yfinance", clean)
+            return None
         try:
             df = yf.Ticker(f"{clean}.NS").history(period="1y")
             if df.empty:
+                yf_record_failure()
                 return None
             df = df.reset_index().rename(columns={
                 "Date": "DATE", "Open": "OPEN", "High": "HIGH",
                 "Low": "LOW", "Close": "CLOSE", "Volume": "VOLUME"
             })
             df["DATE"] = pd.to_datetime(df["DATE"]).dt.tz_localize(None)
+            yf_record_success()
             return df[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
         except Exception:
+            yf_record_failure()
             return None
 
     token = get_token(clean)
@@ -390,17 +512,19 @@ def fetch_historical(symbol: str, days: int = 365):
 
         if not result or not result.get("status") or not result.get("data"):
             log.warning("Candle query fail for %s. Trying yfinance fallback...", clean)
-            try:
-                df = yf.Ticker(f"{clean}.NS").history(period="1y")
-                if not df.empty:
-                    df = df.reset_index().rename(columns={
-                        "Date": "DATE", "Open": "OPEN", "High": "HIGH",
-                        "Low": "LOW", "Close": "CLOSE", "Volume": "VOLUME"
-                    })
-                    df["DATE"] = pd.to_datetime(df["DATE"]).dt.tz_localize(None)
-                    return df[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
-            except Exception:
-                pass
+            if yf_is_available():
+                try:
+                    df = yf.Ticker(f"{clean}.NS").history(period="1y")
+                    if not df.empty:
+                        df = df.reset_index().rename(columns={
+                            "Date": "DATE", "Open": "OPEN", "High": "HIGH",
+                            "Low": "LOW", "Close": "CLOSE", "Volume": "VOLUME"
+                        })
+                        df["DATE"] = pd.to_datetime(df["DATE"]).dt.tz_localize(None)
+                        yf_record_success()
+                        return df[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
+                except Exception:
+                    yf_record_failure()
             return None
 
         rows = [{
@@ -415,15 +539,17 @@ def fetch_historical(symbol: str, days: int = 365):
         return df if not df.empty else None
     except Exception as exc:
         log.warning("Historical exception for %s: %s. Trying yfinance fallback...", clean, exc)
-        try:
-            df = yf.Ticker(f"{clean}.NS").history(period="1y")
-            if not df.empty:
-                df = df.reset_index().rename(columns={
-                    "Date": "DATE", "Open": "OPEN", "High": "HIGH",
-                    "Low": "LOW", "Close": "CLOSE", "Volume": "VOLUME"
-                })
-                df["DATE"] = pd.to_datetime(df["DATE"]).dt.tz_localize(None)
-                return df[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
-        except Exception:
-            pass
+        if yf_is_available():
+            try:
+                df = yf.Ticker(f"{clean}.NS").history(period="1y")
+                if not df.empty:
+                    df = df.reset_index().rename(columns={
+                        "Date": "DATE", "Open": "OPEN", "High": "HIGH",
+                        "Low": "LOW", "Close": "CLOSE", "Volume": "VOLUME"
+                    })
+                    df["DATE"] = pd.to_datetime(df["DATE"]).dt.tz_localize(None)
+                    yf_record_success()
+                    return df[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
+            except Exception:
+                yf_record_failure()
         return None

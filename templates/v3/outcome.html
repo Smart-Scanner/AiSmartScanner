@@ -1,0 +1,299 @@
+{% extends "_app_base.html" %}
+{% set active_page = "outcome" %}
+{% block title %}Outcome Intelligence{% endblock %}
+{% block content %}
+<div class="v3-page-header">
+    <div class="v3-page-title">Outcome Intelligence</div>
+    <div class="v3-page-subtitle">Factor attribution, model calibration, and conviction breakdown analytics</div>
+</div>
+
+<div id="oiLoading" class="v3-loading-state">
+    <div class="v3-loading-steps">
+        <div class="v3-loading-step active"><span class="v3-loading-step-icon">&#9658;</span> Computing outcome analytics...</div>
+    </div>
+</div>
+
+<div id="oiContent" style="display:none">
+    <!-- Overview KPIs -->
+    <div id="oiKPIs" class="oi-kpi-grid"></div>
+
+    <!-- Conviction Breakdown -->
+    <div class="oi-section" style="margin-top:24px">
+        <div class="oi-section-title">Conviction Breakdown</div>
+        <div id="oiConviction" class="oi-conviction-grid"></div>
+    </div>
+
+    <!-- Factor Attribution -->
+    <div class="oi-section" style="margin-top:24px">
+        <div class="oi-section-title">Factor Attribution: Winners vs Losers</div>
+        <div id="oiFactors" class="oi-factors"></div>
+    </div>
+
+    <!-- By Sector -->
+    <div class="oi-section" style="margin-top:24px">
+        <div class="oi-section-title">Performance by Sector</div>
+        <div id="oiSectors"></div>
+    </div>
+
+    <!-- By Model Version -->
+    <div class="oi-section" style="margin-top:24px">
+        <div class="oi-section-title">Model Version Comparison</div>
+        <div id="oiModels"></div>
+    </div>
+
+    <!-- By Regime -->
+    <div class="oi-section" style="margin-top:24px">
+        <div class="oi-section-title">Performance by Market Regime</div>
+        <div id="oiRegimes"></div>
+    </div>
+
+    <!-- Calibration Progress -->
+    <div class="oi-section" style="margin-top:24px">
+        <div class="oi-section-title">Calibration Progress</div>
+        <div id="oiCalibration"></div>
+    </div>
+</div>
+
+<style>
+.oi-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.oi-kpi {
+    background: var(--card-bg); border: 1px solid var(--border-subtle);
+    border-radius: 10px; padding: 16px; text-align: center;
+}
+.oi-kpi-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 6px; }
+.oi-kpi-value { font-size: 24px; font-weight: 900; font-family: 'JetBrains Mono', monospace; }
+.oi-kpi-sub { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+.oi-section { }
+.oi-section-title {
+    font-size: 14px; font-weight: 700; color: var(--text-primary);
+    margin-bottom: 12px; letter-spacing: -0.2px;
+}
+
+.oi-conviction-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.oi-conv-card {
+    background: var(--card-bg); border: 1px solid var(--border-subtle);
+    border-radius: 10px; padding: 16px;
+}
+.oi-conv-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
+.oi-conv-wr { font-size: 28px; font-weight: 900; font-family: 'JetBrains Mono', monospace; }
+.oi-conv-count { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+.oi-factors { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.oi-factor-row {
+    display: grid; grid-template-columns: 100px 1fr 60px 60px;
+    align-items: center; gap: 12px; padding: 10px 14px;
+    background: var(--card-bg); border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+}
+.oi-factor-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.oi-factor-bar-wrap { height: 8px; background: var(--border-subtle); border-radius: 4px; overflow: hidden; position: relative; }
+.oi-factor-bar { position: absolute; top: 0; left: 0; height: 100%; border-radius: 4px; }
+.oi-factor-val { font-size: 12px; font-weight: 700; font-family: 'JetBrains Mono', monospace; text-align: right; }
+
+.oi-table {
+    width: 100%; border-collapse: collapse;
+    background: var(--card-bg); border-radius: 10px; overflow: hidden;
+}
+.oi-table th {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--text-muted);
+    padding: 10px 14px; text-align: left;
+    background: var(--bg-secondary); border-bottom: 1px solid var(--border-subtle);
+}
+.oi-table td {
+    padding: 10px 14px; font-size: 13px; color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.oi-calibration-card {
+    background: var(--card-bg); border: 1px solid var(--border-subtle);
+    border-radius: 12px; padding: 20px;
+}
+</style>
+
+<script>
+async function loadOutcome() {
+    try {
+        const resp = await fetch('/api/paper-trades/stats');
+        const stats = await resp.json();
+
+        document.getElementById('oiLoading').style.display = 'none';
+        document.getElementById('oiContent').style.display = 'block';
+
+        renderKPIs(stats);
+        renderConviction(stats);
+        renderFactors(stats);
+        renderSectors(stats);
+        renderModels(stats);
+        renderRegimes(stats);
+        renderCalibration(stats);
+    } catch (e) {
+        document.getElementById('oiLoading').innerHTML = '<div style="color:var(--danger);text-align:center;padding:30px">Failed to load outcome data</div>';
+    }
+}
+
+function renderKPIs(s) {
+    const wr = s.win_rate || 0;
+    const avgRet = s.avg_return_pct || 0;
+    const avgAlpha = s.avg_alpha_pct || 0;
+    const pf = s.profit_factor || 0;
+    const exp = s.expectancy || 0;
+    const best = s.best_trade || {};
+    const worst = s.worst_trade || {};
+
+    document.getElementById('oiKPIs').innerHTML = `
+        <div class="oi-kpi"><div class="oi-kpi-label">Win Rate</div><div class="oi-kpi-value" style="color:${wr>=50?'var(--success)':'var(--danger)'}">${wr.toFixed(1)}%</div><div class="oi-kpi-sub">${s.closed_trades||0} closed trades</div></div>
+        <div class="oi-kpi"><div class="oi-kpi-label">Avg Return</div><div class="oi-kpi-value" style="color:${avgRet>=0?'var(--success)':'var(--danger)'}">${avgRet>=0?'+':''}${avgRet.toFixed(2)}%</div></div>
+        <div class="oi-kpi"><div class="oi-kpi-label">Avg Alpha</div><div class="oi-kpi-value" style="color:${avgAlpha>=0?'var(--success)':'var(--danger)'}">${avgAlpha>=0?'+':''}${avgAlpha.toFixed(2)}%</div><div class="oi-kpi-sub">vs Nifty 50</div></div>
+        <div class="oi-kpi"><div class="oi-kpi-label">Profit Factor</div><div class="oi-kpi-value" style="color:${pf>=1.5?'var(--success)':pf>=1?'var(--warning)':'var(--danger)'}">${pf.toFixed(2)}</div></div>
+        <div class="oi-kpi"><div class="oi-kpi-label">Expectancy</div><div class="oi-kpi-value" style="color:${exp>=0?'var(--success)':'var(--danger)'}">${exp>=0?'+':''}${exp.toFixed(2)}%</div></div>
+        <div class="oi-kpi"><div class="oi-kpi-label">Best Trade</div><div class="oi-kpi-value" style="color:var(--success);font-size:16px">${best.symbol||'\u2014'}</div><div class="oi-kpi-sub">${best.return_pct ? '+'+best.return_pct.toFixed(1)+'%' : ''}</div></div>
+        <div class="oi-kpi"><div class="oi-kpi-label">Worst Trade</div><div class="oi-kpi-value" style="color:var(--danger);font-size:16px">${worst.symbol||'\u2014'}</div><div class="oi-kpi-sub">${worst.return_pct ? worst.return_pct.toFixed(1)+'%' : ''}</div></div>
+        <div class="oi-kpi"><div class="oi-kpi-label">Max Drawdown</div><div class="oi-kpi-value" style="color:var(--danger)">${(s.max_drawdown_pct||0).toFixed(1)}%</div></div>
+    `;
+}
+
+function renderConviction(s) {
+    const golden = s.golden_stock || {};
+    const hc = s.high_conviction || {};
+    const allWR = s.win_rate || 0;
+
+    document.getElementById('oiConviction').innerHTML = `
+        <div class="oi-conv-card">
+            <div class="oi-conv-label" style="color:var(--golden)">&#11088; Golden Stocks</div>
+            <div class="oi-conv-wr" style="color:${(golden.win_rate||0)>=50?'var(--success)':'var(--danger)'}">${(golden.win_rate||0).toFixed(1)}%</div>
+            <div class="oi-conv-count">${golden.trades||0} trades &middot; ${((golden.win_rate||0) - allWR).toFixed(1)}% vs all</div>
+        </div>
+        <div class="oi-conv-card">
+            <div class="oi-conv-label" style="color:var(--accent-cyan)">&#9889; High Conviction</div>
+            <div class="oi-conv-wr" style="color:${(hc.win_rate||0)>=50?'var(--success)':'var(--danger)'}">${(hc.win_rate||0).toFixed(1)}%</div>
+            <div class="oi-conv-count">${hc.trades||0} trades &middot; ${((hc.win_rate||0) - allWR).toFixed(1)}% vs all</div>
+        </div>
+        <div class="oi-conv-card">
+            <div class="oi-conv-label" style="color:var(--text-muted)">All Picks</div>
+            <div class="oi-conv-wr" style="color:${allWR>=50?'var(--success)':'var(--danger)'}">${allWR.toFixed(1)}%</div>
+            <div class="oi-conv-count">${s.closed_trades||0} closed trades total</div>
+        </div>
+    `;
+}
+
+function renderFactors(s) {
+    const fa = s.factor_attribution || {};
+    const w = fa.winners || {};
+    const l = fa.losers || {};
+    const factors = [
+        { label: 'Score', wVal: w.avg_score||0, lVal: l.avg_score||0, max: 100, wColor: 'var(--success)', lColor: 'var(--danger)' },
+        { label: 'Technical', wVal: w.avg_technical||0, lVal: l.avg_technical||0, max: 30 },
+        { label: 'Fundamental', wVal: w.avg_fundamental||0, lVal: l.avg_fundamental||0, max: 10 },
+        { label: 'Earnings', wVal: w.avg_earnings||0, lVal: l.avg_earnings||0, max: 15 },
+        { label: 'Smart Money', wVal: w.avg_smart_money||0, lVal: l.avg_smart_money||0, max: 10 },
+        { label: 'Risk', wVal: w.avg_risk||0, lVal: l.avg_risk||0, max: 100 },
+    ];
+
+    document.getElementById('oiFactors').innerHTML = factors.map(f => {
+        const wPct = Math.min(100, (f.wVal / f.max) * 100);
+        const lPct = Math.min(100, (f.lVal / f.max) * 100);
+        return `<div class="oi-factor-row">
+            <div class="oi-factor-label">${f.label}</div>
+            <div class="oi-factor-bar-wrap">
+                <div class="oi-factor-bar" style="width:${wPct}%;background:var(--success);opacity:0.7"></div>
+                <div class="oi-factor-bar" style="width:${lPct}%;background:var(--danger);opacity:0.5;top:50%;height:50%"></div>
+            </div>
+            <div class="oi-factor-val" style="color:var(--success)">${f.wVal.toFixed(1)}</div>
+            <div class="oi-factor-val" style="color:var(--danger)">${f.lVal.toFixed(1)}</div>
+        </div>`;
+    }).join('');
+}
+
+function renderSectors(s) {
+    const sectors = s.by_sector || [];
+    if (!sectors.length) {
+        document.getElementById('oiSectors').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">No sector data yet</div>';
+        return;
+    }
+    document.getElementById('oiSectors').innerHTML = `<table class="oi-table">
+        <thead><tr><th>Sector</th><th>Trades</th><th>Avg Return</th></tr></thead>
+        <tbody>${sectors.map(sec => `<tr>
+            <td style="font-weight:600;color:var(--text-primary)">${sec.sector||'Other'}</td>
+            <td style="font-family:'JetBrains Mono',monospace">${sec.trades}</td>
+            <td style="font-family:'JetBrains Mono',monospace;color:${(sec.avg_return||0)>=0?'var(--success)':'var(--danger)'}">${(sec.avg_return||0)>=0?'+':''}${(sec.avg_return||0).toFixed(2)}%</td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+}
+
+function renderModels(s) {
+    const versions = s.by_model_version || [];
+    if (!versions.length) {
+        document.getElementById('oiModels').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">No model comparison data yet</div>';
+        return;
+    }
+    document.getElementById('oiModels').innerHTML = `<table class="oi-table">
+        <thead><tr><th>Model</th><th>Trades</th><th>Win Rate</th><th>Avg Return</th><th>Avg Alpha</th></tr></thead>
+        <tbody>${versions.map(v => `<tr>
+            <td style="font-weight:700;color:var(--accent-cyan)">${v.version||'unknown'}</td>
+            <td style="font-family:'JetBrains Mono',monospace">${v.trades}</td>
+            <td style="font-family:'JetBrains Mono',monospace;color:${(v.win_rate||0)>=50?'var(--success)':'var(--danger)'}">${(v.win_rate||0).toFixed(1)}%</td>
+            <td style="font-family:'JetBrains Mono',monospace;color:${(v.avg_return||0)>=0?'var(--success)':'var(--danger)'}">${(v.avg_return||0)>=0?'+':''}${(v.avg_return||0).toFixed(2)}%</td>
+            <td style="font-family:'JetBrains Mono',monospace;color:${(v.avg_alpha||0)>=0?'var(--success)':'var(--danger)'}">${(v.avg_alpha||0)>=0?'+':''}${(v.avg_alpha||0).toFixed(2)}%</td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+}
+
+function renderRegimes(s) {
+    const regimes = s.by_regime || [];
+    if (!regimes.length) {
+        document.getElementById('oiRegimes').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">No regime data yet</div>';
+        return;
+    }
+    document.getElementById('oiRegimes').innerHTML = `<table class="oi-table">
+        <thead><tr><th>Regime</th><th>Trades</th><th>Avg Return</th></tr></thead>
+        <tbody>${regimes.map(r => `<tr>
+            <td style="font-weight:700;color:var(--text-primary);text-transform:capitalize">${r.regime||'unknown'}</td>
+            <td style="font-family:'JetBrains Mono',monospace">${r.trades}</td>
+            <td style="font-family:'JetBrains Mono',monospace;color:${(r.avg_return||0)>=0?'var(--success)':'var(--danger)'}">${(r.avg_return||0)>=0?'+':''}${(r.avg_return||0).toFixed(2)}%</td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+}
+
+function renderCalibration(s) {
+    const closed = s.closed_trades || 0;
+    const target = 100;
+    const pct = Math.min(100, (closed / target) * 100);
+    const daysTarget = 60;
+    // Approximate days active based on trades
+    const daysActive = Math.min(daysTarget, Math.round(closed * 1.5));
+    const daysPct = Math.min(100, (daysActive / daysTarget) * 100);
+
+    document.getElementById('oiCalibration').innerHTML = `
+        <div class="oi-calibration-card">
+            <div style="margin-bottom:20px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">Closed Trades</span>
+                    <span style="font-size:12px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text-primary)">${closed} / ${target}</span>
+                </div>
+                <div class="v3-progress"><div class="v3-progress-bar" style="width:${pct}%"></div></div>
+                <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${pct.toFixed(0)}% of minimum sample for statistical significance</div>
+            </div>
+            <div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">Days Active</span>
+                    <span style="font-size:12px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text-primary)">${daysActive} / ${daysTarget} days</span>
+                </div>
+                <div class="v3-progress"><div class="v3-progress-bar" style="width:${daysPct}%"></div></div>
+                <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Minimum ${daysTarget} days for meaningful pattern recognition</div>
+            </div>
+            <div style="margin-top:20px;padding:14px;background:var(--bg-primary);border-radius:8px;border:1px solid var(--border-subtle)">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--accent-cyan);margin-bottom:6px">Next Milestone</div>
+                <div style="font-size:13px;color:var(--text-secondary)">
+                    ${closed >= target ? '\u2705 Statistical sample reached! Probability Engine can be activated in Phase 4.' :
+                    `${target - closed} more closed trades needed. Continue running daily scans to generate outcome data.`}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+loadOutcome();
+</script>
+{% endblock %}

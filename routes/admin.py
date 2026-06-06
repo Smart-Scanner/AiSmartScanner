@@ -329,3 +329,55 @@ def payments_reject(submission_id):
     note = (request.form.get("review_note") or "").strip()[:500] or None
     ok = auth_db.reject_payment(submission_id, session.get("email", ""), note)
     return _redir("payments", "payment-rejected" if ok else "payment-not-found")
+
+
+# ───────────────────────── DLQ admin (Phase 5) ─────────────────────────
+
+@admin_bp.route("/dlq-replay", methods=["GET"])
+@admin_required
+def dlq_replay():
+    """Replay dead-letter queue entries."""
+    from flask import jsonify
+    import db
+    replayed = db.replay_dlq()
+    pending = db.dlq_entry_count()
+    return jsonify({"replayed": replayed, "pending": pending})
+
+
+# ───────────────────────── Scan control (Phase 6) ─────────────────────────
+
+@admin_bp.route("/cancel-scan", methods=["POST", "GET"])
+@admin_required
+def cancel_scan():
+    """Request cancellation of current scan."""
+    from flask import jsonify
+    import db
+    if not db.scan_state.is_scanning:
+        return jsonify({"status": "no_scan_running"})
+    db.scan_state.cancel_requested = True
+    log.info("Scan cancellation requested by admin: %s", session.get("email", "?"))
+    return jsonify({"status": "cancel_requested"})
+
+
+@admin_bp.route("/scan-history", methods=["GET"])
+@admin_required
+def scan_history():
+    """Get recent scan runs."""
+    from flask import jsonify
+    import db
+    limit = int(request.args.get("limit", "10"))
+    runs = db.get_recent_scan_runs(limit=min(limit, 50))
+    return jsonify({"runs": runs})
+
+
+# ───────────────────────── Symbol freshness (Phase 7) ─────────────────────────
+
+@admin_bp.route("/mark-deep-scan/<symbol>", methods=["GET", "POST"])
+@admin_required
+def mark_deep_scan(symbol):
+    """Manually flag a symbol for deep scan."""
+    from flask import jsonify
+    import db
+    db.mark_deep_scan_needed(symbol.upper(), reason="admin_manual")
+    log.info("Deep scan flagged for %s by admin: %s", symbol.upper(), session.get("email", "?"))
+    return jsonify({"status": "flagged", "symbol": symbol.upper()})

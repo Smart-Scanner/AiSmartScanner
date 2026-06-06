@@ -1,11 +1,11 @@
 {% extends "_public_base.html" %}
 {% set active = 'pricing' %}
-{% block title %}Pricing — Smart Screener{% endblock %}
+{% block title %}Pricing — AI Smart Screener{% endblock %}
 
 {% block content %}
 <style>
     .hero-sm{padding:72px 0 56px;text-align:center;position:relative}
-    .hero-sm::before{content:'';position:absolute;inset:0;background:radial-gradient(700px 350px at 50% 0%,rgba(255,108,55,0.1) 0%,transparent 60%);pointer-events:none}
+    .hero-sm::before{content:'';position:absolute;inset:0;background:radial-gradient(700px 350px at 50% 0%,rgba(0,200,255,0.1) 0%,transparent 60%);pointer-events:none}
     .hero-sm .eyebrow{position:relative}
     .hero-sm h1{position:relative;font-size:48px;font-weight:800;letter-spacing:-1.2px;margin:14px 0 14px}
     .hero-sm p{position:relative;font-size:16.5px;color:var(--text-dim);max-width:620px;margin:0 auto;line-height:1.6}
@@ -13,24 +13,24 @@
 
     .pricing-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin-top:32px}
     .p-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);padding:32px 26px;transition:all 0.2s;display:flex;flex-direction:column;position:relative}
-    .p-card.featured{border-color:var(--orange);background:linear-gradient(180deg,rgba(255,108,55,0.08) 0%,var(--panel) 100%)}
-    .p-card.featured::before{content:'Most popular';position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--orange);color:#fff;font-size:10px;font-weight:700;padding:5px 14px;border-radius:99px;letter-spacing:0.7px;text-transform:uppercase}
+    .p-card.featured{border-color:var(--primary);background:linear-gradient(180deg,rgba(0,200,255,0.08) 0%,var(--panel) 100%)}
+    .p-card.featured::before{content:'Most popular';position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--primary);color:#fff;font-size:10px;font-weight:700;padding:5px 14px;border-radius:99px;letter-spacing:0.7px;text-transform:uppercase}
     .p-card .name{font-size:14px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px}
     .p-card .amount{font-size:42px;font-weight:800;letter-spacing:-1.5px;margin-bottom:4px}
     .p-card .amount .c{font-size:22px;font-weight:600;color:var(--text-dim);vertical-align:top;margin-right:2px}
     .p-card .period{font-size:13px;color:var(--text-mute);margin-bottom:16px}
-    .p-card .per-day{font-size:11.5px;color:var(--orange);font-weight:600;background:var(--orange-soft);padding:4px 12px;border-radius:99px;align-self:flex-start;margin-bottom:22px}
+    .p-card .per-day{font-size:11.5px;color:var(--primary);font-weight:600;background:var(--primary-soft);padding:4px 12px;border-radius:99px;align-self:flex-start;margin-bottom:22px}
     .p-card ul{list-style:none;font-size:13px;color:var(--text-dim);margin-bottom:26px;line-height:2.1}
     .p-card ul li{display:flex;align-items:center;gap:9px}
     .p-card ul li svg{width:14px;height:14px;color:var(--green);flex-shrink:0}
     .p-card .cta{display:block;text-align:center;padding:11px 14px;border:1px solid var(--border-light);border-radius:8px;font-size:13.5px;font-weight:600;color:var(--text);transition:all 0.15s;margin-top:auto}
-    .p-card .cta:hover{border-color:var(--orange);color:var(--orange)}
-    .p-card.featured .cta{background:var(--orange);border-color:var(--orange);color:#fff;box-shadow:0 6px 18px -6px var(--orange-glow)}
-    .p-card.featured .cta:hover{background:#ff7e4d;color:#fff}
+    .p-card .cta:hover{border-color:var(--primary);color:var(--primary)}
+    .p-card.featured .cta{background:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 6px 18px -6px var(--primary-glow)}
+    .p-card.featured .cta:hover{background:var(--primary-dark);color:#fff}
 
     .feature-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:36px;font-size:13px;color:var(--text-dim)}
     .feature-grid div{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px}
-    .feature-grid div svg{width:14px;height:14px;color:var(--orange);flex-shrink:0}
+    .feature-grid div svg{width:14px;height:14px;color:var(--primary);flex-shrink:0}
     @media (max-width:760px){.feature-grid{grid-template-columns:1fr}}
 
     /* FAQ */
@@ -64,7 +64,7 @@
             <div class="per-day">₹{{ '%.0f'|format(p.price_inr / p.duration_days) }} / day</div>
             {% endif %}
             <ul>
-                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg> Full 18-parameter scoring</li>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg> Full 25+ indicator & AI scoring</li>
                 <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg> Live Angel One prices</li>
                 <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg> Portfolio tracking</li>
                 <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg> All smart filters</li>

@@ -22,7 +22,10 @@ def api_get_portfolios():
             live_prices = live_feed.get_live_prices(symbols)
             missing = [s for s in symbols if s not in live_prices]
             if missing:
-                live_prices.update(live_feed.fetch_ltp_bulk(missing))
+                for ms in missing:
+                    p_data = live_feed.get_live_price(ms)
+                    if p_data:
+                        live_prices[ms] = p_data
             total_invested = 0
             total_current = 0
             for pos in open_positions:
@@ -82,8 +85,10 @@ def api_get_positions(pid):
         # REST fallback for missing prices (WebSocket cache may be empty)
         missing = [s for s in symbols if s not in live_prices]
         if missing:
-            rest_prices = live_feed.fetch_ltp_bulk(missing)
-            live_prices.update(rest_prices)
+            for ms in missing:
+                p_data = live_feed.get_live_price(ms)
+                if p_data:
+                    live_prices[ms] = p_data
         for pos in positions:
             sym = pos["symbol"]
             scan = scan_lookup.get(sym, {})

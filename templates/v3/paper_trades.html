@@ -1,0 +1,228 @@
+{% extends "_app_base.html" %}
+{% set active_page = "paper_trades" %}
+{% block title %}Paper Trades{% endblock %}
+{% block content %}
+<div class="v3-page-header">
+    <div class="v3-page-title">Paper Trades</div>
+    <div class="v3-page-subtitle">Automated paper trading engine with outcome-first analytics</div>
+</div>
+
+<div id="ptLoading" class="v3-loading-state">
+    <div class="v3-loading-steps">
+        <div class="v3-loading-step active"><span class="v3-loading-step-icon">&#9658;</span> Loading trade data...</div>
+    </div>
+</div>
+
+<div id="ptContent" style="display:none">
+    <!-- Stats Row -->
+    <div id="ptStats" class="pt-stats-grid"></div>
+
+    <!-- Tabs: Open | Closed -->
+    <div class="v3-tabs" id="ptTabs" style="margin-top:24px">
+        <button class="v3-tab active" onclick="switchPTTab('open',this)">Open</button>
+        <button class="v3-tab" onclick="switchPTTab('closed',this)">Closed</button>
+    </div>
+
+    <div id="ptOpen" class="pt-trades-list"></div>
+    <div id="ptClosed" class="pt-trades-list" style="display:none"></div>
+</div>
+
+<style>
+.pt-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.pt-stat {
+    background: var(--card-bg); border: 1px solid var(--border-subtle);
+    border-radius: 10px; padding: 16px; text-align: center;
+}
+.pt-stat-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 6px; }
+.pt-stat-value { font-size: 22px; font-weight: 900; font-family: 'JetBrains Mono', monospace; color: var(--text-primary); }
+.pt-stat-value.positive { color: var(--success); }
+.pt-stat-value.negative { color: var(--danger); }
+
+.pt-trades-list { display: flex; flex-direction: column; gap: 10px; }
+
+.pt-trade-row {
+    background: var(--card-bg); border: 1px solid var(--border-subtle);
+    border-radius: 10px; padding: 16px 20px;
+    display: grid; grid-template-columns: 1.2fr 0.8fr 0.8fr 0.8fr 0.8fr 0.6fr;
+    align-items: center; gap: 12px;
+    cursor: pointer; transition: all 0.2s;
+}
+.pt-trade-row:hover { border-color: var(--accent-blue); box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
+
+.pt-trade-sym { font-size: 15px; font-weight: 800; color: var(--text-primary); }
+.pt-trade-sector { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.pt-trade-meta { font-size: 12px; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; }
+.pt-trade-meta-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 2px; }
+
+.pt-pnl { font-size: 16px; font-weight: 800; font-family: 'JetBrains Mono', monospace; }
+.pt-pnl.positive { color: var(--success); }
+.pt-pnl.negative { color: var(--danger); }
+
+.pt-badges { display: flex; gap: 4px; flex-wrap: wrap; }
+.pt-badge {
+    font-size: 8px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.5px; padding: 2px 6px; border-radius: 3px;
+}
+.pt-badge.hc { color: var(--golden); background: rgba(251,191,36,0.12); }
+.pt-badge.golden { color: var(--golden); background: rgba(251,191,36,0.12); }
+.pt-badge.win { color: var(--success); background: rgba(16,185,129,0.1); }
+.pt-badge.loss { color: var(--danger); background: rgba(239,68,68,0.1); }
+
+@media (max-width: 900px) {
+    .pt-trade-row { grid-template-columns: 1fr 1fr; }
+}
+</style>
+
+<script>
+let ptTrades = [];
+let ptStats = {};
+
+function switchPTTab(tab, btn) {
+    document.querySelectorAll('#ptTabs .v3-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('ptOpen').style.display = tab === 'open' ? 'flex' : 'none';
+    document.getElementById('ptClosed').style.display = tab === 'closed' ? 'flex' : 'none';
+}
+
+function renderTradeRow(t, isOpen) {
+    const entryPrice = t.entry_price || 0;
+    const exitPrice = t.exit_price || entryPrice;
+    const returnPct = t.return_pct || 0;
+    const pnlClass = returnPct >= 0 ? 'positive' : 'negative';
+    const pnlSign = returnPct >= 0 ? '+' : '';
+    const badges = [];
+    if (t.high_conviction) badges.push('<span class="pt-badge hc">HC</span>');
+    if (t.is_golden) badges.push('<span class="pt-badge golden">GOLDEN</span>');
+    const confScore = t.confidence_score || 0;
+    const cl = confScore >= 80 ? 'high' : confScore >= 50 ? 'medium' : 'low';
+    const sc = (t.score_at_entry||0) >= 80 ? 'excellent' : (t.score_at_entry||0) >= 65 ? 'good' : (t.score_at_entry||0) >= 50 ? 'average' : 'poor';
+
+    if (isOpen) {
+        const liveReturn = t.live_return_pct || 0;
+        const livePnlClass = liveReturn >= 0 ? 'positive' : 'negative';
+        const livePnlSign = liveReturn >= 0 ? '+' : '';
+        const currentPrice = t.current_price || 0;
+        const dayChg = t.day_change_pct || 0;
+        return `<div class="pt-trade-row" onclick="openDrawerForSymbol('${t.symbol}')">
+            <div>
+                <div class="pt-trade-sym">${t.symbol}</div>
+                <div class="pt-trade-sector">${t.sector || ''}</div>
+                <div class="pt-badges" style="margin-top:4px">${badges.join('')}</div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">Entry</div>
+                <div class="pt-trade-meta">\u20b9${entryPrice.toFixed(2)}</div>
+                <div style="font-size:10px;color:var(--text-muted)">${t.entry_date||''}</div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">LTP</div>
+                <div class="pt-trade-meta" style="color:${currentPrice ? (liveReturn >= 0 ? 'var(--success)' : 'var(--danger)') : 'var(--text-muted)'}">${currentPrice ? '\u20b9'+currentPrice.toFixed(2) : '—'}</div>
+                <div style="font-size:10px;color:${dayChg >= 0 ? 'var(--success)' : 'var(--danger)'}">${dayChg ? (dayChg >= 0 ? '+' : '') + dayChg.toFixed(1) + '% today' : ''}</div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">Live P&L</div>
+                <div class="pt-pnl ${livePnlClass}" style="font-size:14px;font-weight:700">${currentPrice ? livePnlSign + liveReturn.toFixed(1) + '%' : '—'}</div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">Target / Stop</div>
+                <div style="font-size:11px;color:var(--success)">\u20b9${(t.target_price||0).toFixed(0)}</div>
+                <div style="font-size:11px;color:var(--danger)">\u20b9${(t.stop_loss||0).toFixed(0)}</div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">Score</div>
+                <div><span class="v3-score ${sc}" style="font-size:12px;min-width:32px;height:24px">${t.score_at_entry||0}</span></div>
+            </div>
+        </div>`;
+    } else {
+        return `<div class="pt-trade-row" onclick="openDrawerForSymbol('${t.symbol}')">
+            <div>
+                <div class="pt-trade-sym">${t.symbol}</div>
+                <div class="pt-trade-sector">${t.sector || ''}</div>
+                <div class="pt-badges" style="margin-top:4px">
+                    ${badges.join('')}
+                    <span class="pt-badge ${returnPct >= 0 ? 'win' : 'loss'}">${returnPct >= 0 ? 'WIN' : 'LOSS'}</span>
+                </div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">P&L</div>
+                <div class="pt-pnl ${pnlClass}">${pnlSign}${returnPct.toFixed(1)}%</div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">Confidence</div>
+                <div><span class="tp-conf ${cl}" style="font-size:10px;padding:2px 6px">${confScore}%</span></div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">Alpha</div>
+                <div class="pt-trade-meta" style="color:${(t.alpha_pct||0) >= 0 ? 'var(--success)' : 'var(--danger)'}">${(t.alpha_pct||0) >= 0 ? '+' : ''}${(t.alpha_pct||0).toFixed(1)}%</div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">Days</div>
+                <div class="pt-trade-meta">${t.days_held||0}d</div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">Exit</div>
+                <div style="font-size:10px;color:var(--text-muted)">${t.exit_reason||''}</div>
+            </div>
+        </div>`;
+    }
+}
+
+function renderStats(stats) {
+    const grid = document.getElementById('ptStats');
+    const wr = stats.win_rate || 0;
+    const wrClass = wr >= 50 ? 'positive' : wr > 0 ? 'negative' : '';
+    const avgRet = stats.avg_return_pct || 0;
+    const avgAlpha = stats.avg_alpha_pct || 0;
+
+    grid.innerHTML = `
+        <div class="pt-stat"><div class="pt-stat-label">Total</div><div class="pt-stat-value">${stats.total_trades||0}</div></div>
+        <div class="pt-stat"><div class="pt-stat-label">Win Rate</div><div class="pt-stat-value ${wrClass}">${wr.toFixed(1)}%</div></div>
+        <div class="pt-stat"><div class="pt-stat-label">Avg Return</div><div class="pt-stat-value ${avgRet >= 0 ? 'positive' : 'negative'}">${avgRet >= 0 ? '+' : ''}${avgRet.toFixed(1)}%</div></div>
+        <div class="pt-stat"><div class="pt-stat-label">Avg Alpha</div><div class="pt-stat-value ${avgAlpha >= 0 ? 'positive' : 'negative'}">${avgAlpha >= 0 ? '+' : ''}${avgAlpha.toFixed(1)}%</div></div>
+        <div class="pt-stat"><div class="pt-stat-label">Profit Factor</div><div class="pt-stat-value">${(stats.profit_factor||0).toFixed(2)}</div></div>
+        <div class="pt-stat"><div class="pt-stat-label">Expectancy</div><div class="pt-stat-value ${(stats.expectancy||0) >= 0 ? 'positive' : 'negative'}">${(stats.expectancy||0).toFixed(2)}%</div></div>
+        <div class="pt-stat"><div class="pt-stat-label">Avg Days</div><div class="pt-stat-value">${(stats.avg_days_held||0).toFixed(0)}</div></div>
+        <div class="pt-stat"><div class="pt-stat-label">Max DD</div><div class="pt-stat-value negative">${(stats.max_drawdown_pct||0).toFixed(1)}%</div></div>
+    `;
+}
+
+async function loadPaperTrades() {
+    try {
+        const [tradesResp, statsResp] = await Promise.all([
+            fetch('/api/paper-trades'),
+            fetch('/api/paper-trades/stats')
+        ]);
+        const tradesData = await tradesResp.json();
+        const statsData = await statsResp.json();
+
+        ptTrades = tradesData.trades || [];
+        ptStats = statsData;
+
+        document.getElementById('ptLoading').style.display = 'none';
+        document.getElementById('ptContent').style.display = 'block';
+
+        renderStats(ptStats);
+
+        const openTrades = ptTrades.filter(t => t.status === 'OPEN');
+        const closedTrades = ptTrades.filter(t => t.status === 'CLOSED');
+
+        document.getElementById('ptOpen').innerHTML = openTrades.length
+            ? openTrades.map(t => renderTradeRow(t, true)).join('')
+            : '<div class="v3-empty-state" style="min-height:150px;padding:30px"><div class="v3-empty-title">No Open Trades</div><div class="v3-empty-desc">Paper trades are opened automatically during each scan cycle.</div></div>';
+
+        document.getElementById('ptClosed').innerHTML = closedTrades.length
+            ? closedTrades.map(t => renderTradeRow(t, false)).join('')
+            : '<div class="v3-empty-state" style="min-height:150px;padding:30px"><div class="v3-empty-title">No Closed Trades</div><div class="v3-empty-desc">Closed trades will appear after positions hit targets, stops, or time limits.</div></div>';
+
+        // Update tab labels
+        document.querySelectorAll('#ptTabs .v3-tab')[0].textContent = `Open (${openTrades.length})`;
+        document.querySelectorAll('#ptTabs .v3-tab')[1].textContent = `Closed (${closedTrades.length})`;
+
+    } catch (e) {
+        document.getElementById('ptLoading').innerHTML = '<div style="color:var(--danger);text-align:center;padding:30px">Failed to load paper trades</div>';
+    }
+}
+
+loadPaperTrades();
+</script>
+{% endblock %}

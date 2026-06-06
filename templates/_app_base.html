@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}AI Smart Scanner{% endblock %} | Research Platform</title>
+    <meta name="description" content="Institutional-Grade NSE Swing Research Platform with Outcome Intelligence">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/v3.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+<div class="v3-app">
+
+    <!-- ═══ SIDEBAR ═══════════════════════════════════════════════ -->
+    <aside class="v3-sidebar" id="v3Sidebar">
+        <div class="v3-sidebar-header">
+            <div class="v3-sidebar-logo">AS</div>
+            <div class="v3-sidebar-brand">
+                <h1>AI Smart Scanner</h1>
+                <p>Research Platform</p>
+            </div>
+        </div>
+
+        <nav class="v3-sidebar-nav">
+            <!-- OVERVIEW -->
+            <div class="v3-nav-section">
+                <div class="v3-nav-label">Overview</div>
+                <a href="/" class="v3-nav-item {% if active_page == 'dashboard' %}active{% endif %}" id="nav-dashboard">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                    <span>Dashboard</span>
+                </a>
+            </div>
+
+            <!-- RESEARCH -->
+            <div class="v3-nav-section">
+                <div class="v3-nav-label">Research</div>
+                <a href="/top-picks" class="v3-nav-item {% if active_page == 'top_picks' %}active{% endif %}" id="nav-top-picks">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                    <span>Top Picks</span>
+                </a>
+                <a href="/golden" class="v3-nav-item {% if active_page == 'golden' %}active{% endif %}" id="nav-golden">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                    <span>Golden Stocks</span>
+                    <span class="v3-nav-badge" id="goldenCount">—</span>
+                </a>
+                <a href="/hc" class="v3-nav-item {% if active_page == 'high_conviction' %}active{% endif %}" id="nav-hc">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                    <span>High Conviction</span>
+                    <span class="v3-nav-badge" id="hcCount">—</span>
+                </a>
+                <a href="/breakouts" class="v3-nav-item {% if active_page == 'breakouts' %}active{% endif %}" id="nav-breakouts">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+                    <span>Breakouts</span>
+                </a>
+            </div>
+
+            <!-- INTELLIGENCE -->
+            <div class="v3-nav-section">
+                <div class="v3-nav-label">Intelligence</div>
+                <a href="/market" class="v3-nav-item {% if active_page == 'market_intel' %}active{% endif %}" id="nav-market">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    <span>Market Overview</span>
+                </a>
+                <a href="#" class="v3-nav-item {% if active_page == 'sector_rotation' %}active{% endif %}" id="nav-sector">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+                    <span>Sector Rotation</span>
+                </a>
+                <a href="#" class="v3-nav-item {% if active_page == 'earnings' %}active{% endif %}" id="nav-earnings">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                    <span>Earnings Momentum</span>
+                </a>
+                <a href="#" class="v3-nav-item {% if active_page == 'smart_money' %}active{% endif %}" id="nav-smart-money">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>Smart Money</span>
+                </a>
+            </div>
+
+            <!-- PERFORMANCE -->
+            <div class="v3-nav-section">
+                <div class="v3-nav-label">Performance</div>
+                <a href="/paper-trades-view" class="v3-nav-item {% if active_page == 'paper_trades' %}active{% endif %}" id="nav-paper-trades">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    <span>Paper Trades</span>
+                </a>
+                <a href="/outcome" class="v3-nav-item {% if active_page == 'outcome' %}active{% endif %}" id="nav-outcome">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+                    <span>Outcome Intelligence</span>
+                </a>
+            </div>
+
+            <!-- TOOLS -->
+            <div class="v3-nav-section">
+                <div class="v3-nav-label">Tools</div>
+                <a href="/portfolio" class="v3-nav-item {% if active_page == 'portfolio' %}active{% endif %}" id="nav-portfolio">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                    <span>Portfolio</span>
+                </a>
+                <a href="/watchlist" class="v3-nav-item {% if active_page == 'watchlist' %}active{% endif %}" id="nav-watchlist">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                    <span>Watchlist</span>
+                </a>
+                <a href="#" class="v3-nav-item v3-nav-future" id="nav-reports">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    <span>Reports</span>
+                </a>
+                <a href="/settings" class="v3-nav-item {% if active_page == 'settings' %}active{% endif %}" id="nav-settings">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    <span>Settings</span>
+                </a>
+            </div>
+
+            <!-- FUTURE -->
+            <div class="v3-nav-section">
+                <div class="v3-nav-label">Future</div>
+                <a href="#" class="v3-nav-item v3-nav-future" id="nav-portfolio-intel">
+                    <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                    <span>Portfolio Intelligence</span>
+                </a>
+            </div>
+        </nav>
+
+        <div class="v3-sidebar-footer">
+            <button class="v3-sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar" id="sidebarToggle">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+            </button>
+            <div class="v3-user-info">
+                <div class="v3-user-name">{{ user.name if user else 'User' }}</div>
+                <div class="v3-user-role">{{ 'Admin' if is_admin else 'Trader' }}</div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ═══ MAIN AREA ═════════════════════════════════════════════ -->
+    <div class="v3-main-area">
+
+        <!-- ── Command Center Header ──────────────────────────── -->
+        <header class="v3-header" id="v3Header">
+            <div class="v3-header-status">
+                <div class="v3-status-pill live" id="marketStatusPill">
+                    <span class="v3-status-dot"></span>
+                    <span id="marketStatusText">LOADING</span>
+                </div>
+            </div>
+
+            <div class="v3-header-meta" id="headerMeta">
+                <div class="v3-header-meta-item">
+                    <span class="v3-header-meta-label">Scan</span>
+                    <span class="v3-header-meta-value" id="headerLastScan">—</span>
+                </div>
+                <div class="v3-header-meta-item">
+                    <span class="v3-header-meta-label">Regime</span>
+                    <span class="v3-regime-badge sideways" id="headerRegime">—</span>
+                </div>
+                <div class="v3-header-meta-item">
+                    <span class="v3-header-meta-label">Breadth</span>
+                    <span class="v3-header-meta-value" id="headerBreadth">—</span>
+                </div>
+                <div class="v3-header-meta-item">
+                    <span class="v3-header-meta-label">Leading</span>
+                    <span class="v3-header-meta-value" id="headerLeadingSector">—</span>
+                </div>
+            </div>
+
+            <div class="v3-search-container">
+                <svg class="v3-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" class="v3-search-input" placeholder="Search symbol..." id="globalSearch" autocomplete="off">
+                <div class="v3-search-kbd"><kbd>Ctrl</kbd><kbd>K</kbd></div>
+                <div class="v3-search-dropdown" id="searchDropdown"></div>
+            </div>
+
+            <div class="v3-header-actions">
+                <button class="v3-action-btn" onclick="triggerScan()" id="btnScan" title="Run Scan">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                    Scan
+                </button>
+                <button class="v3-action-btn" onclick="refreshData()" id="btnRefresh" title="Refresh Data">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+                </button>
+                <button class="v3-action-btn" onclick="exportPicks()" id="btnExport" title="Export CSV">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- ── Page Content ───────────────────────────────────── -->
+        <main class="v3-content" id="v3Content">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <!-- ═══ STOCK DRAWER ══════════════════════════════════════════ -->
+    <div class="v3-drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+    <div class="v3-drawer" id="stockDrawer">
+        <div class="v3-drawer-header">
+            <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:10px">
+                    <div style="font-size:22px;font-weight:900;letter-spacing:-0.5px" id="drawerSymbol">&#8212;</div>
+                    <button class="drawer-star-btn" id="drawerStarBtn" onclick="toggleDrawerWatchlist()" title="Add to Watchlist">&#9734;</button>
+                </div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px" id="drawerSector">&#8212;</div>
+                <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+                    <span style="font-size:18px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text-primary)" id="drawerPrice">&#8212;</span>
+                    <span style="font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace" id="drawerChange"></span>
+                </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:8px">
+                <div class="drawer-export-wrap">
+                    <button class="drawer-export-btn" onclick="toggleExportMenu()" title="Export Research">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    </button>
+                    <div class="drawer-export-menu" id="exportMenu">
+                        <button onclick="copyThesis()">&#128203; Copy Thesis</button>
+                        <button onclick="downloadMarkdown()">&#128196; Markdown</button>
+                    </div>
+                </div>
+                <button class="v3-drawer-close" onclick="closeDrawer()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+        </div>
+        <!-- Conviction meter + badges row -->
+        <div id="drawerMeta" class="drawer-meta-row"></div>
+        <div class="v3-drawer-body" id="drawerBody">
+            <!-- Drawer content loaded dynamically -->
+        </div>
+    </div>
+
+    <!-- ═══ MOBILE BOTTOM NAV ═════════════════════════════════════ -->
+    <nav class="v3-mobile-nav">
+        <div class="v3-mobile-nav-inner">
+            <a href="/" class="v3-mobile-nav-item {% if active_page == 'dashboard' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                Overview
+            </a>
+            <a href="/top-picks" class="v3-mobile-nav-item {% if active_page == 'top_picks' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                Picks
+            </a>
+            <a href="/paper-trades-view" class="v3-mobile-nav-item {% if active_page == 'paper_trades' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                Trades
+            </a>
+            <a href="/outcome" class="v3-mobile-nav-item {% if active_page == 'outcome' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+                Analytics
+            </a>
+            <a href="/settings" class="v3-mobile-nav-item {% if active_page == 'settings' %}active{% endif %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                Profile
+            </a>
+        </div>
+    </nav>
+</div>
+
+<!-- ═══ GLOBAL JS ═════════════════════════════════════════════════ -->
+<script>
+// ── Sidebar Toggle ──────────────────────────────────────────────
+function toggleSidebar() {
+    document.getElementById('v3Sidebar').classList.toggle('collapsed');
+    localStorage.setItem('v3_sidebar_collapsed', document.getElementById('v3Sidebar').classList.contains('collapsed'));
+}
+if (localStorage.getItem('v3_sidebar_collapsed') === 'true') {
+    document.getElementById('v3Sidebar').classList.add('collapsed');
+}
+
+// ── Global Search ───────────────────────────────────────────────
+const searchInput = document.getElementById('globalSearch');
+const searchDropdown = document.getElementById('searchDropdown');
+let allStocks = [];
+let searchHighlightIdx = -1;
+
+document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+    }
+    if (e.key === 'Escape') {
+        searchDropdown.classList.remove('open');
+        searchInput.blur();
+    }
+});
+
+searchInput.addEventListener('input', () => {
+    const q = searchInput.value.trim().toUpperCase();
+    if (q.length < 1) { searchDropdown.classList.remove('open'); return; }
+    const matches = allStocks.filter(s =>
+        s.symbol.includes(q) || (s.sector||'').toUpperCase().includes(q)
+    ).slice(0, 8);
+    if (!matches.length) { searchDropdown.classList.remove('open'); return; }
+    searchHighlightIdx = 0;
+    searchDropdown.innerHTML = matches.map((s, i) => `
+        <div class="v3-search-result ${i===0?'highlighted':''}" data-symbol="${s.symbol}" onclick="openDrawerForSymbol('${s.symbol}')">
+            <div>
+                <div class="v3-search-result-symbol">${s.symbol}</div>
+                <div class="v3-search-result-sector">${s.sector || ''}</div>
+            </div>
+            <div class="v3-search-result-score" style="color:${s.score>=75?'var(--success)':s.score>=55?'var(--warning)':'var(--danger)'}">${s.score || '—'}</div>
+        </div>
+    `).join('');
+    searchDropdown.classList.add('open');
+});
+
+searchInput.addEventListener('keydown', e => {
+    const results = searchDropdown.querySelectorAll('.v3-search-result');
+    if (!results.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); searchHighlightIdx = Math.min(searchHighlightIdx + 1, results.length - 1); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); searchHighlightIdx = Math.max(searchHighlightIdx - 1, 0); }
+    results.forEach((r, i) => r.classList.toggle('highlighted', i === searchHighlightIdx));
+    if (e.key === 'Enter' && results[searchHighlightIdx]) {
+        e.preventDefault();
+        openDrawerForSymbol(results[searchHighlightIdx].dataset.symbol);
+    }
+});
+
+searchInput.addEventListener('blur', () => setTimeout(() => searchDropdown.classList.remove('open'), 200));
+
+// ── Drawer ──────────────────────────────────────────────────────
+let _drawerData = null;
+let _drawerChart = null;
+
+function calcDrawerConf(d) {
+    const s = d.scan || d;
+    const t100 = Math.min(100, ((s.technical_score||0)/30)*100);
+    const e100 = Math.min(100, ((s.earnings_momentum_score||0)/15)*100);
+    const sm100 = s.smart_money_100 || Math.min(100, ((s.smart_money_score||0)/10)*100);
+    const f100 = Math.min(100, ((s.fundamental_score||0)/10)*100);
+    return Math.round(Math.min(100, Math.max(0, t100*0.30 + e100*0.25 + sm100*0.25 + f100*0.20)));
+}
+
+function calcHealth(d) {
+    const s = d.scan || d;
+    const t100 = Math.min(100, ((s.technical_score||0)/30)*100);
+    const e100 = Math.min(100, ((s.earnings_momentum_score||0)/15)*100);
+    const sm100 = s.smart_money_100 || Math.min(100, ((s.smart_money_score||0)/10)*100);
+    const r = s.risk_score || 50;
+    const avg = (t100 + e100 + sm100 + (100 - r)) / 4;
+    if (avg >= 75) return { label: 'Excellent', emoji: '\uD83D\uDFE2', color: 'var(--success)' };
+    if (avg >= 60) return { label: 'Good', emoji: '\uD83D\uDFE1', color: 'var(--warning)' };
+    if (avg >= 45) return { label: 'Mixed', emoji: '\uD83D\uDFE0', color: '#f97316' };
+    return { label: 'Weak', emoji: '\uD83D\uDD34', color: 'var(--danger)' };
+}
+
+function getConviction(d) {
+    const s = d.scan || d;
+    const score = s.score || d.score || 0;
+    const hc = s.high_conviction || d.high_conviction;
+    if (score >= 80 && hc) return { level: 'strong-buy', label: 'Strong Buy' };
+    if (score >= 65) return { level: 'moderate-buy', label: 'Moderate Buy' };
+    if (score >= 50) return { level: 'watchlist', label: 'Watchlist' };
+    return { level: 'avoid', label: 'Avoid' };
+}
+
+function openDrawerForSymbol(symbol) {
+    const overlay = document.getElementById('drawerOverlay');
+    const drawer = document.getElementById('stockDrawer');
+    document.getElementById('drawerSymbol').textContent = symbol;
+    document.getElementById('drawerSector').textContent = '...';
+    document.getElementById('drawerPrice').textContent = '...';
+    document.getElementById('drawerChange').textContent = '';
+    document.getElementById('drawerMeta').innerHTML = '';
+    document.getElementById('drawerBody').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading analysis...</div>';
+    searchDropdown.classList.remove('open');
+    searchInput.value = '';
+    overlay.classList.add('open');
+    drawer.classList.add('open');
+
+    // Update watchlist star
+    const wl = JSON.parse(localStorage.getItem('v3_watchlist') || '[]');
+    const inWL = wl.some(w => w.symbol === symbol);
+    const starBtn = document.getElementById('drawerStarBtn');
+    starBtn.textContent = inWL ? '\u2605' : '\u2606';
+    starBtn.classList.toggle('active', inWL);
+
+    fetch(`/api/stock/${symbol}`).then(r => r.json()).then(data => {
+        if (data.error) {
+            document.getElementById('drawerBody').innerHTML = `<div style="padding:40px;text-align:center;color:var(--danger)">${data.error}</div>`;
+            return;
+        }
+        _drawerData = data;
+        const s = data.scan || data;
+        document.getElementById('drawerSector').textContent = s.sector || data.sector || '\u2014';
+        document.getElementById('drawerPrice').textContent = '\u20B9' + (data.price || s.price || 0).toLocaleString('en-IN', {maximumFractionDigits:2});
+        const chg = s.pct_1w || 0;
+        const chgEl = document.getElementById('drawerChange');
+        chgEl.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(1) + '% 1W';
+        chgEl.style.color = chg >= 0 ? 'var(--success)' : 'var(--danger)';
+
+        // Meta row: score + confidence + conviction
+        const conf = calcDrawerConf(data);
+        const cl = conf >= 80 ? 'high' : conf >= 50 ? 'medium' : 'low';
+        const clLabel = conf >= 80 ? 'HIGH' : conf >= 50 ? 'MED' : 'LOW';
+        const conv = getConviction(data);
+        const score = s.score || data.score || 0;
+        const sc = score >= 80 ? 'excellent' : score >= 65 ? 'good' : score >= 50 ? 'average' : 'poor';
+
+        document.getElementById('drawerMeta').innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <div class="v3-score ${sc}" style="font-size:16px;min-width:42px;height:32px">${score}</div>
+                <div class="tp-conf ${cl}" style="font-size:13px;font-weight:800"><span class="tp-conf-dot" style="width:6px;height:6px;border-radius:50%;display:inline-block;background:${cl==='high'?'var(--success)':cl==='medium'?'var(--warning)':'var(--danger)'};margin-right:4px"></span>${conf}% ${clLabel}</div>
+                ${s.grade ? `<div class="v3-grade" style="font-size:11px;padding:2px 8px">${s.grade}</div>` : ''}
+                <div class="drawer-conviction ${conv.level}">${conv.label}</div>
+            </div>`;
+
+        renderDrawerContent(data);
+    }).catch(err => {
+        document.getElementById('drawerBody').innerHTML = `<div style="padding:40px;text-align:center;color:var(--danger)">Failed to load: ${err.message}</div>`;
+    });
+}
+
+function closeDrawer() {
+    document.getElementById('drawerOverlay').classList.remove('open');
+    document.getElementById('stockDrawer').classList.remove('open');
+    if (_drawerChart) { _drawerChart.destroy(); _drawerChart = null; }
+    const em = document.getElementById('exportMenu');
+    if (em) em.classList.remove('open');
+}
+
+function toggleDrawerWatchlist() {
+    if (!_drawerData) return;
+    const sym = _drawerData.symbol || document.getElementById('drawerSymbol').textContent;
+    const s = _drawerData.scan || _drawerData;
+    let wl = JSON.parse(localStorage.getItem('v3_watchlist') || '[]');
+    const idx = wl.findIndex(w => w.symbol === sym);
+    if (idx >= 0) { wl.splice(idx, 1); }
+    else { wl.push({ symbol: sym, addedAt: new Date().toISOString(), addedScore: s.score || 0, notes: '' }); }
+    localStorage.setItem('v3_watchlist', JSON.stringify(wl));
+    const btn = document.getElementById('drawerStarBtn');
+    const inWL = idx < 0;
+    btn.textContent = inWL ? '\u2605' : '\u2606';
+    btn.classList.toggle('active', inWL);
+}
+
+function toggleExportMenu() {
+    document.getElementById('exportMenu').classList.toggle('open');
+}
+
+function copyThesis() {
+    if (!_drawerData) return;
+    const s = _drawerData.scan || _drawerData;
+    const conf = calcDrawerConf(_drawerData);
+    const h = calcHealth(_drawerData);
+    const thesis = buildThesisText(s, _drawerData, conf, h);
+    navigator.clipboard.writeText(thesis).then(() => {
+        const btn = event.target;
+        btn.textContent = '\u2713 Copied!';
+        setTimeout(() => btn.textContent = '\uD83D\uDCCB Copy Thesis', 2000);
+    });
+    document.getElementById('exportMenu').classList.remove('open');
+}
+
+function downloadMarkdown() {
+    if (!_drawerData) return;
+    const s = _drawerData.scan || _drawerData;
+    const sym = _drawerData.symbol || s.symbol;
+    const conf = calcDrawerConf(_drawerData);
+    const h = calcHealth(_drawerData);
+    const md = `# ${sym} \u2014 Research Snapshot\n\nScore: ${s.score||0} | Confidence: ${conf}% ${conf>=80?'HIGH':conf>=50?'MED':'LOW'} | Health: ${h.emoji} ${h.label}\n\n## Investment Thesis\n\n${buildThesisText(s, _drawerData, conf, h)}\n\n## Targets\n\nEntry: \u20B9${(_drawerData.price||0).toFixed(2)} | Stop: \u20B9${(s.stop_loss||0).toFixed(2)} | Target: \u20B9${(s.target_price||0).toFixed(2)} | R:R: ${(s.risk_reward||0).toFixed(1)}\n\n## Signals\n\n${(s.signals||[]).map(sg => '- ' + (Array.isArray(sg) ? sg[0] : sg)).join('\n')}\n\n---\n*Generated by AI Smart Scanner on ${new Date().toLocaleDateString()}*\n`;
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${sym}_research_${new Date().toISOString().slice(0,10)}.md`;
+    a.click();
+    document.getElementById('exportMenu').classList.remove('open');
+}
+
+function buildThesisText(s, data, conf, health) {
+    const reasons = [];
+    const e100 = Math.min(100, ((s.earnings_momentum_score||0)/15)*100);
+    const sm100 = s.smart_money_100 || Math.min(100, ((s.smart_money_score||0)/10)*100);
+    const sect100 = Math.min(100, ((s.sector_rotation_score||0)/10)*100);
+    const fund100 = Math.min(100, ((s.fundamental_score||0)/10)*100);
+    if (e100 > 70) reasons.push('Accelerating earnings momentum');
+    if (sm100 > 70) reasons.push('Smart money accumulation detected (rising delivery + OBV)');
+    if (sect100 > 70) reasons.push(`Sector leadership (${(s.sector_rotation||{}).quadrant||'Leading'} quadrant)`);
+    if ((s.risk_reward||0) > 2) reasons.push(`Favorable risk/reward ratio of ${(s.risk_reward||0).toFixed(1)}:1`);
+    if (fund100 > 60) reasons.push('Strong fundamental quality');
+    if (s.is_breakout) reasons.push('Breakout pattern with volume confirmation');
+    if (s.high_conviction) reasons.push('Multi-factor high conviction alignment');
+    if (!reasons.length) reasons.push('Highest composite score across all research factors');
+
+    const risks = [];
+    const rsi = s.rsi || data.rsi && data.rsi[data.rsi.length-1] || 50;
+    if (rsi > 70) risks.push(`RSI at ${Math.round(rsi)} approaching overbought territory`);
+    if (s.below_ema200) risks.push('Trading below 200 EMA \u2014 structural downtrend');
+    if ((s.risk_score||0) > 50) risks.push(`Elevated risk score of ${s.risk_score}`);
+    if (!risks.length) risks.push('No major risks flagged');
+
+    return `This stock ranks highly due to:\n${reasons.map(r => '\u2022 ' + r).join('\n')}\n\nKey Risk:\n${risks.join('. ')}.\n\nExpected Holding:\n10\u201320 trading days (swing trade)`;
+}
+
+function renderDrawerContent(data) {
+    const body = document.getElementById('drawerBody');
+    const s = data.scan || data;
+    const score = s.score || data.score || 0;
+    const conf = calcDrawerConf(data);
+    const health = calcHealth(data);
+    const signals = (s.signals || []).map(sg => Array.isArray(sg) ? sg : [String(sg), '', 'neutral']);
+
+    const bullSignals = signals.filter(sg => sg[2] === 'bullish' || (!sg[2] && !String(sg[0]).toLowerCase().includes('risk'))).slice(0, 5);
+    const bearSignals = signals.filter(sg => sg[2] === 'bearish' || String(sg[0]).toLowerCase().includes('risk')).slice(0, 3);
+
+    // Group signals by category
+    const techSigs = signals.filter(sg => /ema|macd|rsi|stoch|bb|adx|atr|vwap|ichimoku|supertrend|cci|williams|keltner|fibonacci|golden cross|pullback|momentum|trend|breakout/i.test(sg[0]));
+    const fundSigs = signals.filter(sg => /fundament|earnings|revenue|debt|pe|growth|pat/i.test(sg[0]));
+    const momSigs = signals.filter(sg => /smart money|delivery|volume|obv|accumulation|cmf|mfi|surge/i.test(sg[0]));
+    const riskSigs = signals.filter(sg => sg[2] === 'bearish' || /risk|bear|weak|below|overbought|downtrend|choppy|headwind/i.test(sg[0]));
+
+    // Score breakdowns (normalized to 100)
+    const scores = [
+        { label: 'Technical', val: Math.round(Math.min(100, ((s.technical_score||0)/30)*100)), color: 'var(--accent-blue)' },
+        { label: 'Earnings', val: Math.round(Math.min(100, ((s.earnings_momentum_score||0)/15)*100)), color: '#a78bfa' },
+        { label: 'Smart Money', val: Math.round(s.smart_money_100 || Math.min(100, ((s.smart_money_score||0)/10)*100)), color: 'var(--accent-cyan)' },
+        { label: 'Fundamental', val: Math.round(Math.min(100, ((s.fundamental_score||0)/10)*100)), color: 'var(--success)' },
+        { label: 'Sector', val: Math.round(Math.min(100, ((s.sector_rotation_score||0)/10)*100)), color: 'var(--warning)' },
+        { label: 'Risk', val: Math.round(100 - (s.risk_score||50)), color: 'var(--danger)' },
+    ];
+
+    body.innerHTML = `
+        <div class="v3-tabs" id="drawerTabs">
+            <button class="v3-tab active" onclick="switchDrawerTab('summary',this)">Summary</button>
+            <button class="v3-tab" onclick="switchDrawerTab('scoring',this)">Scoring</button>
+            <button class="v3-tab" onclick="switchDrawerTab('targets',this)">Targets</button>
+            <button class="v3-tab" onclick="switchDrawerTab('signals',this)">Signals</button>
+            <button class="v3-tab" onclick="switchDrawerTab('chart',this)">Chart</button>
+            <button class="v3-tab" onclick="switchDrawerTab('timeline',this)">Timeline</button>
+        </div>
+        <div id="drawerTabContent">
+            <!-- SUMMARY -->
+            <div class="v3-tab-panel active" id="tab-summary">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px;background:rgba(${health.color==='var(--success)'?'16,185,129':health.color==='var(--warning)'?'245,158,11':health.color==='var(--danger)'?'239,68,68':'249,115,22'},0.08);border-radius:10px;border:1px solid rgba(${health.color==='var(--success)'?'16,185,129':health.color==='var(--warning)'?'245,158,11':health.color==='var(--danger)'?'239,68,68':'249,115,22'},0.2)">
+                    <span style="font-size:24px">${health.emoji}</span>
+                    <div>
+                        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted)">Research Health</div>
+                        <div style="font-size:16px;font-weight:800;color:${health.color}">${health.label}</div>
+                    </div>
+                </div>
+
+                <h4 style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--accent-cyan);margin-bottom:10px">Investment Thesis</h4>
+                <div style="font-size:13px;color:var(--text-secondary);line-height:1.7;margin-bottom:20px;white-space:pre-line">${buildThesisText(s, data, conf, health)}</div>
+
+                <h4 style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--warning);margin-bottom:8px">Invalidation</h4>
+                <p style="font-size:13px;color:var(--text-secondary)">If price breaks below \u20B9${s.stop_loss ? s.stop_loss.toFixed(2) : (data.stop_loss||0).toFixed(2)} (stop loss), thesis is invalid.</p>
+            </div>
+
+            <!-- SCORING -->
+            <div class="v3-tab-panel" id="tab-scoring">
+                <canvas id="radarChart" height="220"></canvas>
+                <div style="margin-top:16px">
+                    ${scores.map(sc => `
+                        <div style="margin-bottom:10px">
+                            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                                <span style="font-size:12px;color:var(--text-secondary)">${sc.label}</span>
+                                <span style="font-size:12px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text-primary)">${sc.val}</span>
+                            </div>
+                            <div style="height:6px;background:var(--border-subtle);border-radius:3px;overflow:hidden">
+                                <div style="height:100%;width:${sc.val}%;background:${sc.color};border-radius:3px;transition:width 0.5s"></div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+
+            <!-- TARGETS -->
+            <div class="v3-tab-panel" id="tab-targets">
+                <div class="drawer-price-ladder">
+                    <div class="ladder-row target"><span class="ladder-label">Target</span><span class="ladder-price">\u20B9${(s.target_price||data.target_price||0).toFixed(2)}</span><span class="ladder-pct" style="color:var(--success)">+${(s.target_pct||0).toFixed(1)}%</span></div>
+                    <div class="ladder-bar" style="background:var(--success);opacity:0.2;height:40px"></div>
+                    <div class="ladder-row entry"><span class="ladder-label">Entry</span><span class="ladder-price">\u20B9${(data.price||s.price||0).toFixed(2)}</span><span class="ladder-pct" style="color:var(--text-muted)">current</span></div>
+                    <div class="ladder-bar" style="background:var(--danger);opacity:0.2;height:24px"></div>
+                    <div class="ladder-row stop"><span class="ladder-label">Stop Loss</span><span class="ladder-price">\u20B9${(s.stop_loss||data.stop_loss||0).toFixed(2)}</span><span class="ladder-pct" style="color:var(--danger)">${(s.stop_loss_pct||0).toFixed(1)}%</span></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px">
+                    <div class="v3-kpi-card"><div class="v3-kpi-label">Risk : Reward</div><div class="v3-kpi-value" style="font-size:18px">${s.risk_reward ? s.risk_reward.toFixed(1)+':1' : '\u2014'}</div></div>
+                    <div class="v3-kpi-card"><div class="v3-kpi-label">Risk Score</div><div class="v3-kpi-value" style="font-size:18px;color:${(s.risk_score||50)>50?'var(--danger)':'var(--success)'}">${s.risk_score||'\u2014'}</div></div>
+                </div>
+                ${s.trade ? `
+                <div style="margin-top:16px;padding:12px;background:var(--bg-secondary);border-radius:10px;border:1px solid var(--border-subtle)">
+                    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted);margin-bottom:8px">Booking Plan</div>
+                    <div style="font-size:12px;color:var(--text-secondary)">${s.trade.booking_plan||'\u2014'}</div>
+                </div>` : ''}
+            </div>
+
+            <!-- SIGNALS -->
+            <div class="v3-tab-panel" id="tab-signals">
+                ${renderSignalGroup('Technical', techSigs, 'var(--accent-blue)')}
+                ${renderSignalGroup('Smart Money', momSigs, 'var(--accent-cyan)')}
+                ${renderSignalGroup('Fundamental', fundSigs, 'var(--success)')}
+                ${renderSignalGroup('Risk', riskSigs, 'var(--danger)')}
+                ${!techSigs.length && !momSigs.length && !fundSigs.length && !riskSigs.length ?
+                    '<div style="padding:30px;text-align:center;color:var(--text-muted)">No signals from current scan</div>' : ''}
+            </div>
+
+            <!-- CHART -->
+            <div class="v3-tab-panel" id="tab-chart">
+                <canvas id="drawerLineChart" height="280"></canvas>
+            </div>
+
+            <!-- TIMELINE -->
+            <div class="v3-tab-panel" id="tab-timeline">
+                <div id="timelineContent">
+                    <div style="padding:20px;text-align:center;color:var(--text-muted)">Loading timeline...</div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Render radar
+    const radarCanvas = document.getElementById('radarChart');
+    if (radarCanvas && typeof Chart !== 'undefined') {
+        new Chart(radarCanvas, {
+            type: 'radar',
+            data: {
+                labels: scores.map(sc => sc.label),
+                datasets: [{ data: scores.map(sc => sc.val), borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,0.12)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#3B82F6' }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: true,
+                scales: { r: { min: 0, max: 100, ticks: { display: false, stepSize: 25 }, grid: { color: '#2A364B' }, pointLabels: { color: '#CBD5E1', font: { size: 11, weight: 600 } }, angleLines: { color: '#2A364B' } } },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+
+    // Load timeline with fallback
+    loadTimeline(data);
+}
+
+function renderSignalGroup(title, sigs, color) {
+    if (!sigs.length) return '';
+    return `<div style="margin-bottom:16px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:${color};margin-bottom:8px">${title}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+            ${sigs.map(sg => `<span class="v3-signal-pill" style="border-color:${color}">${sg[0]}</span>`).join('')}
+        </div>
+    </div>`;
+}
+
+function loadTimeline(data) {
+    const container = document.getElementById('timelineContent');
+    if (!container) return;
+    const sym = data.symbol || (data.scan||{}).symbol;
+    const s = data.scan || data;
+
+    // Try history endpoint
+    fetch(`/api/stock/history/${sym}`).then(r => r.json()).then(hist => {
+        if (hist.history && hist.history.length > 1) {
+            container.innerHTML = hist.history.slice(0, 10).map((h, i) => `
+                <div style="display:flex;gap:12px;padding:10px 0;${i < hist.history.length-1 ? 'border-bottom:1px solid var(--border-subtle)':''}" >
+                    <div style="width:8px;height:8px;border-radius:50%;background:var(--accent-blue);margin-top:4px;flex-shrink:0"></div>
+                    <div>
+                        <div style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace">${h.date||h.scanned_at||''}</div>
+                        <div style="font-size:13px;color:var(--text-primary);font-weight:600;margin-top:2px">Score ${h.score||0} ${h.prev_score ? `(${h.score > h.prev_score ? '+' : ''}${h.score - h.prev_score})` : ''}</div>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            showTimelineFallback(container, s, data);
+        }
+    }).catch(() => showTimelineFallback(container, s, data));
+}
+
+function showTimelineFallback(container, s, data) {
+    container.innerHTML = `
+        <div style="padding:16px;background:var(--bg-secondary);border-radius:10px;border:1px solid var(--border-subtle)">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted);margin-bottom:12px">Current Snapshot</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div><span style="font-size:11px;color:var(--text-muted)">Latest Score</span><div style="font-size:18px;font-weight:800;color:var(--text-primary)">${s.score||0}</div></div>
+                <div><span style="font-size:11px;color:var(--text-muted)">Model</span><div style="font-size:14px;font-weight:700;color:var(--text-primary)">${s.model_version||'R2.1'}</div></div>
+                <div><span style="font-size:11px;color:var(--text-muted)">Grade</span><div style="font-size:14px;font-weight:700;color:var(--text-primary)">${s.grade||'\u2014'}</div></div>
+                <div><span style="font-size:11px;color:var(--text-muted)">Weekly Trend</span><div style="font-size:14px;font-weight:700;color:var(--text-primary)">${(s.weekly_trend||'flat').toUpperCase()}</div></div>
+            </div>
+        </div>
+        <div style="margin-top:16px;padding:16px;text-align:center;color:var(--text-muted);font-size:12px">
+            Score history will appear after multiple scan cycles.
+        </div>`;
+}
+
+function switchDrawerTab(tab, btn) {
+    document.querySelectorAll('#drawerTabs .v3-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('#drawerTabContent .v3-tab-panel').forEach(p => p.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    document.getElementById('tab-' + tab).classList.add('active');
+
+    // Lazy-load chart
+    if (tab === 'chart' && _drawerData && !_drawerChart) {
+        renderDrawerChart(_drawerData);
+    }
+}
+
+function renderDrawerChart(data) {
+    const canvas = document.getElementById('drawerLineChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    const s = data.scan || data;
+
+    // Use OHLCV data or close array
+    let dates = data.dates || [];
+    let closes = data.close || [];
+    let ema9 = data.ema_9 || [];
+    let ema21 = data.ema_21 || [];
+    let volumes = data.volume || [];
+
+    // Take last 60 days
+    const n = Math.min(60, dates.length);
+    dates = dates.slice(-n);
+    closes = closes.slice(-n);
+    ema9 = ema9.slice(-n);
+    ema21 = ema21.slice(-n);
+    volumes = volumes.slice(-n);
+
+    if (!dates.length) {
+        canvas.parentElement.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Chart data not available</div>';
+        return;
+    }
+
+    const supports = (s.supports || data.supports || []).filter(v => v > 0);
+    const resistances = (s.resistances || data.resistances || []).filter(v => v > 0);
+
+    // Build annotation lines for S/R
+    const annotations = {};
+    supports.slice(0, 2).forEach((v, i) => {
+        annotations['sup'+i] = { type: 'line', yMin: v, yMax: v, borderColor: 'rgba(16,185,129,0.5)', borderWidth: 1, borderDash: [5,3], label: { display: i===0, content: 'S: '+v.toFixed(0), position: 'start', font: { size: 9 }, color: '#10B981', backgroundColor: 'transparent' } };
+    });
+    resistances.slice(0, 2).forEach((v, i) => {
+        annotations['res'+i] = { type: 'line', yMin: v, yMax: v, borderColor: 'rgba(239,68,68,0.5)', borderWidth: 1, borderDash: [5,3], label: { display: i===0, content: 'R: '+v.toFixed(0), position: 'start', font: { size: 9 }, color: '#EF4444', backgroundColor: 'transparent' } };
+    });
+
+    _drawerChart = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: dates,
+            datasets: [
+                { label: 'Close', data: closes, borderColor: '#F8FAFC', borderWidth: 2, pointRadius: 0, tension: 0.1, fill: false, order: 1 },
+                { label: 'EMA 9', data: ema9, borderColor: '#06B6D4', borderWidth: 1, borderDash: [4,2], pointRadius: 0, tension: 0.1, fill: false, order: 2 },
+                { label: 'EMA 21', data: ema21, borderColor: '#F59E0B', borderWidth: 1, borderDash: [4,2], pointRadius: 0, tension: 0.1, fill: false, order: 3 },
+                { label: 'Volume', data: volumes, type: 'bar', backgroundColor: 'rgba(59,130,246,0.15)', yAxisID: 'vol', order: 4 },
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: true, interaction: { intersect: false, mode: 'index' },
+            scales: {
+                x: { display: true, ticks: { maxTicksLimit: 8, font: { size: 9 }, color: '#64748B' }, grid: { display: false } },
+                y: { display: true, position: 'right', ticks: { font: { size: 9 }, color: '#64748B' }, grid: { color: 'rgba(42,54,75,0.5)' } },
+                vol: { display: false, position: 'left', beginAtZero: true, max: Math.max(...volumes.filter(v=>v)) * 4 },
+            },
+            plugins: {
+                legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 10 }, color: '#94A3B8', padding: 8, filter: item => item.text !== 'Volume' } },
+                annotation: Object.keys(annotations).length ? { annotations } : undefined,
+            }
+        }
+    });
+}
+
+// ── Command Center Data ─────────────────────────────────────────
+function isMarketOpen() {
+    const now = new Date();
+    const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const day = ist.getDay();
+    if (day === 0 || day === 6) return false; // weekend
+    const h = ist.getHours(), m = ist.getMinutes();
+    const mins = h * 60 + m;
+    return mins >= 555 && mins <= 930; // 9:15 to 15:30
+}
+
+function updateCommandCenter() {
+    fetch('/api/status').then(r => r.json()).then(data => {
+        const isLive = isMarketOpen();
+        const pill = document.getElementById('marketStatusPill');
+        pill.className = 'v3-status-pill ' + (isLive ? 'live' : 'closed');
+        document.getElementById('marketStatusText').textContent = isLive ? 'LIVE' : 'CLOSED';
+        // last_scan is a string like "2026-06-05 10:42 IST"
+        const lastScan = data.last_scan || '—';
+        const scanParts = lastScan.split(' ');
+        const scanTime = scanParts.length >= 2 ? scanParts[1] : lastScan;
+        document.getElementById('headerLastScan').textContent = scanTime !== '—' ? scanTime : '—';
+        const regime = (data.market_regime || 'unknown').toLowerCase();
+        const regimeEl = document.getElementById('headerRegime');
+        regimeEl.textContent = (data.market_regime || '—').toUpperCase();
+        regimeEl.className = 'v3-regime-badge ' + (regime.includes('bull') ? 'bullish' : regime.includes('bear') ? 'bearish' : 'sideways');
+    }).catch(() => {});
+
+    // Load stock list for search
+    fetch('/api/results').then(r => r.json()).then(data => {
+        const results = data.results || (Array.isArray(data) ? data : []);
+        if (results.length) {
+            allStocks = results.map(s => ({ symbol: s.symbol, sector: s.sector || '', score: s.score || 0 }));
+            // Update sidebar badges
+            const hc = results.filter(s => s.high_conviction).length;
+            const golden = results.filter(s => s.is_golden).length;
+            document.getElementById('hcCount').textContent = hc || '—';
+            document.getElementById('goldenCount').textContent = golden || '—';
+            // Breadth
+            const adv = results.filter(s => (s.change_pct || s.price_change_pct || 0) > 0).length;
+            const dec = results.filter(s => (s.change_pct || s.price_change_pct || 0) < 0).length;
+            const ratio = dec > 0 ? (adv / dec).toFixed(2) : adv > 0 ? '∞' : '1.00';
+            document.getElementById('headerBreadth').textContent = ratio;
+        }
+    }).catch(() => {});
+
+    // Leading sector
+    fetch('/api/sector-rotation').then(r => r.json()).then(data => {
+        if (data.sectors) {
+            const leading = data.sectors.filter(s => s.quadrant === 'Leading').sort((a,b) => (b.momentum||0)-(a.momentum||0));
+            document.getElementById('headerLeadingSector').textContent = leading[0] ? leading[0].sector : '—';
+        }
+    }).catch(() => {});
+}
+
+// ── Quick Actions ───────────────────────────────────────────────
+function triggerScan() {
+    fetch('/api/scan', { method: 'POST' }).then(() => {
+        document.getElementById('btnScan').textContent = 'Running...';
+        setTimeout(() => { document.getElementById('btnScan').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Scan'; }, 3000);
+    });
+}
+
+function refreshData() {
+    updateCommandCenter();
+    if (typeof loadPageData === 'function') loadPageData();
+}
+
+function exportPicks() {
+    window.open('/api/export/csv', '_blank');
+}
+
+// ── Init ────────────────────────────────────────────────────────
+updateCommandCenter();
+setInterval(updateCommandCenter, 30000);
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

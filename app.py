@@ -26,6 +26,7 @@ if sys.platform == "win32":
 
 from flask import Flask
 from werkzeug.middleware.proxy_fix import ProxyFix
+from flask_compress import Compress
 
 # Pre-create jugaad_data cache dirs to avoid race condition
 for d in [os.path.expanduser("~/.cache/nsehistory-stock"),
@@ -35,8 +36,10 @@ for d in [os.path.expanduser("~/.cache/nsehistory-stock"),
 import db
 import auth_db
 import live_feed
-from config import AUTO_SCAN_INTERVAL, FLASK_SECRET_KEY
+import cache_layer
+from config import AUTO_SCAN_INTERVAL, FLASK_SECRET_KEY, DATA_LOOKBACK_DAYS
 from scanner import scan_state, has_valid_cache, run_full_scan
+from analyzer import fetch_and_analyze
 from routes.pages import pages_bp
 from routes.api import api_bp
 from routes.portfolio import portfolio_bp
@@ -65,6 +68,12 @@ app.secret_key = FLASK_SECRET_KEY or "nse-screener-dev-key-change-me"
 if not FLASK_SECRET_KEY:
     log = logging.getLogger("screener")
     log.warning("FLASK_SECRET_KEY not set — using insecure dev key. Set it in .env before deploy.")
+
+# P3: Gzip/Brotli compression — shrinks API payloads ~80%
+Compress(app)
+
+# P4: Browser caches static assets (CSS/JS/fonts) for 24 hours
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 86400
 
 # Register blueprints
 app.register_blueprint(auth_bp)
@@ -116,28 +125,132 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# Auto-scan scheduler
+# Auto-scan scheduler (Phase 4: Event-driven)
 # ---------------------------------------------------------------------------
+
+# Interval constants (seconds)
+_NEWS_INTERVAL   = 15 * 60     # News refresh every 15 min
+_FAST_INTERVAL   = AUTO_SCAN_INTERVAL * 60  # Fast scan (from config, default 60 min)
+_DEEP_INTERVAL   = 120 * 60    # Deep scan every 2 hours
+_MACRO_INTERVAL  = 60 * 60     # Macro refresh every 1 hour
+_GRACE_PERIOD    = 5 * 60      # Skip if manual scan ran < 5 min ago
+
 def _auto_scan_loop():
-    interval = AUTO_SCAN_INTERVAL * 60
-    time.sleep(60)
+    """
+    Event-driven auto-scan loop (Phase 4).
+    Order: News refresh -> Fast scan -> Macro refresh -> Deep scan (if needed).
+    """
+    from scanner import refresh_news_pipeline, _shortlist_for_deep_scan
+    from intelligence import warmup_all
+
+    time.sleep(60)  # startup grace
+
+    # Load timestamps from DB
+    def _get_ts(key, default=0.0):
+        v = db.get_meta(key)
+        try:
+            return float(v) if v else default
+        except (ValueError, TypeError):
+            return default
+
+    last_news  = _get_ts("last_news_refresh_ts")
+    last_fast  = _get_ts("last_fast_scan_ts")
+    last_deep  = _get_ts("last_deep_scan_ts")
+    last_macro = _get_ts("last_macro_refresh_ts")
+
     while True:
         try:
-            if scan_state.is_scanning:
-                log.info("[AutoScan] Scan already running, skipping")
-            elif live_feed.is_market_open():
-                log.info("[AutoScan] Market open — starting scan")
-                run_full_scan()
+            now = time.time()
+
+            # Grace period: skip if manual scan ran < 5 min ago
+            last_any = _get_ts("last_scan_ts")
+            if last_any and (now - last_any) < _GRACE_PERIOD:
+                log.debug("[AutoScan] Grace period active, sleeping")
+                time.sleep(30)
+                continue
+
+            market_open = live_feed.is_market_open()
+
+            # 1. NEWS REFRESH — first in market hours
+            if market_open and (now - last_news >= _NEWS_INTERVAL):
+                log.info("[AutoScan] News refresh starting...")
+                try:
+                    universe = set(db.get_all_symbols() or [])
+                    event_signals = refresh_news_pipeline(universe)
+                    last_news = time.time()
+                    db.set_meta("last_news_refresh_ts", str(last_news))
+                    log.info("[AutoScan] News refresh done")
+                except Exception as exc:
+                    log.warning("[AutoScan] News refresh error: %s", exc)
+                    event_signals = {"spikes": set(), "announcements": set()}
             else:
+                event_signals = {"spikes": set(), "announcements": set()}
+
+            # 2. FAST SCAN — second in market hours
+            needs_deep = False
+            if market_open and (now - last_fast >= _FAST_INTERVAL) and not scan_state.is_scanning:
+                log.info("[AutoScan] Market open -- starting fast scan")
+                run_full_scan()
+                last_fast = time.time()
+                db.set_meta("last_fast_scan_ts", str(last_fast))
+                db.set_meta("last_scan_ts", str(last_fast))
+                needs_deep = True
+            elif not market_open:
                 last = db.get_meta("last_scan")
                 if not last:
-                    log.info("[AutoScan] No data yet — starting scan")
+                    log.info("[AutoScan] No data yet -- starting scan")
                     run_full_scan()
-                else:
-                    log.debug("[AutoScan] Market closed, data fresh — sleeping")
+                    last_fast = time.time()
+                    db.set_meta("last_fast_scan_ts", str(last_fast))
+                    db.set_meta("last_scan_ts", str(last_fast))
+
+            # 3. MACRO REFRESH — any time
+            if now - last_macro >= _MACRO_INTERVAL:
+                log.info("[AutoScan] Macro refresh...")
+                try:
+                    from intelligence.macro import scan_world_markets
+                    from intelligence.macro_events import scan_macro_events
+                    scan_world_markets()
+                    scan_macro_events()
+                    last_macro = time.time()
+                    db.set_meta("last_macro_refresh_ts", str(last_macro))
+                except Exception as exc:
+                    log.warning("[AutoScan] Macro refresh error: %s", exc)
+
+            # 4. DEEP SCAN — if event signals or interval exceeded
+            has_events = bool(event_signals.get("spikes") or event_signals.get("announcements"))
+            if (needs_deep or has_events or (now - last_deep >= _DEEP_INTERVAL)) and not scan_state.is_scanning:
+                # Deep scan is only for shortlisted candidates, not a full re-scan
+                try:
+                    all_results = db.get_all_results()  # current fast scan results from DB
+                    if all_results:
+                        shortlist = _shortlist_for_deep_scan(all_results, event_signals)
+                        if shortlist:
+                            log.info("[AutoScan] Deep scan for %d shortlisted candidates", len(shortlist))
+                            nifty_1m = db.get_meta("nifty50_1m", 0)
+                            regime = db.get_meta("market_regime", "unknown")
+                            deep_results = []
+                            for sym in shortlist:
+                                try:
+                                    df = live_feed.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
+                                    if df is not None and not df.empty:
+                                        r = fetch_and_analyze(sym, nifty_1m, regime, ext_df=df, scan_mode="deep")
+                                        if r:
+                                            deep_results.append(r)
+                                except Exception:
+                                    pass
+                            if deep_results:
+                                db.save_results(deep_results)
+                                log.info("[AutoScan] Deep scan complete: %d stocks enriched", len(deep_results))
+                        last_deep = time.time()
+                        db.set_meta("last_deep_scan_ts", str(last_deep))
+                except Exception as exc:
+                    log.warning("[AutoScan] Deep scan error: %s", exc)
+
         except Exception as exc:
             log.warning("[AutoScan] Error: %s", exc)
-        time.sleep(interval)
+
+        time.sleep(30)  # check every 30 seconds
 
 
 def _portfolio_scan_loop():
@@ -148,7 +261,12 @@ def _portfolio_scan_loop():
             positions = db.execute_db("SELECT id, symbol, buy_price, stop_loss, target FROM positions WHERE status = 'OPEN'", fetch="all")
             if positions:
                 symbols = list(set(p["symbol"] for p in positions))
-                prices = live_feed.fetch_ltp_bulk(symbols)
+                # Use WebSocket cache instead of rate-limited REST bulk fetch
+                prices = {}
+                for s in symbols:
+                    p_data = live_feed.get_live_price(s)
+                    if p_data:
+                        prices[s] = p_data
                 scan_lookup = db.get_stocks_map(symbols)
                 from datetime import datetime
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -195,11 +313,212 @@ def _portfolio_scan_loop():
         time.sleep(1800)  # every 30 mins
 
 
+# ---------------------------------------------------------------------------
+# Release 3: Paper Trade Snapshot (11:00 AM IST daily)
+# ---------------------------------------------------------------------------
+_SNAPSHOT_HOUR = 11  # 11:00 AM IST
+_SNAPSHOT_MINUTE = 0
+
+def _paper_trade_snapshot_loop():
+    """
+    Daily at 11:00 AM IST:
+    1. Save top 20 recommendation snapshot
+    2. Open paper trades for top 5 picks
+    """
+    time.sleep(180)  # 3 min startup grace
+
+    while True:
+        try:
+            from datetime import datetime as _dt
+            now = _dt.now()
+
+            # Only trigger at 11:00 AM (±5 min window)
+            if now.hour == _SNAPSHOT_HOUR and now.minute < 10:
+                today = now.strftime("%Y-%m-%d")
+
+                # Check if already snapped today
+                existing = db.execute_db(
+                    "SELECT COUNT(*) as cnt FROM recommendation_snapshots WHERE snapshot_date = ?",
+                    (today,), fetch="one"
+                )
+                if existing and existing.get("cnt", 0) > 0:
+                    log.debug("[PaperTrade] Snapshot already taken today, skipping")
+                    time.sleep(600)  # sleep 10 min to avoid re-trigger
+                    continue
+
+                # Get current scan results sorted by score
+                all_results = db.get_all_results()
+                if not all_results:
+                    log.info("[PaperTrade] No scan results available for snapshot")
+                    time.sleep(600)
+                    continue
+
+                # Sort by score descending
+                all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+                # Get market context
+                regime = db.get_meta("market_regime", "unknown")
+                nifty_price = None
+                try:
+                    nifty_meta = db.get_meta("nifty50_price")
+                    if nifty_meta:
+                        nifty_price = float(nifty_meta)
+                except Exception:
+                    pass
+
+                # 1. Save top 20 recommendation snapshot
+                db.save_recommendation_snapshot(today, all_results, regime)
+
+                # 2. Compute market breadth from scan results
+                advances = sum(1 for s in all_results if (s.get("change_pct") or s.get("price_change_pct") or 0) > 0)
+                declines = sum(1 for s in all_results if (s.get("change_pct") or s.get("price_change_pct") or 0) < 0)
+                breadth_ratio = round(advances / declines, 2) if declines > 0 else (9.99 if advances > 0 else 1.0)
+
+                # 3. Open paper trades for top 5 eligible stocks
+                trades_opened = 0
+                for stock in all_results:
+                    if trades_opened >= 5:
+                        break
+
+                    # Eligibility: HC or score >= 65
+                    score = stock.get("score", 0)
+                    hc = stock.get("high_conviction", False)
+                    if not hc and score < 65:
+                        continue
+
+                    # Must have valid price, target, stop
+                    if not stock.get("price") or stock["price"] <= 0:
+                        continue
+                    if not stock.get("target_price") or not stock.get("stop_loss"):
+                        continue
+
+                    trade_id = db.create_paper_trade(
+                        {**stock,
+                         "_entry_rank": trades_opened + 1,
+                         "_breadth_advances": advances,
+                         "_breadth_declines": declines,
+                         "_breadth_ratio": breadth_ratio},
+                        nifty_price, regime
+                    )
+                    if trade_id:
+                        trades_opened += 1
+
+                # 3. Save daily equity curve
+                db.save_portfolio_daily(nifty_price)
+
+                log.info("[PaperTrade] Daily snapshot: %d trades opened, top 20 saved", trades_opened)
+                time.sleep(600)  # sleep 10 min after snapshot
+            else:
+                time.sleep(60)  # check every minute
+
+        except Exception as exc:
+            log.warning("[PaperTrade] Snapshot error: %s", exc)
+            time.sleep(300)
+
+
+# ---------------------------------------------------------------------------
+# Release 3: Outcome Checker (every 30 min during market hours)
+# ---------------------------------------------------------------------------
+
+def _outcome_checker_loop():
+    """
+    Every 30 minutes during market hours:
+    1. Get all open paper trades
+    2. Fetch current prices
+    3. Update max drawdown / max runup
+    4. Close trades that hit target, stop, or time limit (20 trading days)
+    """
+    time.sleep(300)  # 5 min startup grace
+
+    while True:
+        try:
+            if not live_feed.is_market_open():
+                time.sleep(300)
+                continue
+
+            open_trades = db.get_open_paper_trades()
+            if not open_trades:
+                time.sleep(1800)
+                continue
+
+            # Get Nifty for alpha calc
+            nifty_price = None
+            try:
+                nifty_meta = db.get_meta("nifty50_price")
+                if nifty_meta:
+                    nifty_price = float(nifty_meta)
+            except Exception:
+                pass
+
+            closed_count = 0
+            for trade in open_trades:
+                sym = trade["symbol"]
+                trade_id = trade["id"]
+
+                # Use WebSocket cache (instant) instead of REST bulk fetch (0.5s/sym)
+                price_data = live_feed.get_live_price(sym)
+                if not price_data:
+                    continue
+
+                ltp = price_data.get("ltp") or price_data.get("price", 0)
+                if not ltp or ltp <= 0:
+                    continue
+
+                # Update extremes
+                db.update_paper_trade_extremes(trade_id, ltp)
+
+                # Check exit conditions
+                target = trade.get("target_price")
+                stop = trade.get("stop_loss")
+
+                # Days held
+                from datetime import date as _date
+                try:
+                    entry_dt = _date.fromisoformat(trade["entry_date"])
+                    days_held = (_date.today() - entry_dt).days
+                except Exception:
+                    days_held = 0
+
+                exit_reason = None
+
+                if target and ltp >= target:
+                    exit_reason = "TARGET_HIT"
+                elif stop and ltp <= stop:
+                    exit_reason = "STOP_HIT"
+                elif days_held >= 20:  # 20 trading day max hold
+                    exit_reason = "TIME_EXIT"
+
+                if exit_reason:
+                    db.close_paper_trade(trade_id, ltp, exit_reason, nifty_price)
+                    closed_count += 1
+
+            if closed_count > 0:
+                db.save_portfolio_daily(nifty_price)
+
+            log.info("[PaperTrade] Outcome check: %d open, %d closed", len(open_trades), closed_count)
+
+        except Exception as exc:
+            log.warning("[PaperTrade] Outcome check error: %s", exc)
+
+        time.sleep(1800)  # every 30 mins
+
+
 threading.Thread(target=_auto_scan_loop, daemon=True, name="auto-scan").start()
 log.info("Auto-scan enabled: every %d minutes", AUTO_SCAN_INTERVAL)
 
 threading.Thread(target=_portfolio_scan_loop, daemon=True, name="portfolio-scan").start()
 log.info("Portfolio-scan enabled: every 30 minutes")
+
+# Release 3: Paper trading threads
+threading.Thread(target=_paper_trade_snapshot_loop, daemon=True, name="paper-trade-snapshot").start()
+log.info("Paper-trade snapshot enabled: daily at 11:00 AM IST")
+
+threading.Thread(target=_outcome_checker_loop, daemon=True, name="outcome-checker").start()
+log.info("Outcome checker enabled: every 30 minutes during market hours")
+
+# Phase 8: Start MarketAux background worker
+from scanner import start_marketaux_worker
+start_marketaux_worker()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))

@@ -1,0 +1,185 @@
+{% extends "_app_base.html" %}
+{% set active_page = "watchlist" %}
+{% block title %}Watchlist{% endblock %}
+{% block content %}
+<div class="v3-page-header">
+    <div class="v3-page-title">Watchlist</div>
+    <div class="v3-page-subtitle">Track stocks with notes and score changes</div>
+</div>
+
+<!-- Empty State -->
+<div id="wlEmpty" class="v3-empty-state" style="display:none">
+    <div class="v3-empty-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+    </div>
+    <div class="v3-empty-title">Your Watchlist is Empty</div>
+    <div class="v3-empty-desc">Search any symbol and click &#9733; to track it here with notes and score changes.</div>
+</div>
+
+<!-- Watchlist Cards -->
+<div id="wlCards" class="wl-cards" style="display:none"></div>
+
+<style>
+.wl-cards { display: flex; flex-direction: column; gap: 12px; }
+
+.wl-card {
+    background: var(--card-bg); border: 1px solid var(--border-subtle);
+    border-radius: 12px; padding: 20px;
+    transition: all 0.2s ease; cursor: pointer;
+}
+.wl-card:hover { border-color: var(--accent-blue); box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
+
+.wl-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.wl-card-left { flex: 1; }
+
+.wl-card-symbol { font-size: 18px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.3px; }
+.wl-card-sector { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.wl-card-added { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+
+.wl-card-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+
+.wl-card-score-row { display: flex; align-items: center; gap: 8px; }
+
+.wl-score-delta {
+    font-size: 12px; font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 2px 6px; border-radius: 4px;
+}
+.wl-score-delta.up { color: var(--success); background: rgba(16,185,129,0.1); }
+.wl-score-delta.down { color: var(--danger); background: rgba(239,68,68,0.1); }
+.wl-score-delta.flat { color: var(--text-muted); background: var(--bg-secondary); }
+
+.wl-card-note {
+    margin-top: 14px; padding-top: 14px;
+    border-top: 1px solid var(--border-subtle);
+}
+.wl-card-note-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 6px;
+}
+.wl-note-input {
+    width: 100%; padding: 8px 12px;
+    background: var(--bg-primary); color: var(--text-primary);
+    border: 1px solid var(--border-subtle); border-radius: 8px;
+    font-size: 12px; font-family: inherit; resize: none;
+    outline: none; transition: border-color 0.2s;
+}
+.wl-note-input:focus { border-color: var(--accent-blue); }
+
+.wl-card-actions { display: flex; gap: 8px; margin-top: 14px; }
+.wl-btn {
+    padding: 7px 14px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    border-radius: 8px; cursor: pointer; transition: all 0.2s;
+    border: 1px solid var(--border-subtle); background: transparent;
+    color: var(--text-secondary); font-family: inherit;
+}
+.wl-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+.wl-btn.primary { background: rgba(59,130,246,0.1); color: var(--accent-blue); border-color: rgba(59,130,246,0.25); }
+.wl-btn.danger { color: var(--danger); }
+.wl-btn.danger:hover { background: rgba(239,68,68,0.1); border-color: var(--danger); }
+</style>
+
+<script>
+let wlResults = {};
+
+function getWatchlist() {
+    try { return JSON.parse(localStorage.getItem('v3_watchlist') || '[]'); } catch { return []; }
+}
+
+function saveWatchlist(wl) {
+    localStorage.setItem('v3_watchlist', JSON.stringify(wl));
+}
+
+function removeFromWatchlist(symbol) {
+    let wl = getWatchlist();
+    wl = wl.filter(w => w.symbol !== symbol);
+    saveWatchlist(wl);
+    renderWatchlist();
+}
+
+function updateNote(symbol, note) {
+    let wl = getWatchlist();
+    const item = wl.find(w => w.symbol === symbol);
+    if (item) { item.notes = note; saveWatchlist(wl); }
+}
+
+function renderWatchlist() {
+    const wl = getWatchlist();
+    const empty = document.getElementById('wlEmpty');
+    const cards = document.getElementById('wlCards');
+
+    if (!wl.length) {
+        empty.style.display = 'flex';
+        cards.style.display = 'none';
+        return;
+    }
+
+    empty.style.display = 'none';
+    cards.style.display = 'flex';
+
+    cards.innerHTML = wl.map(w => {
+        const r = wlResults[w.symbol] || {};
+        const s = r.scan || r;
+        const currentScore = s.score || r.score || 0;
+        const delta = currentScore - (w.addedScore || 0);
+        const deltaClass = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+        const deltaText = delta > 0 ? '+' + delta : delta === 0 ? '=' : String(delta);
+        const sector = s.sector || r.sector || '';
+        const addedDate = w.addedAt ? new Date(w.addedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+
+        // Confidence
+        const t100 = Math.min(100, ((s.technical_score||0)/30)*100);
+        const e100 = Math.min(100, ((s.earnings_momentum_score||0)/15)*100);
+        const sm100 = s.smart_money_100 || Math.min(100, ((s.smart_money_score||0)/10)*100);
+        const f100 = Math.min(100, ((s.fundamental_score||0)/10)*100);
+        const conf = Math.round(Math.min(100, Math.max(0, t100*0.30 + e100*0.25 + sm100*0.25 + f100*0.20)));
+        const cl = conf >= 80 ? 'high' : conf >= 50 ? 'medium' : 'low';
+        const clLabel = conf >= 80 ? 'HIGH' : conf >= 50 ? 'MED' : 'LOW';
+        const sc = currentScore >= 80 ? 'excellent' : currentScore >= 65 ? 'good' : currentScore >= 50 ? 'average' : 'poor';
+
+        return `<div class="wl-card" onclick="openDrawerForSymbol('${w.symbol}')">
+            <div class="wl-card-top">
+                <div class="wl-card-left">
+                    <div class="wl-card-symbol">${w.symbol}</div>
+                    <div class="wl-card-sector">${sector}</div>
+                    <div class="wl-card-added">Added: ${addedDate}</div>
+                </div>
+                <div class="wl-card-right">
+                    <div class="wl-card-score-row">
+                        <div class="v3-score ${sc}" style="font-size:16px;min-width:42px;height:32px">${currentScore}</div>
+                        <div class="wl-score-delta ${deltaClass}">${deltaText}</div>
+                    </div>
+                    <div class="tp-conf ${cl}" style="font-size:11px;padding:3px 8px"><span style="width:5px;height:5px;border-radius:50%;display:inline-block;background:${cl==='high'?'var(--success)':cl==='medium'?'var(--warning)':'var(--danger)'};margin-right:4px"></span>${conf}% ${clLabel}</div>
+                </div>
+            </div>
+            <div class="wl-card-note">
+                <div class="wl-card-note-label">Note</div>
+                <textarea class="wl-note-input" rows="2" placeholder="Add research notes..." onclick="event.stopPropagation()" onblur="updateNote('${w.symbol}', this.value)">${w.notes || ''}</textarea>
+            </div>
+            <div class="wl-card-actions">
+                <button class="wl-btn primary" onclick="event.stopPropagation(); openDrawerForSymbol('${w.symbol}')">Analyze</button>
+                <button class="wl-btn danger" onclick="event.stopPropagation(); removeFromWatchlist('${w.symbol}')">Remove</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+async function loadWatchlistData() {
+    const wl = getWatchlist();
+    if (!wl.length) { renderWatchlist(); return; }
+
+    try {
+        const resp = await fetch('/api/results');
+        const data = await resp.json();
+        const results = data.results || [];
+        results.forEach(r => { wlResults[r.symbol || r.name] = r; });
+    } catch (e) {
+        console.warn('Could not load results for watchlist:', e);
+    }
+    renderWatchlist();
+}
+
+loadWatchlistData();
+</script>
+{% endblock %}

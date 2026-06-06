@@ -1,23 +1,29 @@
 """
-News Sentiment Engine — Waterfall
------------------------------------
+News Sentiment Engine -- Waterfall (Phase 4)
+-----------------------------------------------
 Waterfall order:
-1. GDELT + FinBERT (bulk cache, O(1) lookup) — primary
-2. Finnhub (60/min, unlimited/day) — top stock enrichment [NOT IMPLEMENTED — add FINNHUB_API_KEY]
-3. yfinance .news — zero-limit fallback with keyword scoring
-4. MarketAux (100/day) — supplement for high-score stocks
-5. NewsAPI (100/day) — global macro headlines only
+1. GDELT + FinBERT (bulk cache, O(1) lookup) -- primary (always)
+2. NSE Announcements (1 HTTP call, cached) -- corporate events
+3. Finnhub (60/min, unlimited/day) -- top stock enrichment
+4. Google News RSS (deep/detail mode ONLY) -- shortlisted candidates
+5. MarketAux (50/day) -- supplement for high-score stocks
+6. yfinance .news -- zero-limit fallback with keyword scoring
+7. NewsAPI (100/day) -- global macro headlines only
 
 Rate limiting: MarketAux and NewsAPI have day quotas.
 Both are capped at 80 calls/day to preserve buffer.
+yfinance news guarded by yf_guard circuit breaker.
 """
 
 import os
+import re
 import time
 import logging
-import requests
 import threading
+import xml.etree.ElementTree as ET
+import requests
 from intelligence.news_gdelt_finbert import get_gdelt_sentiment
+from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success
 
 log = logging.getLogger("screener")
 
@@ -74,11 +80,15 @@ def _keyword_score(text: str) -> float:
 
 
 def _fetch_yfinance_news(symbol: str) -> tuple:
-    """Zero-limit fallback: yfinance .news with keyword scoring."""
+    """Zero-limit fallback: yfinance .news with keyword scoring. Guarded by yf_guard."""
+    if not yf_is_available():
+        log.debug("yf_guard OPEN -- skipping yfinance news for %s", symbol)
+        return 0, []
     try:
         import yfinance as yf
         tk = yf.Ticker(symbol + ".NS")
         news = tk.news or []
+        yf_record_success()
         if not news:
             return 0, []
         headlines = [n.get("title", "") for n in news[:10] if n.get("title")]
@@ -90,6 +100,112 @@ def _fetch_yfinance_news(symbol: str) -> tuple:
         return news_score, items[:5]
     except Exception as exc:
         log.debug("yfinance news failed for %s: %s", symbol, exc)
+        yf_record_failure()
+        return 0, []
+
+
+# ---- NSE Announcements (Phase 4) ----
+_nse_cache: dict = {}       # symbol -> list of announcements
+_nse_cache_ts: float = 0
+_NSE_CACHE_TTL = 1800       # 30 min
+_nse_lock = threading.Lock()
+
+
+def _fetch_nse_announcements() -> list:
+    """
+    Fetch latest NSE corporate announcements (single HTTP call).
+    Returns list of {symbol, subject, date} dicts.
+    Cached for 30 minutes.
+    """
+    global _nse_cache, _nse_cache_ts
+    now = time.time()
+    if now - _nse_cache_ts < _NSE_CACHE_TTL and _nse_cache:
+        return list(_nse_cache.values())
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    try:
+        url = "https://www.nseindia.com/api/corporate-announcements?index=equities&from_date=&to_date="
+        # NSE needs cookies first
+        session = requests.Session()
+        session.get("https://www.nseindia.com", headers=headers, timeout=5)
+        resp = session.get(url, headers=headers, timeout=8)
+        if resp.status_code != 200:
+            log.debug("NSE announcements HTTP %d", resp.status_code)
+            return []
+        data = resp.json()
+        if not isinstance(data, list):
+            return []
+
+        new_cache = {}
+        for item in data[:100]:
+            sym = (item.get("symbol") or "").upper().strip()
+            if not sym:
+                continue
+            entry = {
+                "symbol": sym,
+                "subject": item.get("desc", "")[:200],
+                "date": (item.get("an_dt") or "")[:10],
+            }
+            if sym not in new_cache:
+                new_cache[sym] = []
+            new_cache[sym].append(entry)
+
+        with _nse_lock:
+            _nse_cache = new_cache
+            _nse_cache_ts = time.time()
+
+        log.info("NSE announcements fetched: %d events for %d symbols", len(data[:100]), len(new_cache))
+        return list(new_cache.values())
+    except Exception as exc:
+        log.debug("NSE announcements fetch failed: %s", exc)
+        return []
+
+
+def get_nse_affected_symbols() -> set:
+    """Return set of symbols with recent NSE announcements (from cache)."""
+    with _nse_lock:
+        return set(_nse_cache.keys())
+
+
+# ---- Google News RSS (Phase 4, deep mode ONLY) ----
+def _fetch_google_news_rss(symbol: str) -> tuple:
+    """
+    Parse Google News RSS for stock-specific headlines.
+    CRITICAL: Only call for shortlisted stocks in deep scan mode.
+    Returns (score: float, items: list).
+    """
+    try:
+        query = f"{symbol}+NSE+stock"
+        url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
+        resp = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code != 200:
+            return 0, []
+
+        root = ET.fromstring(resp.content)
+        items_xml = root.findall(".//item")
+        if not items_xml:
+            return 0, []
+
+        headlines = []
+        for item in items_xml[:10]:
+            title_el = item.find("title")
+            if title_el is not None and title_el.text:
+                headlines.append(title_el.text.strip())
+
+        if not headlines:
+            return 0, []
+
+        scores = [_keyword_score(h) for h in headlines]
+        avg = sum(scores) / len(scores) if scores else 0
+        items = [{"title": h, "score": round(s, 2), "source": "google_rss"}
+                 for h, s in zip(headlines, scores)]
+        return round(avg * 10, 1), items[:5]
+    except Exception as exc:
+        log.debug("Google RSS failed for %s: %s", symbol, exc)
         return 0, []
 
 
@@ -164,51 +280,69 @@ def _fetch_finnhub(symbol: str) -> tuple:
         return None, []
 
 
-def fetch_news_sentiment(symbol: str, query_marketaux: bool = False) -> tuple:
+def fetch_news_sentiment(symbol: str, query_marketaux: bool = False, scan_mode: str = "fast") -> tuple:
     """
     Master news sentiment function.
-    Returns (score: float, items: list).
+    Returns (score: float, items: list, source_breakdown: dict).
     Score range: roughly -15 to +15.
 
     Waterfall:
-    1. GDELT + FinBERT cache (O(1))
+    1. GDELT + FinBERT cache (O(1)) -- always
     2. Finnhub (if key set)
-    3. MarketAux (if query_marketaux and quota available)
-    4. yfinance fallback (always)
+    3. Google RSS (deep mode ONLY for shortlisted candidates)
+    4. MarketAux (if query_marketaux and quota available)
+    5. yfinance fallback (if all others empty)
     """
+    source_breakdown = {}
+
     # 1. GDELT primary (always first)
     gdelt_score, gdelt_articles, spike = get_gdelt_sentiment(symbol)
+    if gdelt_score != 0 or gdelt_articles:
+        source_breakdown["gdelt"] = {"score": gdelt_score, "count": len(gdelt_articles)}
 
     # 2. Finnhub supplement
     fh_score, fh_items = _fetch_finnhub(symbol)
+    if fh_score is not None:
+        source_breakdown["finnhub"] = {"score": fh_score, "count": len(fh_items)}
 
-    # 3. MarketAux supplement (only if allowed and GDELT found nothing significant)
+    # 3. Google RSS (deep mode ONLY for shortlisted candidates)
+    rss_score, rss_items = 0, []
+    if scan_mode == "deep" and abs(gdelt_score) < 2 and (fh_score is None or abs(fh_score or 0) < 2):
+        rss_score, rss_items = _fetch_google_news_rss(symbol)
+        if rss_score != 0:
+            source_breakdown["google_rss"] = {"score": rss_score, "count": len(rss_items)}
+
+    # 4. MarketAux supplement (only if allowed and GDELT found nothing significant)
     mx_score, mx_items = None, []
     if query_marketaux and abs(gdelt_score) < 2 and (fh_score is None or abs(fh_score or 0) < 2):
         mx_score, mx_items = _fetch_marketaux(symbol)
+        if mx_score is not None:
+            source_breakdown["marketaux"] = {"score": mx_score, "count": len(mx_items)}
 
-    # 4. Fallback
+    # 5. Fallback
     yf_score, yf_items = 0, []
-    if gdelt_score == 0 and fh_score is None and mx_score is None:
+    if gdelt_score == 0 and fh_score is None and mx_score is None and rss_score == 0:
         yf_score, yf_items = _fetch_yfinance_news(symbol)
+        if yf_score != 0:
+            source_breakdown["yfinance"] = {"score": yf_score, "count": len(yf_items)}
 
     # Combine scores (GDELT is primary, others supplement)
-    scores = [s for s in [gdelt_score, fh_score, mx_score] if s is not None]
+    scores = [s for s in [gdelt_score, fh_score, rss_score, mx_score] if s is not None and s != 0]
     if scores:
-        final_score = gdelt_score * 0.6 + (sum(scores[1:]) / max(1, len(scores[1:]))) * 0.4 if len(scores) > 1 else gdelt_score
+        final_score = gdelt_score * 0.5 + (sum(scores[1:]) / max(1, len(scores[1:]))) * 0.5 if len(scores) > 1 else gdelt_score
     else:
         final_score = yf_score
 
     # Merge articles
-    all_items = gdelt_articles[:3] + (fh_items or [])[:2] + mx_items[:2]
+    all_items = gdelt_articles[:3] + (fh_items or [])[:2] + rss_items[:2] + mx_items[:2]
 
-    # Spike bonus: >3x news volume → extra signal
+    # Spike bonus: >3x news volume -> extra signal
     if spike > 3:
         final_score += 5
     elif spike > 1.5:
         final_score += 2
 
-    return round(final_score, 2), all_items[:6]
+    return round(final_score, 2), all_items[:6], source_breakdown
 
 
 def get_global_headlines() -> list:

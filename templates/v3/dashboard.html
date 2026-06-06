@@ -1,0 +1,373 @@
+{% extends "_app_base.html" %}
+{% set active_page = "dashboard" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px">
+    <div class="v3-page-header">
+        <div class="v3-page-title">Dashboard</div>
+        <div class="v3-page-subtitle">Market overview and research intelligence</div>
+    </div>
+    <!-- Adjustment 3: System Status Widget -->
+    <div class="v3-kpi-card" id="systemStatusWidget" style="min-width:200px;flex-shrink:0;padding:14px 18px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--accent-cyan);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-3.46 2.05l-.06-.06a1.65 1.65 0 0 0-2.82 1.18V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51A1.65 1.65 0 0 0 6.68 19.4l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3.17 14.75a1.65 1.65 0 0 0-1.51-1.08H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9A1.65 1.65 0 0 0 10.08 3.17V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1.08H21a2 2 0 0 1 0 4h-.09"/></svg>
+            Research Engine
+        </div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px">
+            <span style="color:var(--text-muted)">Universe</span>
+            <span style="color:var(--text-primary);font-weight:600;text-align:right" id="sysUniverse">&#8212;</span>
+            <span style="color:var(--text-muted)">Last Scan</span>
+            <span style="color:var(--text-primary);font-weight:600;text-align:right" id="sysLastScan">&#8212;</span>
+            <span style="color:var(--text-muted)">Market</span>
+            <span style="font-weight:600;text-align:right" id="sysMarket">&#8212;</span>
+            <span style="color:var(--text-muted)">Model</span>
+            <span style="color:var(--text-primary);font-weight:600;text-align:right" id="sysModel">R2.1</span>
+            <span style="color:var(--text-muted)">Outcome DB</span>
+            <span style="color:var(--success);font-weight:600;text-align:right" id="sysOutcome">Active</span>
+        </div>
+    </div>
+</div>
+
+<!-- Loading State -->
+<div class="v3-loading" id="dashboardLoading">
+    <div class="v3-loading-spinner"></div>
+    <div class="v3-loading-title">Research Engine Loading...</div>
+    <ul class="v3-loading-steps">
+        <li class="v3-loading-step active" id="loadStep1"><span class="v3-loading-step-icon">&#9658;</span> Building Market Overview</li>
+        <li class="v3-loading-step" id="loadStep2"><span class="v3-loading-step-icon">&#9675;</span> Analyzing Breadth</li>
+        <li class="v3-loading-step" id="loadStep3"><span class="v3-loading-step-icon">&#9675;</span> Ranking Opportunities</li>
+        <li class="v3-loading-step" id="loadStep4"><span class="v3-loading-step-icon">&#9675;</span> Loading Performance Data</li>
+    </ul>
+</div>
+
+<!-- Dashboard Content (hidden until loaded) -->
+<div id="dashboardContent" style="display:none">
+
+    <!-- Section 1: Daily Research Brief -->
+    <div class="v3-section">
+        <div class="v3-brief-card">
+            <div class="v3-brief-header">
+                <div class="v3-brief-title">Daily Research Brief</div>
+                <div class="v3-brief-date" id="briefDate">&#8212;</div>
+            </div>
+            <div class="v3-brief-grid" id="briefContent">
+                <div class="v3-brief-section">
+                    <h4>Market Summary</h4>
+                    <p id="briefSummary">Loading market data...</p>
+                </div>
+                <div class="v3-brief-section">
+                    <h4>Leading Sectors</h4>
+                    <p id="briefSectors">&#8212;</p>
+                </div>
+                <div class="v3-brief-section">
+                    <h4>Best Opportunity</h4>
+                    <p id="briefBestOpp">&#8212;</p>
+                </div>
+                <div class="v3-brief-section">
+                    <h4>Actionable Insight</h4>
+                    <p id="briefInsight">&#8212;</p>
+                </div>
+                <div class="v3-brief-section">
+                    <h4>Risk Factors</h4>
+                    <p id="briefRisk">&#8212;</p>
+                </div>
+                <div class="v3-brief-section">
+                    <h4>Key Theme</h4>
+                    <p id="briefTheme">&#8212;</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 2: KPI Row -->
+    <div class="v3-section">
+        <div class="v3-kpi-grid" id="kpiGrid">
+            <div class="v3-kpi-card"><div class="v3-kpi-label">Market Regime</div><div class="v3-kpi-value" id="kpiRegime">&#8212;</div><div class="v3-kpi-trend neutral" id="kpiRegimeTrend"></div></div>
+            <div class="v3-kpi-card"><div class="v3-kpi-label">Stocks Scanned</div><div class="v3-kpi-value" id="kpiUniverse">&#8212;</div></div>
+            <div class="v3-kpi-card"><div class="v3-kpi-label">High Conviction</div><div class="v3-kpi-value" id="kpiHC" style="color:var(--accent-cyan)">&#8212;</div></div>
+            <div class="v3-kpi-card"><div class="v3-kpi-label">Golden Stocks</div><div class="v3-kpi-value" id="kpiGolden" style="color:var(--golden)">&#8212;</div></div>
+            <div class="v3-kpi-card"><div class="v3-kpi-label">Win Rate</div><div class="v3-kpi-value" id="kpiWinRate" style="color:var(--success)">&#8212;</div></div>
+            <div class="v3-kpi-card"><div class="v3-kpi-label">Alpha vs Nifty</div><div class="v3-kpi-value" id="kpiAlpha">&#8212;</div></div>
+        </div>
+    </div>
+    </div>
+
+    <!-- Section 3: Opportunity Heatmap -->
+    <div class="v3-section">
+        <div class="v3-section-header">
+            <div>
+                <div class="v3-section-title">Opportunity Heatmap</div>
+                <div class="v3-section-subtitle">Click to explore each category</div>
+            </div>
+        </div>
+        <div class="v3-heatmap-grid">
+            <a href="/golden" class="v3-heatmap-cell" style="text-decoration:none">
+                <span class="v3-heatmap-icon">&#9733;</span>
+                <div class="v3-heatmap-count" id="heatGolden" style="color:var(--golden)">&#8212;</div>
+                <div class="v3-heatmap-label">Golden</div>
+            </a>
+            <a href="/hc" class="v3-heatmap-cell" style="text-decoration:none">
+                <span class="v3-heatmap-icon">&#9889;</span>
+                <div class="v3-heatmap-count" id="heatHC" style="color:var(--accent-cyan)">&#8212;</div>
+                <div class="v3-heatmap-label">High Conviction</div>
+            </a>
+            <a href="/breakouts" class="v3-heatmap-cell" style="text-decoration:none">
+                <span class="v3-heatmap-icon">&#128293;</span>
+                <div class="v3-heatmap-count" id="heatBreakout" style="color:var(--accent-blue)">&#8212;</div>
+                <div class="v3-heatmap-label">Breakouts</div>
+            </a>
+            <a href="/top-picks" class="v3-heatmap-cell" style="text-decoration:none">
+                <span class="v3-heatmap-icon">&#128200;</span>
+                <div class="v3-heatmap-count" id="heatUnderdog" style="color:var(--success)">&#8212;</div>
+                <div class="v3-heatmap-label">Underdogs</div>
+            </a>
+        </div>
+    </div>
+
+    <!-- Section 4: Research Priorities (renamed from Best Opportunities) -->
+    <div class="v3-section">
+        <div class="v3-section-header">
+            <div>
+                <div class="v3-section-title">Research Priorities</div>
+                <div class="v3-section-subtitle">Top-ranked across different research dimensions</div>
+            </div>
+        </div>
+        <div class="v3-opportunity-grid" id="researchPriorities">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+
+    <!-- Section 5: Market Participation (renamed from Market Breadth) -->
+    <div class="v3-section">
+        <div class="v3-section-header">
+            <div class="v3-section-title">Market Participation</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 300px;gap:16px">
+            <div class="v3-kpi-card" style="display:flex;align-items:center;gap:20px;padding:20px 24px">
+                <div>
+                    <div class="v3-kpi-label">A/D Ratio</div>
+                    <div class="v3-kpi-value" id="breadthRatio" style="font-size:32px">&#8212;</div>
+                </div>
+                <div style="flex:1">
+                    <canvas id="breadthChart" height="80"></canvas>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+                <div class="v3-kpi-card" style="text-align:center"><div class="v3-kpi-label">Advances</div><div class="v3-kpi-value text-success" id="breadthAdv" style="font-size:20px">&#8212;</div></div>
+                <div class="v3-kpi-card" style="text-align:center"><div class="v3-kpi-label">Declines</div><div class="v3-kpi-value text-danger" id="breadthDec" style="font-size:20px">&#8212;</div></div>
+                <div class="v3-kpi-card" style="text-align:center"><div class="v3-kpi-label">Unchanged</div><div class="v3-kpi-value text-muted" id="breadthUnch" style="font-size:20px">&#8212;</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 6: Sector Rotation -->
+    <div class="v3-section">
+        <div class="v3-section-header">
+            <div class="v3-section-title">Sector Rotation</div>
+        </div>
+        <div class="v3-kpi-card" style="padding:24px">
+            <div id="sectorRotationContainer" style="display:flex;gap:20px;flex-wrap:wrap">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 7: Model Performance Summary -->
+    <div class="v3-section">
+        <div class="v3-section-header">
+            <div>
+                <div class="v3-section-title">Model Performance</div>
+                <div class="v3-section-subtitle">Paper trading outcomes and model calibration</div>
+            </div>
+            <a href="/outcome" class="v3-action-btn" style="text-decoration:none">View Full Analytics &#8594;</a>
+        </div>
+        <div class="v3-kpi-grid" id="perfGrid" style="grid-template-columns:repeat(5, 1fr)">
+            <div class="v3-kpi-card" style="text-align:center"><div class="v3-kpi-label">Total Trades</div><div class="v3-kpi-value" id="perfTotalTrades">&#8212;</div></div>
+            <div class="v3-kpi-card" style="text-align:center"><div class="v3-kpi-label">Win Rate</div><div class="v3-kpi-value" id="perfWinRate" style="color:var(--success)">&#8212;</div></div>
+            <div class="v3-kpi-card" style="text-align:center"><div class="v3-kpi-label">Profit Factor</div><div class="v3-kpi-value" id="perfPF">&#8212;</div></div>
+            <div class="v3-kpi-card" style="text-align:center"><div class="v3-kpi-label">Expectancy</div><div class="v3-kpi-value" id="perfExpectancy">&#8212;</div></div>
+            <div class="v3-kpi-card" style="text-align:center"><div class="v3-kpi-label">Alpha vs Nifty</div><div class="v3-kpi-value" id="perfAlpha">&#8212;</div></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const loadingEl = document.getElementById('dashboardLoading');
+const contentEl = document.getElementById('dashboardContent');
+
+function setLoadStep(step) {
+    for (let i = 1; i <= 4; i++) {
+        const el = document.getElementById('loadStep' + i);
+        if (i < step) { el.className = 'v3-loading-step done'; el.querySelector('.v3-loading-step-icon').textContent = '\u2713'; }
+        else if (i === step) { el.className = 'v3-loading-step active'; el.querySelector('.v3-loading-step-icon').textContent = '\u25BA'; }
+        else { el.className = 'v3-loading-step'; el.querySelector('.v3-loading-step-icon').textContent = '\u25CB'; }
+    }
+}
+
+function confBadge(score) {
+    const level = score >= 80 ? 'high' : score >= 50 ? 'medium' : 'low';
+    const label = level.toUpperCase();
+    return `<div class="v3-confidence ${level}" style="margin-top:4px"><span class="v3-confidence-dot"></span>${Math.round(score)}% ${label}</div>`;
+}
+
+function scoreBadge(score) {
+    const cls = score >= 80 ? 'excellent' : score >= 65 ? 'good' : score >= 50 ? 'average' : 'poor';
+    return `<div class="v3-score ${cls}">${score}</div>`;
+}
+
+function sigText(sig) {
+    if (Array.isArray(sig)) return sig[0] || '';
+    return typeof sig === 'string' ? sig : String(sig);
+}
+
+async function loadPageData() {
+    try {
+        setLoadStep(1);
+        // P1: Single API call instead of 5+
+        const res = await fetch('/api/dashboard');
+        const data = await res.json();
+        const status = data.status || {};
+        const results = data.results || [];
+        const stockCount = data.total_analyzed || results.length || 0;
+        const sectorData = data.sector_rotation || {};
+        const paperStats = data.paper_stats || {};
+        const regime = (status.market_regime || 'Unknown').toUpperCase();
+        const isLive = typeof isMarketOpen === 'function' ? isMarketOpen() : false;
+        const lastScanRaw = status.last_scan || '"';
+        const lastScanParts = lastScanRaw.split(' ');
+        const lastScan = lastScanParts.length >= 2 ? lastScanParts[1] : lastScanRaw;
+
+        document.getElementById('kpiRegime').textContent = regime;
+        document.getElementById('kpiRegime').style.color = regime.includes('BULL') ? 'var(--success)' : regime.includes('BEAR') ? 'var(--danger)' : 'var(--warning)';
+        document.getElementById('kpiUniverse').textContent = stockCount;
+        document.getElementById('briefDate').textContent = new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+        document.getElementById('sysUniverse').textContent = `${stockCount} Stocks`;
+        document.getElementById('sysLastScan').textContent = lastScan;
+        document.getElementById('sysMarket').textContent = isLive ? 'Open' : 'Closed';
+        document.getElementById('sysMarket').style.color = isLive ? 'var(--success)' : 'var(--danger)';
+
+        setLoadStep(2);
+
+        if (results.length > 0) {
+            const adv = results.filter(s => (s.change_pct||s.price_change_pct||0) > 0).length;
+            const dec = results.filter(s => (s.change_pct||s.price_change_pct||0) < 0).length;
+            const unch = results.length - adv - dec;
+            const ratio = dec > 0 ? (adv/dec).toFixed(2) : adv > 0 ? '\u221E' : '1.00';
+            const hc = results.filter(s => s.high_conviction);
+            const golden = results.filter(s => s.is_golden);
+            const breakouts = results.filter(s => (s.signals||[]).some(sig => sigText(sig).toLowerCase().includes('breakout')));
+            const underdogs = results.filter(s => (s.score||0) >= 55 && (s.score||0) < 70);
+
+            document.getElementById('kpiHC').textContent = hc.length;
+            document.getElementById('kpiGolden').textContent = golden.length;
+            document.getElementById('heatGolden').textContent = golden.length;
+            document.getElementById('heatHC').textContent = hc.length;
+            document.getElementById('heatBreakout').textContent = breakouts.length;
+            document.getElementById('heatUnderdog').textContent = underdogs.length;
+            document.getElementById('breadthRatio').textContent = ratio;
+            document.getElementById('breadthAdv').textContent = adv;
+            document.getElementById('breadthDec').textContent = dec;
+            document.getElementById('breadthUnch').textContent = unch;
+
+            document.getElementById('briefSummary').textContent = `${results.length} stocks scanned. Regime: ${status.market_regime||'Unknown'}. A/D ${ratio}. ${adv} advancing, ${dec} declining.`;
+            const avgConf = Math.round(results.filter(s => s.confidence_score).reduce((a,s) => a + (s.confidence_score||0), 0) / (results.filter(s => s.confidence_score).length || 1));
+            document.getElementById('briefInsight').textContent = `Focus on Score 75+. ${hc.length} HC picks, ${golden.length} golden. Avg confidence: ${avgConf}%.`;
+            const highRisk = results.filter(s => (s.risk_score||0) > 50).length;
+            document.getElementById('briefRisk').textContent = `${highRisk} stocks elevated risk (>50). ${dec} declining in universe.`;
+            const topSectors = {};
+            hc.forEach(s => { topSectors[s.sector] = (topSectors[s.sector]||0) + 1; });
+            const themeSector = Object.entries(topSectors).sort((a,b) => b[1]-a[1])[0];
+            document.getElementById('briefTheme').textContent = themeSector
+                ? `${themeSector[0]} leads with ${themeSector[1]} HC picks. ${golden.length > 0 ? 'Golden opportunities present.' : 'No golden today.'}`
+                : 'Broad participation. No single sector dominance.';
+
+            const sorted = [...results].sort((a,b) => (b.score||0)-(a.score||0));
+            const priorities = [
+                { type: 'Top Ranked', stock: sorted[0] },
+                { type: 'Best Earnings', stock: [...results].sort((a,b) => (b.earnings_momentum_score||0)-(a.earnings_momentum_score||0))[0] },
+                { type: 'Smart Money', stock: [...results].sort((a,b) => (b.smart_money_score||0)-(a.smart_money_score||0))[0] },
+                { type: 'Best Risk:Reward', stock: [...results].sort((a,b) => (b.risk_reward||0)-(a.risk_reward||0))[0] },
+                { type: 'Sector Leader', stock: [...results].sort((a,b) => (b.sector_rotation_score||0)-(a.sector_rotation_score||0))[0] },
+            ].filter(c => c.stock);
+
+            document.getElementById('researchPriorities').innerHTML = priorities.map(c => {
+                const s = c.stock; const conf = s.confidence_score || 0;
+                return `<div class="v3-opportunity-card" onclick="openDrawerForSymbol('${s.symbol}')">
+                    <div class="v3-opportunity-type">${c.type}</div>
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                        <div><div class="v3-opportunity-symbol">${s.symbol}</div><div class="v3-opportunity-detail">${s.sector || ''}</div></div>
+                        <div style="text-align:right">${scoreBadge(s.score||0)}${confBadge(conf)}</div>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+                        ${s.target_price ? `<span style="font-size:11px;color:var(--text-muted)">Target \u20B9${s.target_price.toFixed(0)}</span>` : ''}
+                        ${s.risk_reward ? `<span style="font-size:11px;color:var(--text-muted)">R:R ${s.risk_reward.toFixed(1)}</span>` : ''}
+                        ${s.is_golden ? '<span class="v3-signal-pill golden" style="font-size:10px;padding:1px 6px">&#9733; Golden</span>' : ''}
+                        ${s.high_conviction ? '<span class="v3-signal-pill hc" style="font-size:10px;padding:1px 6px">&#9889; HC</span>' : ''}
+                    </div></div>`;
+            }).join('');
+
+            if (sorted[0]) {
+                const best = sorted[0]; const bConf = best.confidence_score || 0;
+                document.getElementById('briefBestOpp').textContent = `${best.symbol} (Score ${best.score}, Confidence ${Math.round(bConf)}%) " ${sigText((best.signals||[])[0]) || 'Top ranked'}`;
+            }
+
+            // P6: Lazy load breadth chart
+            const bCtx = document.getElementById('breadthChart');
+            if (bCtx && typeof Chart !== 'undefined') {
+                const obs = new IntersectionObserver((entries) => {
+                    if (entries[0].isIntersecting) {
+                        new Chart(bCtx, { type:'bar', data:{labels:['Advances','Declines','Unchanged'], datasets:[{data:[adv,dec,unch], backgroundColor:['#10B981','#EF4444','#64748B'], borderRadius:4, barThickness:28}]}, options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false},ticks:{color:'#64748B',font:{size:10,weight:600}}},y:{display:false}}} });
+                        obs.disconnect();
+                    }
+                }, {threshold:0.1});
+                obs.observe(bCtx);
+            }
+        } else {
+            document.getElementById('briefSummary').textContent = `Regime: ${status.market_regime||'Unknown'}. No scan results yet.`;
+            document.getElementById('briefInsight').textContent = 'Run a scan to populate data.';
+            document.getElementById('briefRisk').textContent = 'Available after scan.';
+            document.getElementById('briefTheme').textContent = 'Available after scan.';
+        }
+
+        setLoadStep(3);
+        // Sector rotation (from same response)
+        if (sectorData.sectors && sectorData.sectors.length) {
+            const quadrants = { Leading:[], Improving:[], Weakening:[], Lagging:[] };
+            sectorData.sectors.forEach(s => { if(quadrants[s.quadrant]) quadrants[s.quadrant].push(s); });
+            document.getElementById('briefSectors').textContent = quadrants.Leading.map(s=>s.sector).join(' \u00B7 ') || 'No leading sectors';
+            const colors = {Leading:'var(--success)',Improving:'var(--accent-blue)',Weakening:'var(--warning)',Lagging:'var(--danger)'};
+            document.getElementById('sectorRotationContainer').innerHTML = Object.entries(quadrants).map(([q,secs]) => `
+                <div style="flex:1;min-width:180px">
+                    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:${colors[q]};margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid ${colors[q]}">${q} (${secs.length})</div>
+                    ${secs.length ? secs.map(s=>`<div style="font-size:12px;color:var(--text-secondary);padding:5px 0;display:flex;justify-content:space-between;border-bottom:1px solid var(--border-subtle)"><span>${s.sector}</span><span style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace">${s.momentum?s.momentum.toFixed(1):''}</span></div>`).join('') : '<div style="font-size:12px;color:var(--text-muted);padding:8px 0">None</div>'}
+                </div>`).join('');
+        }
+
+        setLoadStep(4);
+        // Paper stats (from same response)
+        if (paperStats && !paperStats.error) {
+            const wr = paperStats.win_rate||0, pf = paperStats.profit_factor||0, exp = paperStats.expectancy||0, alp = paperStats.avg_alpha_pct||0;
+            document.getElementById('perfTotalTrades').textContent = paperStats.total_trades||0;
+            document.getElementById('perfWinRate').textContent = wr > 0 ? wr.toFixed(1)+'%' : '\u2014';
+            document.getElementById('perfPF').textContent = pf > 0 ? pf.toFixed(2) : '\u2014';
+            document.getElementById('perfExpectancy').textContent = exp !== 0 ? (exp>0?'+':'')+exp.toFixed(2)+'%' : '\u2014';
+            document.getElementById('perfAlpha').textContent = alp !== 0 ? (alp>0?'+':'')+alp.toFixed(2)+'%' : '\u2014';
+            document.getElementById('perfAlpha').style.color = alp>0?'var(--success)':alp<0?'var(--danger)':'';
+            document.getElementById('kpiWinRate').textContent = wr > 0 ? wr.toFixed(1)+'%' : '\u2014';
+            document.getElementById('kpiAlpha').textContent = alp !== 0 ? (alp>0?'+':'')+alp.toFixed(1)+'%' : '\u2014';
+            document.getElementById('kpiAlpha').style.color = alp>0?'var(--success)':alp<0?'var(--danger)':'';
+        }
+
+        loadingEl.style.display = 'none';
+        contentEl.style.display = 'block';
+    } catch(err) {
+        loadingEl.innerHTML = `<div class="v3-empty-state"><div class="v3-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><div class="v3-empty-title">Failed to Load</div><div class="v3-empty-desc">${err.message}. Click refresh to retry.</div></div>`;
+    }
+}
+loadPageData();
+</script>
+{% endblock %}

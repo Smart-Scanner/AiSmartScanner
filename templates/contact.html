@@ -1,11 +1,11 @@
 {% extends "_public_base.html" %}
 {% set active = 'contact' %}
-{% block title %}Contact — Smart Screener{% endblock %}
+{% block title %}Contact — AI Smart Screener{% endblock %}
 
 {% block content %}
 <style>
     .contact-hero{padding:72px 0 40px;text-align:center;position:relative}
-    .contact-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(700px 350px at 50% 0%,rgba(255,108,55,0.08) 0%,transparent 55%);pointer-events:none}
+    .contact-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(700px 350px at 50% 0%,rgba(0,200,255,0.08) 0%,transparent 55%);pointer-events:none}
     .contact-hero .inner{position:relative;max-width:680px;margin:0 auto;padding:0 24px}
     .contact-hero h1{font-size:44px;font-weight:800;letter-spacing:-1.2px;margin:14px 0 12px}
     .contact-hero p{font-size:16px;color:var(--text-dim);line-height:1.6}
@@ -19,23 +19,23 @@
     .contact-card p{font-size:13.5px;color:var(--text-dim);line-height:1.65;margin-bottom:22px}
     .channel{display:flex;align-items:flex-start;gap:14px;padding:16px 0;border-top:1px solid var(--border)}
     .channel:first-of-type{border-top:none;padding-top:8px}
-    .channel .icon{width:36px;height:36px;border-radius:9px;background:var(--orange-soft);border:1px solid rgba(255,108,55,0.2);color:var(--orange);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .channel .icon{width:36px;height:36px;border-radius:9px;background:var(--primary-soft);border:1px solid rgba(0,200,255,0.2);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0}
     .channel .icon svg{width:16px;height:16px}
     .channel .label{font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.7px;font-weight:600;margin-bottom:3px}
     .channel .value{font-size:14.5px;font-weight:500;color:var(--text);word-break:break-all}
     .channel .value a{color:var(--text)}
-    .channel .value a:hover{color:var(--orange)}
+    .channel .value a:hover{color:var(--primary)}
     .channel .hint{font-size:11.5px;color:var(--text-mute);margin-top:4px}
 
     .form{display:flex;flex-direction:column;gap:14px}
     .form label{font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.7px;margin-bottom:5px;display:block}
     .form input,.form textarea{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:inherit;outline:none;transition:border-color 0.15s}
-    .form input:focus,.form textarea:focus{border-color:var(--orange)}
+    .form input:focus,.form textarea:focus{border-color:var(--primary)}
     .form textarea{resize:vertical;min-height:120px}
     .form .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     @media (max-width:560px){.form .row{grid-template-columns:1fr}}
     .form-note{font-size:11.5px;color:var(--text-mute);margin-top:8px;line-height:1.5}
-    .form-note a{color:var(--orange);text-decoration:underline}
+    .form-note a{color:var(--primary);text-decoration:underline}
 </style>
 
 <section class="contact-hero">

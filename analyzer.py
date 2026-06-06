@@ -47,6 +47,10 @@ from config import (
 # Intelligence package
 from intelligence import run_all_layers
 from intelligence.fundamentals import get_fundamentals_yf
+from intelligence.yf_guard import yf_status as yf_guard_status
+
+import time
+from metrics.timer import timed, _record as record_timing
 
 log = logging.getLogger("screener")
 
@@ -153,17 +157,18 @@ def calc_support_resistance(high, low, close):
 
 
 def calc_risk_score(rsi, atr_pct, dist_high, vol_ratio, pct_1m, below_ema200, adx):
-    risk = 40
+    risk = 15  # R1-P0-Fix1: was 40 — remove inflated baseline
     if rsi > 75: risk += 20
     elif rsi > 65: risk += 12
     elif rsi < 25: risk += 8
     if atr_pct > 5: risk += 15
     elif atr_pct > 3.5: risk += 8
     if dist_high > -3: risk += 15
-    elif dist_high > -8: risk += 5
+    elif dist_high > -8: risk += 8  # R1-P0-Fix5: was 5 — steeper near-high penalty
     if vol_ratio < 0.5: risk += 10
     if pct_1m > 20: risk += 18
-    elif pct_1m > 12: risk += 10
+    elif pct_1m > 12: risk += 12  # R1-P0-Fix5: was 10
+    elif pct_1m > 8: risk += 6   # R1-P0-Fix5: new tier for moderate extension
     if pct_1m < -20: risk += 12
     elif pct_1m < -12: risk += 6
     if below_ema200: risk += 10
@@ -295,12 +300,22 @@ def classify_grade(score: int) -> str:
 #  CORE ANALYSIS — 25 INDICATORS + 12 INTELLIGENCE LAYERS
 # ===================================================================
 
+@timed("analyze_per_stock")
 def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
-                      ext_df=None, query_marketaux: bool = False) -> dict | None:
+                      ext_df=None, query_marketaux: bool = False,
+                      scan_mode: str = "fast") -> dict | None:
     """
     Full 12-layer analysis per stock.
     ext_df: pre-fetched OHLCV DataFrame from Angel One (skips jugaad fetch).
+    scan_mode:
+        'fast' (default): cache_only=True for all yfinance-backed layers.
+                          Zero yfinance calls. query_marketaux forced False.
+        'deep':           cache_only=False. yfinance allowed on cache miss.
+                          Full MarketAux + MTF + Events fetched live.
     """
+    cache_only = (scan_mode != "deep")
+    if scan_mode == "fast":
+        query_marketaux = False
     try:
         clean = symbol.replace(".NS", "")
 
@@ -348,7 +363,7 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
                 log.warning("jugaad_data delivery blocked — disabling for this scan")
 
         if not has_delivery or delivery_pct is None:
-            delivery_pct = pd.Series([50.0] * len(df))
+            delivery_pct = pd.Series([35.0] * len(df))  # R1-P0-Fix4: was 50 — neutral-low, not "good"
 
         current_price = float(close.iloc[-1])
         sector = SECTORS.get(clean, "Other")
@@ -368,16 +383,21 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         # ════════════════════════════════════════════════════════════
         # LAYER 1 — 25 TECHNICAL INDICATORS
         # ════════════════════════════════════════════════════════════
+        _start_tech = time.monotonic()
         score = 0
+        smart_money_raw = 0  # R1-P1A: separate accumulator for smart money signals
         signals = []
 
         # ── RSI (14) ─────────────────────────────────────────────
         rsi = float(RSIIndicator(close, window=14).rsi().iloc[-1])
-        if rsi < 28:
-            score += 14; signals.append(("RSI Deeply Oversold", f"RSI: {rsi:.1f}", "bullish"))
-        elif rsi < 35:
+        # R1-P0-Fix2: RSI scoring correction — avoid rewarding falling knives
+        if 28 <= rsi < 38:
             score += 22; signals.append(("RSI Oversold Bounce", f"RSI: {rsi:.1f}", "bullish"))
-        elif rsi < 45:
+        elif 20 <= rsi < 28:
+            score += 10; signals.append(("RSI Deep Oversold", f"RSI: {rsi:.1f} — caution", "neutral"))
+        elif rsi < 20:
+            score += 0; signals.append(("RSI Falling Knife ⚠️", f"RSI: {rsi:.1f} — no entry", "bearish"))
+        elif 38 <= rsi < 45:
             score += 16; signals.append(("RSI Oversold Zone", f"RSI: {rsi:.1f}", "bullish"))
         elif rsi < 60:
             score += 8
@@ -399,7 +419,7 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         elif macd_hist > macd_hist_prev:
             score += 5; signals.append(("MACD Improving", "Histogram rising", "neutral"))
         else:
-            signals.append(("MACD Bearish", "Below signal", "bearish"))
+            score -= 8; signals.append(("MACD Bearish", "Below signal — penalized", "bearish"))  # R1-P0-Fix3: was 0 penalty
 
         # ── EMA Stack (9/21/50/200) ───────────────────────────────
         ema_9  = EMAIndicator(close, window=9).ema_indicator()
@@ -450,15 +470,15 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         elif bb_pct > 0.90:
             score -= 5; signals.append(("BB Overbought", f"{bb_pct:.0%}", "bearish"))
 
-        # ── Volume Surge ──────────────────────────────────────────
+        # ── Volume Surge ── [SMART MONEY] ─────────────────────────
         avg_vol = float(volume.rolling(20).mean().iloc[-1])
         vol_ratio = float(volume.iloc[-1] / avg_vol) if avg_vol > 0 else 1.0
         if vol_ratio > 3.0:
-            score += 20; signals.append(("Volume Explosion 🚀", f"{vol_ratio:.1f}x avg", "bullish"))
+            smart_money_raw += 20; signals.append(("Volume Explosion 🚀", f"{vol_ratio:.1f}x avg", "bullish"))
         elif vol_ratio > 2.0:
-            score += 15; signals.append(("Volume Surge", f"{vol_ratio:.1f}x avg", "bullish"))
+            smart_money_raw += 15; signals.append(("Volume Surge", f"{vol_ratio:.1f}x avg", "bullish"))
         elif vol_ratio > 1.5:
-            score += 10; signals.append(("High Volume", f"{vol_ratio:.1f}x", "bullish"))
+            smart_money_raw += 10; signals.append(("High Volume", f"{vol_ratio:.1f}x", "bullish"))
 
         # ── ATR Sweet Spot ────────────────────────────────────────
         atr_val = float(AverageTrueRange(high, low, close, window=14).average_true_range().iloc[-1])
@@ -493,14 +513,14 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         elif mom_composite < -5:
             score -= 6
 
-        # ── OBV ───────────────────────────────────────────────────
+        # ── OBV ── [SMART MONEY] ───────────────────────────────────
         obv = OnBalanceVolumeIndicator(close, volume).on_balance_volume()
         obv_slope = float((obv.iloc[-1] - obv.iloc[-5]) / abs(float(obv.iloc[-5])) * 100
                           if abs(float(obv.iloc[-5])) > 0 else 0)
         if obv_slope > 8:
-            score += 10; signals.append(("OBV Surging", f"+{obv_slope:.1f}% accumulation", "bullish"))
+            smart_money_raw += 10; signals.append(("OBV Surging", f"+{obv_slope:.1f}% accumulation", "bullish"))
         elif obv_slope > 3:
-            score += 5; signals.append(("OBV Rising", f"+{obv_slope:.1f}%", "bullish"))
+            smart_money_raw += 5; signals.append(("OBV Rising", f"+{obv_slope:.1f}%", "bullish"))
 
         # ── 52-Week Pullback ──────────────────────────────────────
         high_52w = float(high.max())
@@ -552,13 +572,13 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         except Exception:
             pass
 
-        # ── MFI ───────────────────────────────────────────────────
+        # ── MFI ── [SMART MONEY] ───────────────────────────────────
         try:
             mfi_val = float(MFIIndicator(high, low, close, volume, window=14).money_flow_index().iloc[-1])
             if mfi_val < 25:
-                score += 10; signals.append(("MFI Oversold", f"MFI: {mfi_val:.1f}", "bullish"))
+                smart_money_raw += 10; signals.append(("MFI Oversold", f"MFI: {mfi_val:.1f}", "bullish"))
             elif mfi_val > 80:
-                score -= 5
+                smart_money_raw -= 5
         except Exception:
             pass
 
@@ -570,13 +590,13 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         except Exception:
             pass
 
-        # ── CMF (Chaikin Money Flow) ──────────────────────────────
+        # ── CMF (Chaikin Money Flow) ── [SMART MONEY] ──────────────
         try:
             cmf_val = float(ChaikinMoneyFlowIndicator(high, low, close, volume, window=20).chaikin_money_flow().iloc[-1])
             if cmf_val > 0.15:
-                score += 8; signals.append(("CMF Positive", f"CMF: {cmf_val:.2f} — Accumulation", "bullish"))
+                smart_money_raw += 8; signals.append(("CMF Positive", f"CMF: {cmf_val:.2f} — Accumulation", "bullish"))
             elif cmf_val < -0.15:
-                score -= 5
+                smart_money_raw -= 5
         except Exception:
             pass
 
@@ -617,7 +637,7 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         elif rs_vs_nifty > 0:
             score += 4
 
-        # ── Delivery % ───────────────────────────────────────────
+        # ── Delivery % ── [SMART MONEY] ───────────────────────────
         avg_delivery = float(delivery_pct.rolling(10).mean().iloc[-1]
                              if len(delivery_pct) >= 10 else delivery_pct.mean())
         curr_delivery = float(delivery_pct.iloc[-1])
@@ -626,13 +646,13 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         if np.isnan(curr_delivery): curr_delivery = 50.0
         if np.isnan(delivery_trend): delivery_trend = 0.0
         if curr_delivery > 65 and delivery_trend > 8:
-            score += 18; signals.append(("Delivery Surge 🚀", f"{curr_delivery:.0f}% (+{delivery_trend:.0f}%)", "bullish"))
+            smart_money_raw += 18; signals.append(("Delivery Surge 🚀", f"{curr_delivery:.0f}% (+{delivery_trend:.0f}%)", "bullish"))
         elif curr_delivery > 55 and delivery_trend > 3:
-            score += 14; signals.append(("Strong Delivery", f"{curr_delivery:.0f}% (+{delivery_trend:.0f}%)", "bullish"))
+            smart_money_raw += 14; signals.append(("Strong Delivery", f"{curr_delivery:.0f}% (+{delivery_trend:.0f}%)", "bullish"))
         elif curr_delivery > 45 and delivery_trend > 0:
-            score += 8; signals.append(("Good Delivery", f"{curr_delivery:.0f}%", "bullish"))
+            smart_money_raw += 8; signals.append(("Good Delivery", f"{curr_delivery:.0f}%", "bullish"))
         elif curr_delivery > 35:
-            score += 3
+            smart_money_raw += 3
 
         # ── Fibonacci ─────────────────────────────────────────────
         fib = calc_fibonacci(high_52w, low_52w, current_price)
@@ -646,7 +666,7 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         if is_breakout:
             score += 15; signals.append(("Breakout! 🚀", "Breaking consolidation with volume", "bullish"))
         if vp_divergence:
-            score += 10; signals.append(("Accumulation", "OBV rising while price flat", "bullish"))
+            smart_money_raw += 10; signals.append(("Accumulation", "OBV rising while price flat", "bullish"))
 
         # ── Weekly Trend ──────────────────────────────────────────
         weekly_trend = get_weekly_trend(close)
@@ -664,15 +684,21 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
             score += 5
             signals.append(("Bull Market Tailwind", "Market supportive", "bullish"))
 
+        record_timing("technical_indicators", round((time.monotonic() - _start_tech) * 1000), True)
+
         # ════════════════════════════════════════════════════════════
         # LAYERS 2–12: INTELLIGENCE ENGINE
         # ════════════════════════════════════════════════════════════
 
-        # Layer 4: Fundamentals (yfinance)
-        fundamentals = get_fundamentals_yf(clean)
+        # Layer 4: Fundamentals (cache_only=True during scan → zero yfinance calls)
+        fundamentals = get_fundamentals_yf(clean, cache_only=cache_only)
         # Fallback sector from SECTORS dict if yfinance returns Unknown
         if fundamentals.get("sector") == "Unknown":
             fundamentals["sector"] = sector
+
+        # Layer 4B: Earnings Momentum Engine (R2) — uses cached quarterly data
+        from intelligence.fundamentals import get_earnings_momentum
+        earnings_mom = get_earnings_momentum(clean, fundamentals=fundamentals, cache_only=cache_only)
 
         # Check Technical Score from Layer 1 to see if we meet MarketAux criteria
         tech_score_100 = min(100, max(0, round((score / 220.0) * 100)))
@@ -686,7 +712,7 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         should_query_mx = query_marketaux or (tech_score_100 > 80 and news_count < 3)
 
         # All other layers via orchestrator
-        layers = run_all_layers(clean, df, current_price, fundamentals, query_marketaux=should_query_mx)
+        layers = run_all_layers(clean, df, current_price, fundamentals, query_marketaux=should_query_mx, cache_only=cache_only)
 
         # Add layer scores to total (for signals check)
         composite = layers.get("composite_layer_score", 0)
@@ -753,34 +779,54 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
             return None
 
         # ── COMPOSITE SCORING WEIGHTS ─────────────────────────────
-        # 1. Technical Score (25% -> max 25)
-        raw_tech_score = score
-        tech_score_25 = min(25.0, max(0.0, (raw_tech_score / 220.0) * 25.0))
+        # R2: Weight Rebalance — earnings momentum added, tech/fund adjusted
+        # R1-P1A: Smart money extracted as independent signal family
+        raw_tech_score = score  # technical-only (smart money removed)
 
-        # 2. News Sentiment (30% -> max 30)
-        ns_score = layers.get("news_sentiment", {}).get("score", 0.0)
-        news_sentiment_30 = min(30.0, max(0.0, 15.0 + (ns_score / 15.0) * 15.0))
+        # 1. Technical Structure (30% → max 30)
+        #    Normalizer: ~200 is realistic max for pure technical indicators
+        tech_score_30 = min(30.0, max(0.0, (raw_tech_score / 200.0) * 30.0))
 
-        # 3. News Spike (20% -> max 20)
-        news_spike_20 = 0.0
-        if gdelt_spike > 1.0:
-            news_spike_20 = min(20.0, (gdelt_spike - 1.0) * 4.0)
+        # 2. Earnings Momentum (15% → max 15) — R2: NEW
+        earnings_mom_100 = earnings_mom.get("earnings_momentum_score", 0)
+        earnings_mom_15 = min(15.0, max(0.0, earnings_mom_100 * 0.15))
 
-        # 4. Fundamental Score (15% -> max 15)
+        # 3. Fundamental Quality (10% → max 10)
         fund_score = fundamentals.get("fund_score", 0)
-        fundamental_score_15 = min(15.0, max(0.0, (fund_score / 32.0) * 15.0))
+        fundamental_score_10 = min(10.0, max(0.0, (fund_score / 32.0) * 10.0))
 
-        # 5. Macro Score (5% -> max 5)
+        # 4. Smart Money (10% → max 10) — Delivery, OBV, CMF, MFI, Volume, VP Divergence
+        #    Normalizer: 76 is actual max (Vol:20 + OBV:10 + MFI:10 + CMF:8 + Dlv:18 + VP:10)
+        smart_money_100 = min(100.0, max(0.0, (smart_money_raw / 76.0) * 100.0))
+        smart_money_10 = smart_money_100 * 0.10
+
+        # 5. Sector Rotation (10% → max 10) — RRG quadrant + relative strength
+        rot_data = layers.get("sector_rotation", {})
+        rot_quadrant = rot_data.get("quadrant", "UNKNOWN")
+        rot_score_map = {"LEADING": 90, "IMPROVING": 70, "WEAKENING": 35, "LAGGING": 15}
+        sector_rot_100 = rot_score_map.get(rot_quadrant, 50)
+        sector_rotation_10 = sector_rot_100 * 0.10
+
+        # 6. News Sentiment (8% → max 8)
+        ns_score = layers.get("news_sentiment", {}).get("score", 0.0)
+        news_sentiment_8 = min(8.0, max(0.0, 4.0 + (ns_score / 15.0) * 4.0))
+
+        # 7. News Spike (2% → max 2)
+        news_spike_2 = 0.0
+        if gdelt_spike > 1.0:
+            news_spike_2 = min(2.0, (gdelt_spike - 1.0) * 0.4)
+
+        # 8. Macro Score (5% → max 5)
         ff_score = layers.get("macro_event", {}).get("score", 0.0)
         macro_raw = ff_score + float(macro_bias)
         macro_score_5 = min(5.0, max(0.0, 2.5 + (macro_raw / 25.0) * 2.5))
 
-        # 6. MarketAux Catalyst Score (5% -> max 5)
+        # 9. Catalyst Score (10% → max 10) — MarketAux + GDELT keywords
         news_items = layers.get("news_sentiment", {}).get("items", [])
         mx_items = [item for item in news_items if item.get("source") == "marketaux"]
         if mx_items:
             mx_avg = sum(item.get("score", 0.0) for item in mx_items) / len(mx_items)
-            marketaux_score_5 = min(5.0, max(0.0, (mx_avg + 1.0) / 2.0 * 5.0))
+            catalyst_score_10 = min(10.0, max(0.0, (mx_avg + 1.0) / 2.0 * 10.0))
         else:
             # GDELT keyword catalyst fallback
             pos_keywords = ["upgrade", "order win", "earnings beat", "acquisition", "buyback", "dividend", "revenue up", "expansion"]
@@ -792,9 +838,13 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
                     bonus += 1.5
                 if any(w in title for w in neg_keywords):
                     bonus -= 1.5
-            marketaux_score_5 = min(5.0, max(0.0, 2.5 + bonus))
+            catalyst_score_10 = min(10.0, max(0.0, 5.0 + bonus))
 
-        final_score = round(tech_score_25 + news_sentiment_30 + news_spike_20 + fundamental_score_15 + macro_score_5 + marketaux_score_5)
+        final_score = round(
+            tech_score_30 + earnings_mom_15 + fundamental_score_10 +
+            smart_money_10 + sector_rotation_10 + news_sentiment_8 +
+            news_spike_2 + macro_score_5 + catalyst_score_10
+        )
         score_100 = min(100, max(0, final_score))
         grade = classify_grade(score_100)
 
@@ -802,7 +852,39 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         trade = layers.get("trade", {})
         # Fallback to original ATR calculation
         atr_stop = current_price - (ATR_SL_MULTIPLIER * atr_val)
-        stop_loss_pct = round(((atr_stop - current_price) / current_price) * 100, 1)
+
+        # Calculative strategy to define the entry price range and stop loss
+        s1 = sr.get("s1")
+        s2 = sr.get("s2")
+        pivot = sr.get("pivot")
+        fib_s = fib.get("support")
+        
+        # 1. Stop Loss: strict technical SL placed below the nearest key support level or ATR stop
+        sl_candidates = [atr_stop]
+        
+        # S1 support within 7% below current price
+        if s1 and s1 < current_price and (current_price - s1) / current_price <= 0.07:
+            sl_candidates.append(s1 * 0.99)
+            
+        # Fibonacci support within 7% below current price
+        if fib_s and fib_s < current_price and (current_price - fib_s) / current_price <= 0.07:
+            sl_candidates.append(fib_s * 0.99)
+            
+        # Select the closest structural support below current price
+        valid_supports = [s for s in sl_candidates if s < current_price]
+        if valid_supports:
+            # Place the stop loss below support, maximizing R:R
+            structural_sl = max(valid_supports)
+            # Ensure it is at least 1.5% below current price
+            if current_price - structural_sl < current_price * 0.015:
+                structural_sl = min(valid_supports)
+        else:
+            structural_sl = atr_stop
+            
+        strict_sl = round(structural_sl, 2)
+        stop_loss_pct = round(((strict_sl - current_price) / current_price) * 100, 1)
+        
+        # 2. Target Price Strategy: based on structural resistances (R1, R2, Fib resistance)
         base_mult = 2.0
         if weekly_trend == "up" and e9 > e21:
             base_mult = 3.0
@@ -810,24 +892,65 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
             base_mult = 1.8
         if adx > 25:
             base_mult += 0.5
-        risk_distance = current_price - atr_stop
+            
+        risk_distance = current_price - strict_sl
         default_target = current_price + (base_mult * risk_distance)
         target_candidates = [default_target]
-        if fib.get("resistance") and fib["resistance"] > current_price * 1.02:
-            target_candidates.append(fib["resistance"])
-        if sr.get("r1") and sr["r1"] > current_price * 1.02:
-            target_candidates.append(sr["r1"])
+        
+        r1 = sr.get("r1")
+        r2 = sr.get("r2")
+        fib_r = fib.get("resistance")
+        
+        if fib_r and fib_r > current_price * 1.02:
+            target_candidates.append(fib_r)
+        if r1 and r1 > current_price * 1.02:
+            target_candidates.append(r1)
+            
         realistic = [t for t in target_candidates if t <= default_target * 1.5]
         target_price = max(realistic) if realistic else default_target
         target_pct = round(((target_price - current_price) / current_price) * 100, 1)
         risk_reward = round((target_price - current_price) / risk_distance, 1) if risk_distance > 0 else 0
         risk_score = calc_risk_score(rsi, atr_pct, dist_high, vol_ratio, pct_1m, below_ema200, adx)
 
-        # Enhanced trade plan
-        entry_low = round(current_price * 0.995, 2)
-        entry_high = round(current_price * 1.01, 2)
-        target_1 = round(target_price, 2)
-        target_2 = round(target_price * 1.08, 2) if weekly_trend == "up" else None
+        # 3. Target levels based on resistances:
+        target1 = round(r1 if (r1 and r1 > current_price) else target_price, 2)
+        target2 = round(r2 if (r2 and r2 > target1) else target1 * 1.08, 2)
+        target3 = round(target2 * 1.10, 2)
+
+        risk_dist = current_price - strict_sl
+        rr1_val = round((target1 - current_price) / risk_dist, 1) if risk_dist > 0 else 1.5
+        rr2_val = round((target2 - current_price) / risk_dist, 1) if risk_dist > 0 else 2.5
+        rr3_val = round((target3 - current_price) / risk_dist, 1) if risk_dist > 0 else 3.5
+
+        # 4. Entry Zone Strategy: buy near support or on breakout
+        if is_breakout:
+            breakout_level = r1 or fib_r or current_price
+            if breakout_level > current_price * 0.95 and breakout_level < current_price * 1.05:
+                entry_low = round(breakout_level * 0.995, 2)
+                entry_high = round(breakout_level * 1.015, 2)
+            else:
+                entry_low = round(current_price * 0.995, 2)
+                entry_high = round(current_price * 1.01, 2)
+        else:
+            pullback_supports = []
+            if e9 and e9 < current_price and (current_price - e9) / current_price <= 0.03:
+                pullback_supports.append(e9)
+            if s1 and s1 < current_price and (current_price - s1) / current_price <= 0.03:
+                pullback_supports.append(s1)
+            if pivot and pivot < current_price and (current_price - pivot) / current_price <= 0.03:
+                pullback_supports.append(pivot)
+                
+            if pullback_supports:
+                entry_low = round(max(pullback_supports), 2)
+                if entry_low >= current_price:
+                    entry_low = round(current_price * 0.99, 2)
+                entry_high = round(current_price * 1.005, 2)
+            else:
+                entry_low = round(current_price * 0.99, 2)
+                entry_high = round(current_price * 1.005, 2)
+                
+        if entry_low > entry_high:
+            entry_low, entry_high = entry_high, entry_low
 
         if regime == "bearish":
             booking_plan = "Book 100% at Target 1 (Bear Market defensive play)"
@@ -839,23 +962,31 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         trade = {
             "entry_low": entry_low,
             "entry_high": entry_high,
-            "target_1": target_1,
-            "target_2": target_2,
-            "stop_loss": round(atr_stop, 2),
+            "stop_loss": strict_sl,
+            "target1": target1,
+            "rr1": rr1_val,
+            "target2": target2,
+            "rr2": rr2_val,
+            "target3": target3,
+            "rr3": rr3_val,
             "booking_plan": booking_plan,
             "risk_reward": risk_reward,
+            # Maintain legacy keys for safety
+            "target_1": target1,
+            "target_2": target2,
         }
 
         # ── HIGH CONVICTION FLAG ──────────────────────────────────
         bullish_signals = sum(1 for s in signals if s[2] == "bullish")
         macd_is_bullish = macd_line > macd_sig_val
 
-        # Golden Stock Composite Rule
+        # Golden Stock Composite Rule — R2: updated for new weight structure
         is_golden = (
             score_100 >= 80
-            and tech_score_25 >= 18.0
-            and news_sentiment_30 >= 20.0
-            and fundamental_score_15 >= 10.0
+            and tech_score_30 >= 21.0      # 70% of 30 max
+            and fundamental_score_10 >= 6.0 # 60% of 10 max
+            and earnings_mom_15 >= 8.0      # ~53% of 15 max — earnings momentum required
+            and smart_money_10 >= 5.0       # 50% of 10 max
             and risk_reward >= 2.2
             and risk_score <= 45
         )
@@ -887,14 +1018,25 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
             return v
 
         return {
-            # Core
+            # Core — R2: updated sub-scores with earnings momentum
+            "model_version": "R2.1",  # Track for outcome comparison across releases
             "symbol": clean, "name": clean, "sector": fundamentals.get("sector", sector),
-            "news_sentiment_score": round(news_sentiment_30, 2),
-            "news_spike_score": round(news_spike_20, 2),
-            "technical_score": round(tech_score_25, 2),
-            "fundamental_score": round(fundamental_score_15, 2),
+            "news_sentiment_score": round(news_sentiment_8, 2),
+            "news_spike_score": round(news_spike_2, 2),
+            "technical_score": round(tech_score_30, 2),
+            "fundamental_score": round(fundamental_score_10, 2),
             "macro_score": round(macro_score_5, 2),
-            "marketaux_catalyst_score": round(marketaux_score_5, 2),
+            "marketaux_catalyst_score": round(catalyst_score_10, 2),
+            "smart_money_score": round(smart_money_10, 2),
+            "smart_money_raw": round(smart_money_raw, 1),
+            "smart_money_100": round(smart_money_100, 1),
+            "sector_rotation_score": round(sector_rotation_10, 2),
+            # R2: Earnings Momentum Engine
+            "earnings_momentum_score": round(earnings_mom_15, 2),
+            "earnings_momentum_100": earnings_mom.get("earnings_momentum_score", 0),
+            "earnings_grade": earnings_mom.get("earnings_grade", "D"),
+            "earnings_signals": earnings_mom.get("earnings_signals", []),
+            "earnings_confidence": earnings_mom.get("confidence", 0),
             "marketaux_queried": should_query_mx,
             "price": round(current_price, 2),
             "score": score_100, "grade": grade,
@@ -959,6 +1101,8 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
             "high_52w": round(high_52w, 2),
             "low_52w":  round(low_52w, 2),
             "pullback_pct": round(abs(dist_high), 1),
+            # Scan metadata
+            "scan_mode": scan_mode,
         }
 
     except (KeyError, ValueError, IndexError, TypeError) as exc:

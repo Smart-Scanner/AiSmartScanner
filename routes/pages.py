@@ -69,11 +69,90 @@ def index():
 
     trial_days = int(auth_db.get_setting("trial_duration_days", "3"))
     return render_template(
+        "v3/dashboard.html",
+        user=user,
+        is_admin=bool(user["is_admin"]),
+        trial_status=_trial_status(user, trial_days),
+    )
+
+
+# ── V2 Backward Compatibility ────────────────────────────────────────
+@pages_bp.route("/v2")
+@subscribed_required
+def v2_dashboard():
+    """Legacy V2 dashboard — keep for 2-4 weeks after V3 launch."""
+    user = auth_db.get_user_by_id(session["user_id"])
+    trial_days = int(auth_db.get_setting("trial_duration_days", "3"))
+    return render_template(
         "index.html",
         user=user,
         is_admin=bool(user["is_admin"]),
         trial_status=_trial_status(user, trial_days),
     )
+
+
+# ── V3 Page Routes ───────────────────────────────────────────────────
+@pages_bp.route("/top-picks")
+@subscribed_required
+def top_picks():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("v3/top_picks.html", user=user, is_admin=bool(user["is_admin"]))
+
+
+@pages_bp.route("/golden")
+@subscribed_required
+def golden_stocks():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("v3/golden.html", user=user, is_admin=bool(user["is_admin"]))
+
+
+@pages_bp.route("/hc")
+@subscribed_required
+def high_conviction():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("v3/high_conviction.html", user=user, is_admin=bool(user["is_admin"]))
+
+
+@pages_bp.route("/breakouts")
+@subscribed_required
+def breakouts_page():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("v3/breakouts.html", user=user, is_admin=bool(user["is_admin"]))
+
+
+@pages_bp.route("/market")
+@subscribed_required
+def market_intel():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("v3/market_intel.html", user=user, is_admin=bool(user["is_admin"]))
+
+
+@pages_bp.route("/paper-trades-view")
+@subscribed_required
+def paper_trades_view():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("v3/paper_trades.html", user=user, is_admin=bool(user["is_admin"]))
+
+
+@pages_bp.route("/outcome")
+@subscribed_required
+def outcome_intelligence():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("v3/outcome.html", user=user, is_admin=bool(user["is_admin"]))
+
+
+@pages_bp.route("/watchlist")
+@subscribed_required
+def watchlist_page():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("v3/watchlist.html", user=user, is_admin=bool(user["is_admin"]))
+
+
+@pages_bp.route("/settings")
+@subscribed_required
+def settings_page():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("v3/settings.html", user=user, is_admin=bool(user["is_admin"]))
 
 
 @pages_bp.route("/pricing")

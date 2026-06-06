@@ -1,11 +1,11 @@
 {% extends "_public_base.html" %}
 {% set active = 'about' %}
-{% block title %}About — Smart Screener{% endblock %}
+{% block title %}About — AI Smart Screener{% endblock %}
 
 {% block content %}
 <style>
     .about-hero{padding:80px 0 40px;position:relative}
-    .about-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(700px 400px at 30% 0%,rgba(255,108,55,0.08) 0%,transparent 55%);pointer-events:none}
+    .about-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(700px 400px at 30% 0%,rgba(0,200,255,0.08) 0%,transparent 55%);pointer-events:none}
     .about-hero .inner{position:relative;max-width:760px;margin:0 auto;padding:0 24px;text-align:center}
     .about-hero h1{font-size:48px;font-weight:800;letter-spacing:-1.2px;margin:14px 0}
     .about-hero p{font-size:17px;color:var(--text-dim);line-height:1.65}
@@ -16,17 +16,17 @@
     .narrative h2:first-child{margin-top:0}
     .narrative p{font-size:15px;color:var(--text-dim);line-height:1.75;margin-bottom:16px}
     .narrative .lead{font-size:17px;color:var(--text);font-weight:500;line-height:1.65}
-    .narrative blockquote{border-left:3px solid var(--orange);padding:8px 0 8px 20px;margin:20px 0;font-size:16px;color:var(--text);font-style:italic}
+    .narrative blockquote{border-left:3px solid var(--primary);padding:8px 0 8px 20px;margin:20px 0;font-size:16px;color:var(--text);font-style:italic}
 
     .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:48px auto;max-width:var(--max-w);padding:0 24px}
     .stat{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:24px 20px;text-align:center}
-    .stat .num{font-size:30px;font-weight:800;color:var(--orange);letter-spacing:-1px;margin-bottom:4px}
+    .stat .num{font-size:30px;font-weight:800;color:var(--primary);letter-spacing:-1px;margin-bottom:4px}
     .stat .label{font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.6px}
     @media (max-width:760px){.stats{grid-template-columns:repeat(2,1fr)}}
 
     .values{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;max-width:var(--max-w);margin:32px auto 0;padding:0 24px}
     .value{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px}
-    .value .icon{width:38px;height:38px;border-radius:9px;background:var(--orange-soft);border:1px solid rgba(255,108,55,0.2);color:var(--orange);display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+    .value .icon{width:38px;height:38px;border-radius:9px;background:var(--primary-soft);border:1px solid rgba(0,200,255,0.2);color:var(--primary);display:flex;align-items:center;justify-content:center;margin-bottom:14px}
     .value .icon svg{width:18px;height:18px}
     .value h3{font-size:15px;font-weight:600;margin-bottom:6px}
     .value p{font-size:13.5px;color:var(--text-dim);line-height:1.6}
@@ -37,13 +37,13 @@
     <div class="inner">
         <div class="eyebrow">About us</div>
         <h1>Built by traders, for traders.</h1>
-        <p>Smart Screener exists because retail traders deserve the same caliber of tools institutions use — without paying institutional prices.</p>
+        <p>AI Smart Screener exists because retail traders deserve the same caliber of tools institutions use — without paying institutional prices.</p>
     </div>
 </section>
 
 <div class="stats">
-    <div class="stat"><div class="num">575+</div><div class="label">Stocks scanned</div></div>
-    <div class="stat"><div class="num">18</div><div class="label">Scoring parameters</div></div>
+    <div class="stat"><div class="num">2200+</div><div class="label">Stocks scanned</div></div>
+    <div class="stat"><div class="num">25+</div><div class="label">Technical Indicators</div></div>
     <div class="stat"><div class="num">Hourly</div><div class="label">Auto re-scoring</div></div>
     <div class="stat"><div class="num">Live</div><div class="label">Angel One feed</div></div>
 </div>
@@ -51,7 +51,7 @@
 <section class="narrative">
     <h2>Why we built this</h2>
     <p class="lead">Most retail traders make decisions on incomplete data — looking at one chart, hearing one tip, reacting to one news cycle. The result: emotional trades, lost capital, and the slow attrition of a once-curious investor.</p>
-    <p>We built Smart Screener to flatten that gap. Every stock in the Nifty 250 is scored against the same 18 parameters every hour. RSI, MACD, EMA crossovers, ATR-based risk, delivery percentage, Bollinger position, volume divergence — all distilled into a single 0–100 score, with the underlying signals one click away.</p>
+    <p>We built AI Smart Screener to flatten that gap. Every active stock in the NSE universe (2200+ symbols) is scanned and analyzed. RSI, MACD, EMA crossovers, ATR-based risk, delivery percentage, Bollinger position, volume divergence — all distilled into a single 0–100 score, with the underlying signals one click away.</p>
     <p>No tips. No "guru" newsletters. Just a fast, opinionated tool that surfaces the highest-probability setups and stays out of your way.</p>
 
     <h2>How we work</h2>
@@ -83,7 +83,7 @@
 <section class="section-wrap" style="padding-top:64px">
     <div class="section">
         <div class="final-cta" style="background:linear-gradient(135deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--border);border-radius:18px;padding:56px 32px;text-align:center;position:relative;overflow:hidden">
-            <div style="position:absolute;inset:0;background:radial-gradient(600px 300px at 50% 0%,var(--orange-soft) 0%,transparent 60%);pointer-events:none"></div>
+            <div style="position:absolute;inset:0;background:radial-gradient(600px 300px at 50% 0%,var(--primary-soft) 0%,transparent 60%);pointer-events:none"></div>
             <h2 style="font-size:30px;font-weight:800;letter-spacing:-0.8px;margin-bottom:12px;position:relative">Want to chat?</h2>
             <p style="font-size:15px;color:var(--text-dim);margin-bottom:26px;position:relative">We read every email. Tell us what you'd like to see next.</p>
             <a href="{{ url_for('pages.contact') }}" class="btn btn-primary btn-lg" style="position:relative">Get in touch

@@ -13,7 +13,11 @@ Per-stock (called inside fetch_and_analyze):
 """
 
 import logging
+import threading
+import time
 import yfinance as yf
+from metrics.timer import timed
+from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success
 
 from intelligence.seasonal import get_seasonal_score
 from intelligence.order_book import get_order_book_proxy
@@ -30,6 +34,11 @@ from intelligence.news_sentiment import fetch_news_sentiment, get_global_headlin
 from intelligence.fundamentals import get_fundamentals_yf
 from intelligence.mtf import get_mtf_trend
 from intelligence.support_resistance import get_support_resistance, calculate_trade_levels
+
+# ─── Events cache ─────────────────────────────────────────────────────────────
+_events_cache: dict = {}    # symbol → {data: list, ts: float}
+_EVENTS_TTL = 6 * 3600      # 6 hours
+_events_lock = threading.Lock()
 
 log = logging.getLogger("screener")
 
@@ -75,8 +84,25 @@ def warmup_all(all_symbols: set = None):
 # ──────────────────────────────────────────────────────────────
 # Per-Stock Corporate Events
 # ──────────────────────────────────────────────────────────────
-def get_upcoming_events(symbol: str) -> list:
-    """Corporate events from yfinance calendar."""
+@timed("corporate_events")
+def get_upcoming_events(symbol: str, cache_only: bool = False) -> list:
+    """Corporate events from yfinance calendar, with 6-hour memory cache."""
+    sym = symbol.upper()
+    # Level 1: Memory cache
+    with _events_lock:
+        entry = _events_cache.get(sym)
+        if entry and (time.time() - entry["ts"]) < _EVENTS_TTL:
+            return entry["data"]
+
+    if cache_only:
+        log.debug("events cache miss %s — cache_only=True, returning empty", sym)
+        return []
+
+    if not yf_is_available():
+        log.debug("events yf_guard OPEN for %s — skipping", sym)
+        return []
+
+    # Level 2: yfinance fetch
     try:
         tk = yf.Ticker(symbol + ".NS")
         cal = tk.calendar
@@ -86,21 +112,38 @@ def get_upcoming_events(symbol: str) -> list:
                 vals = cal[col].tolist()
                 if vals:
                     events.append({"event": col, "date": str(vals[0])[:10]})
-        return events[:5]
+        result = events[:5]
+        yf_record_success()
     except Exception:
-        return []
+        yf_record_failure()
+        result = []
+
+    with _events_lock:
+        _events_cache[sym] = {"data": result, "ts": time.time()}
+    return result
+
+
+def invalidate_events_cache(symbol: str) -> None:
+    """Clear memory cache for a symbol's corporate events."""
+    with _events_lock:
+        _events_cache.pop(symbol.upper(), None)
+    log.debug("events cache invalidated for %s", symbol)
 
 
 # ──────────────────────────────────────────────────────────────
 # Per-Stock Layer Runner
 # ──────────────────────────────────────────────────────────────
-def run_all_layers(symbol: str, df, current_price: float, fundamentals: dict, query_marketaux: bool = False) -> dict:
+def run_all_layers(
+    symbol: str, df, current_price: float, fundamentals: dict,
+    query_marketaux: bool = False, cache_only: bool = False,
+) -> dict:
     """
     Run all intelligence layers for a stock.
     Returns merged dict with composite_layer_score.
 
     df: OHLCV DataFrame (columns: DATE/OPEN/HIGH/LOW/CLOSE/VOLUME)
     fundamentals: dict from get_fundamentals_yf() — passed in to avoid double-fetch
+    cache_only: if True, all yfinance-backed layers use cache only (Fast Scan mode)
     """
     result = {}
 
@@ -119,7 +162,7 @@ def run_all_layers(symbol: str, df, current_price: float, fundamentals: dict, qu
 
     # ── Layer 2: Multi-Timeframe ───────────────────────────────────
     try:
-        mtf_trends, mtf_score = get_mtf_trend(symbol)
+        mtf_trends, mtf_score = get_mtf_trend(symbol, cache_only=cache_only)
         result["mtf_trends"] = mtf_trends
         result["mtf_score"] = mtf_score
     except Exception as exc:
@@ -170,13 +213,18 @@ def run_all_layers(symbol: str, df, current_price: float, fundamentals: dict, qu
         log.debug("GDELT failed for %s: %s", symbol, exc)
         result["gdelt"] = {"score": 0, "articles": [], "spike": 1.0}
 
-    # ── Layer 9: Full News Waterfall (includes GDELT + Finnhub + MX) ─
+    # -- Layer 9: Full News Waterfall (includes GDELT + Finnhub + RSS + MX) --
     try:
-        news_score, news_items = fetch_news_sentiment(symbol, query_marketaux=query_marketaux)
-        result["news_sentiment"] = {"score": news_score, "items": news_items}
+        _scan_mode = "deep" if not cache_only else "fast"
+        news_score, news_items, news_sources = fetch_news_sentiment(
+            symbol, query_marketaux=query_marketaux, scan_mode=_scan_mode
+        )
+        result["news_sentiment"] = {
+            "score": news_score, "items": news_items, "source_breakdown": news_sources,
+        }
     except Exception as exc:
         log.debug("News failed for %s: %s", symbol, exc)
-        result["news_sentiment"] = {"score": 0, "items": []}
+        result["news_sentiment"] = {"score": 0, "items": [], "source_breakdown": {}}
 
     # ── Layer 9b: Forex Factory macro events ──────────────────────
     try:
@@ -196,7 +244,7 @@ def run_all_layers(symbol: str, df, current_price: float, fundamentals: dict, qu
 
     # ── Layer 12: Corporate Events ────────────────────────────────
     try:
-        events = get_upcoming_events(symbol)
+        events = get_upcoming_events(symbol, cache_only=cache_only)
         result["events"] = events
     except Exception as exc:
         log.debug("Events failed for %s: %s", symbol, exc)
@@ -233,6 +281,8 @@ __all__ = [
     "fetch_news_sentiment",
     "get_global_headlines",
     "get_fundamentals_yf",
+    "get_upcoming_events",
+    "invalidate_events_cache",
     "scan_world_markets",
     "scan_sector_rotation",
     "scan_macro_events",

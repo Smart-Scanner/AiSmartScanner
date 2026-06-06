@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>{% block title %}Smart Screener — Smarter stock picks for the Indian market{% endblock %}</title>
+    <title>{% block title %}AI Smart Screener — Smarter stock picks for the Indian market{% endblock %}</title>
     <meta name="description" content="{% block description %}High-conviction stock picks for NSE traders. 18-parameter scoring, live prices, portfolio tracking, market regime detection.{% endblock %}">
     <style>
         :root, [data-theme="dark"]{
             --bg:#0e0e0e; --bg-soft:#161616; --panel:#1c1c1c; --panel-2:#222;
             --border:#2a2a2a; --border-light:#3a3a3a;
             --text:#f0f0f0; --text-dim:#a8a8a8; --text-mute:#666;
-            --orange:#ff6c37; --orange-soft:rgba(255,108,55,0.12); --orange-glow:rgba(255,108,55,0.4);
+            --primary:#00C8FF; --primary-soft:rgba(0,200,255,0.12); --primary-glow:rgba(0,200,255,0.4);
             --green:#34a853; --red:#ef5350; --blue:#4285f4; --gold:#f5a623;
             --nav-bg:rgba(14,14,14,0.85);
             --max-w:1180px;
@@ -21,7 +21,7 @@
             --bg:#ffffff; --bg-soft:#f5f6f8; --panel:#ffffff; --panel-2:#f0f2f5;
             --border:#e3e6eb; --border-light:#cdd2da;
             --text:#1a1d22; --text-dim:#525a66; --text-mute:#8a939e;
-            --orange:#e8530e; --orange-soft:rgba(232,83,14,0.1); --orange-glow:rgba(232,83,14,0.3);
+            --primary:#0078CC; --primary-soft:rgba(0,120,204,0.1); --primary-glow:rgba(0,120,204,0.3);
             --green:#1e8e3e; --red:#d93025; --blue:#1a73e8; --gold:#ea8600;
             --nav-bg:rgba(255,255,255,0.85);
         }
@@ -36,23 +36,23 @@
         .nav-inner{max-width:var(--max-w);margin:0 auto;padding:0 24px;height:64px;display:flex;align-items:center;gap:32px}
         .nav-brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;color:var(--text);letter-spacing:-0.3px}
         .nav-brand img.logo-img{height:30px;width:auto;display:block}
-        .nav-brand .wordmark{background:linear-gradient(135deg,#ff8c5a 0%,#ff6c37 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
+        .nav-brand .wordmark{background:linear-gradient(135deg,#38D6FF 0%,#00C8FF 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
         .nav-links{display:flex;gap:6px;flex:1;margin-left:8px}
         .nav-links a{padding:8px 12px;font-size:13.5px;color:var(--text-dim);border-radius:7px;transition:all 0.15s;font-weight:500}
         .nav-links a:hover{color:var(--text);background:rgba(255,255,255,0.04)}
-        .nav-links a.active{color:var(--orange)}
+        .nav-links a.active{color:var(--primary)}
         .nav-cta{display:flex;align-items:center;gap:10px}
         .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:600;font-size:13.5px;padding:9px 18px;border-radius:8px;border:1px solid transparent;cursor:pointer;transition:all 0.15s;text-decoration:none;line-height:1;white-space:nowrap}
         .btn-ghost{background:transparent;color:var(--text);border-color:var(--border-light)}
-        .btn-ghost:hover{border-color:var(--orange);color:var(--orange)}
-        .btn-primary{background:var(--orange);color:#fff;border-color:var(--orange);box-shadow:0 6px 20px -6px var(--orange-glow)}
-        .btn-primary:hover{background:#ff7e4d;border-color:#ff7e4d;transform:translateY(-1px);box-shadow:0 10px 24px -6px var(--orange-glow)}
+        .btn-ghost:hover{border-color:var(--primary);color:var(--primary)}
+        .btn-primary{background:var(--primary);color:#fff;border-color:var(--primary);box-shadow:0 6px 20px -6px var(--primary-glow)}
+        .btn-primary:hover{background:var(--primary-dark);border-color:var(--primary-dark);transform:translateY(-1px);box-shadow:0 10px 24px -6px var(--primary-glow)}
         .btn-lg{padding:13px 26px;font-size:14.5px;border-radius:9px}
         .btn svg{width:14px;height:14px}
 
         /* Theme toggle */
         .theme-toggle{background:transparent;border:1px solid var(--border-light);border-radius:8px;color:var(--text-dim);padding:8px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all 0.15s;width:36px;height:36px}
-        .theme-toggle:hover{border-color:var(--orange);color:var(--orange)}
+        .theme-toggle:hover{border-color:var(--primary);color:var(--primary)}
         .theme-toggle svg{width:16px;height:16px;display:none}
         [data-theme="dark"] .theme-toggle .icon-sun{display:block}
         [data-theme="light"] .theme-toggle .icon-moon{display:block}
@@ -71,7 +71,7 @@
         .footer-brand p{font-size:12.5px;color:var(--text-mute);line-height:1.6;max-width:320px}
         .footer-col h4{font-size:11px;font-weight:600;color:var(--text-dim);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:14px}
         .footer-col a{display:block;font-size:13px;color:var(--text-mute);padding:5px 0;transition:color 0.15s}
-        .footer-col a:hover{color:var(--orange)}
+        .footer-col a:hover{color:var(--primary)}
         .footer-bottom{border-top:1px solid var(--border);margin-top:0;padding:20px 24px;text-align:center;font-size:12px;color:var(--text-mute)}
         .footer-disclaimer{max-width:var(--max-w);margin:0 auto 24px;padding:0 24px;font-size:11px;color:var(--text-mute);line-height:1.6;font-style:italic}
 
@@ -82,7 +82,7 @@
 
         /* ── Section + utility ────────────────────────────── */
         .section{max-width:var(--max-w);margin:0 auto;padding:0 24px}
-        .eyebrow{display:inline-block;font-size:11px;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:1.4px;margin-bottom:14px;padding:5px 10px;background:var(--orange-soft);border-radius:6px;border:1px solid rgba(255,108,55,0.2)}
+        .eyebrow{display:inline-block;font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:1.4px;margin-bottom:14px;padding:5px 10px;background:var(--primary-soft);border-radius:6px;border:1px solid rgba(0,200,255,0.2)}
         .section-head{text-align:center;max-width:680px;margin:0 auto 56px}
         .section-head h2{font-size:38px;font-weight:700;letter-spacing:-0.8px;line-height:1.12;margin-bottom:14px}
         .section-head p{font-size:16px;color:var(--text-dim);line-height:1.6}
@@ -96,11 +96,11 @@
     <script>
         // Apply theme before render to avoid flash-of-wrong-theme.
         (function(){
-            var t = localStorage.getItem('theme') || 'dark';
+            var t = localStorage.getItem('theme') || 'light';
             document.documentElement.setAttribute('data-theme', t);
         })();
         function toggleTheme(){
-            var cur = document.documentElement.getAttribute('data-theme') || 'dark';
+            var cur = document.documentElement.getAttribute('data-theme') || 'light';
             var next = cur === 'light' ? 'dark' : 'light';
             document.documentElement.setAttribute('data-theme', next);
             localStorage.setItem('theme', next);
@@ -111,13 +111,12 @@
 <body>
     <nav class="nav">
         <div class="nav-inner">
-            <a href="{{ url_for('pages.index') }}" class="nav-brand" aria-label="Smart Screener">
+            <a href="{{ url_for('pages.index') }}" class="nav-brand" aria-label="AI Smart Screener">
                 <img src="{{ url_for('static', filename='logo.svg') }}" class="logo-img" alt="">
-                <span class="wordmark">Smart Screener</span>
+                <span class="wordmark">AI Smart Screener</span>
             </a>
             <div class="nav-links">
                 <a href="{{ url_for('pages.index') }}#features" class="{% if active=='home' %}active{% endif %}">Features</a>
-                <a href="{{ url_for('pages.pricing') }}" class="{% if active=='pricing' %}active{% endif %}">Pricing</a>
                 <a href="{{ url_for('pages.about') }}" class="{% if active=='about' %}active{% endif %}">About</a>
                 <a href="{{ url_for('pages.contact') }}" class="{% if active=='contact' %}active{% endif %}">Contact</a>
             </div>
@@ -147,13 +146,12 @@
     <footer class="footer">
         <div class="footer-inner">
             <div class="footer-brand">
-                <div class="name"><img src="{{ url_for('static', filename='logo.svg') }}" class="logo-img" alt=""> Smart Screener</div>
+                <div class="name"><img src="{{ url_for('static', filename='logo.svg') }}" class="logo-img" alt=""> AI Smart Screener</div>
                 <p>Data-driven stock picks for NSE traders. 18-parameter scoring, live prices, portfolio tracking — all in one place.</p>
             </div>
             <div class="footer-col">
                 <h4>Product</h4>
                 <a href="{{ url_for('pages.index') }}#features">Features</a>
-                <a href="{{ url_for('pages.pricing') }}">Pricing</a>
                 <a href="{{ url_for('auth.local_login') }}">Sign in</a>
             </div>
             <div class="footer-col">
@@ -168,10 +166,10 @@
             </div>
         </div>
         <div class="footer-disclaimer">
-            Disclaimer: Smart Screener provides technical analysis tools and educational content only. We are not SEBI-registered investment advisors. Nothing on this platform constitutes financial advice. Trading in equities involves substantial risk; past performance does not guarantee future returns. Please do your own research before investing.
+            Disclaimer: AI Smart Screener provides technical analysis tools and educational content only. We are not SEBI-registered investment advisors. Nothing on this platform constitutes financial advice. Trading in equities involves substantial risk; past performance does not guarantee future returns. Please do your own research before investing.
         </div>
         <div class="footer-bottom">
-            &copy; {{ current_year }} Smart Screener. All rights reserved.
+            &copy; {{ current_year }} AI Smart Screener. All rights reserved.
         </div>
     </footer>
 </body>

@@ -16,6 +16,7 @@ import time
 import logging
 import threading
 import requests
+from metrics.timer import timed
 from datetime import datetime, timezone
 from functools import lru_cache
 
@@ -122,6 +123,36 @@ GDELT_QUERIES = [
 ]
 GDELT_BASE = "https://api.gdeltproject.org/api/v2/doc/doc"
 
+# Phase 9: GDELT circuit breaker
+_gdelt_failures = 0
+_gdelt_cooldown_until = 0.0
+_GDELT_THRESHOLD = 3
+_GDELT_COOLDOWN = 1800  # 30 min
+
+
+def _gdelt_is_available() -> bool:
+    if _gdelt_failures >= _GDELT_THRESHOLD:
+        if time.time() < _gdelt_cooldown_until:
+            return False
+        # Cooldown expired, reset
+        _gdelt_reset()
+    return True
+
+
+def _gdelt_record_failure():
+    global _gdelt_failures, _gdelt_cooldown_until
+    _gdelt_failures += 1
+    if _gdelt_failures >= _GDELT_THRESHOLD:
+        _gdelt_cooldown_until = time.time() + _GDELT_COOLDOWN
+        log.warning("GDELT circuit breaker OPEN: %d failures. Cooldown %.0f min.",
+                     _gdelt_failures, _GDELT_COOLDOWN / 60)
+
+
+def _gdelt_reset():
+    global _gdelt_failures, _gdelt_cooldown_until
+    _gdelt_failures = 0
+    _gdelt_cooldown_until = 0.0
+
 
 def fetch_gdelt_india_bulk(hours_back: int = 48) -> list:
     """
@@ -129,8 +160,13 @@ def fetch_gdelt_india_bulk(hours_back: int = 48) -> list:
     Returns list of dicts: {url, title, seendate}
     Zero API key. Zero cost. Single GET per query.
     """
+    if not _gdelt_is_available():
+        log.info("GDELT circuit breaker open — returning empty (cached data used if available)")
+        return []
+
     articles = []
     seen_urls = set()
+    query_failures = 0
     for query in GDELT_QUERIES:
         try:
             params = {
@@ -147,6 +183,7 @@ def fetch_gdelt_india_bulk(hours_back: int = 48) -> list:
             resp = requests.get(GDELT_BASE, params=params, headers=headers, timeout=10)
             if resp.status_code != 200:
                 log.debug("GDELT query failed with status %d: %s", resp.status_code, resp.text[:100])
+                query_failures += 1
                 continue
             data = resp.json()
             for art in data.get("articles", []):
@@ -161,6 +198,13 @@ def fetch_gdelt_india_bulk(hours_back: int = 48) -> list:
                 })
         except Exception as exc:
             log.debug("GDELT query failed: %s", exc)
+            query_failures += 1
+
+    if query_failures >= len(GDELT_QUERIES):
+        _gdelt_record_failure()
+    elif articles:
+        _gdelt_reset()  # Success — reset failure count
+
     log.info("GDELT fetched %d unique articles", len(articles))
     return articles
 
@@ -288,6 +332,7 @@ _cache_built_at: float = 0
 _CACHE_TTL = 3600  # 1 hour
 
 
+@timed("gdelt_bulk_fetch")
 def build_article_cache(all_symbols: set):
     """
     Called ONCE at scan start. Builds per-symbol article cache.

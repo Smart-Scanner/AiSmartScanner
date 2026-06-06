@@ -12,3 +12,10 @@ logs/
 *.zip
 test-results/
 node_modules/
+scratch/
+all_financial_rows.txt
+financials_structure.txt
+target_inspect.txt
+test_results.txt
+templates/index_v5_backup.html
+check_index_html_colors.py

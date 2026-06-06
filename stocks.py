@@ -13,10 +13,22 @@ class DynamicStockUniverse(list):
         import json
         from pathlib import Path
         token_file = Path(__file__).parent / "cache" / "angel_tokens.json"
+        
+        # 1. Try to load from database first (if we have >= 1000 stocks)
+        try:
+            import db
+            db_symbols = db.execute_db("SELECT symbol FROM scan_results", fetch="all")
+            if db_symbols:
+                symbols = sorted(list(set([r["symbol"] for r in db_symbols if r.get("symbol")])))
+                if len(symbols) > 1000:
+                    return symbols
+        except Exception:
+            pass
+
+        # 2. Try to load from angel_tokens.json
         if token_file.exists():
             try:
                 token_map = json.loads(token_file.read_text())
-                # Filter to exclude any non-alphabetic/future/option symbols if necessary, but angel_tokens.json has clean stripped keys
                 symbols = sorted(list(token_map.keys()))
                 if len(symbols) > 1000:
                     return symbols

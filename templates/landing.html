@@ -5,14 +5,14 @@
     /* ── Hero ─────────────────────────────────────────── */
     .hero{position:relative;padding:96px 0 100px;overflow:hidden}
     .hero-bg{position:absolute;inset:0;pointer-events:none;background:
-        radial-gradient(900px 500px at 25% 0%,rgba(255,108,55,0.15) 0%,transparent 60%),
+        radial-gradient(900px 500px at 25% 0%,rgba(0,200,255,0.15) 0%,transparent 60%),
         radial-gradient(700px 400px at 80% 30%,rgba(66,133,244,0.08) 0%,transparent 60%);
         z-index:0}
     .hero-inner{position:relative;z-index:1;max-width:var(--max-w);margin:0 auto;padding:0 24px;text-align:center}
-    .hero-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;background:var(--orange-soft);color:var(--orange);border:1px solid rgba(255,108,55,0.25);border-radius:99px;font-size:12px;font-weight:600;margin-bottom:24px}
-    .hero-pill .dot{width:6px;height:6px;border-radius:50%;background:var(--orange);box-shadow:0 0 8px var(--orange)}
+    .hero-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;background:var(--primary-soft);color:var(--primary);border:1px solid rgba(0,200,255,0.25);border-radius:99px;font-size:12px;font-weight:600;margin-bottom:24px}
+    .hero-pill .dot{width:6px;height:6px;border-radius:50%;background:var(--primary);box-shadow:0 0 8px var(--primary)}
     .hero h1{font-size:64px;font-weight:800;line-height:1.05;letter-spacing:-2px;margin-bottom:22px;max-width:840px;margin-left:auto;margin-right:auto}
-    .hero h1 .accent{background:linear-gradient(135deg,var(--orange) 0%,#ffb088 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+    .hero h1 .accent{background:linear-gradient(135deg,var(--primary) 0%,#ffb088 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
     .hero p{font-size:18px;color:var(--text-dim);max-width:620px;margin:0 auto 36px;line-height:1.6}
     .hero-cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:46px}
     .hero-trust{display:flex;align-items:center;justify-content:center;gap:24px;font-size:12.5px;color:var(--text-mute);flex-wrap:wrap}
@@ -28,7 +28,7 @@
     .mock-body{padding:18px;display:grid;grid-template-columns:160px 1fr;gap:18px;min-height:280px}
     .mock-side{background:var(--bg-soft);border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:8px}
     .mock-side .item{font-size:11px;color:var(--text-dim);padding:6px 8px;border-radius:5px;display:flex;align-items:center;gap:6px}
-    .mock-side .item.active{background:var(--orange-soft);color:var(--orange)}
+    .mock-side .item.active{background:var(--primary-soft);color:var(--primary)}
     .mock-side .item .d{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:0.5}
     .mock-table{display:flex;flex-direction:column;gap:6px}
     .mock-row{display:grid;grid-template-columns:20px 60px 1fr 70px 50px 60px;gap:10px;align-items:center;padding:9px 10px;background:var(--bg-soft);border-radius:6px;font-size:11px;color:var(--text-dim)}
@@ -60,9 +60,9 @@
     .features{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
     .feature{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);padding:26px 24px;transition:all 0.2s;position:relative;overflow:hidden}
     .feature:hover{border-color:var(--border-light);transform:translateY(-2px)}
-    .feature::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--orange-glow),transparent);opacity:0;transition:opacity 0.3s}
+    .feature::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--primary-glow),transparent);opacity:0;transition:opacity 0.3s}
     .feature:hover::before{opacity:1}
-    .feature .icon{width:42px;height:42px;border-radius:10px;background:var(--orange-soft);border:1px solid rgba(255,108,55,0.2);display:flex;align-items:center;justify-content:center;color:var(--orange);margin-bottom:16px}
+    .feature .icon{width:42px;height:42px;border-radius:10px;background:var(--primary-soft);border:1px solid rgba(0,200,255,0.2);display:flex;align-items:center;justify-content:center;color:var(--primary);margin-bottom:16px}
     .feature .icon svg{width:20px;height:20px}
     .feature h3{font-size:16px;font-weight:600;margin-bottom:8px;letter-spacing:-0.2px}
     .feature p{font-size:13.5px;color:var(--text-dim);line-height:1.6}
@@ -73,7 +73,7 @@
     .check-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 24px}
     .check{display:flex;gap:14px;align-items:flex-start;padding:18px 18px;background:var(--panel);border:1px solid var(--border);border-radius:10px;transition:all 0.15s}
     .check:hover{border-color:var(--border-light);transform:translateY(-1px)}
-    .check .tick{flex-shrink:0;width:28px;height:28px;border-radius:7px;background:var(--orange-soft);color:var(--orange);display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,108,55,0.2)}
+    .check .tick{flex-shrink:0;width:28px;height:28px;border-radius:7px;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;border:1px solid rgba(0,200,255,0.2)}
     .check .tick svg{width:14px;height:14px}
     .check h4{font-size:13.5px;font-weight:600;letter-spacing:-0.1px;margin-bottom:4px}
     .check p{font-size:12.5px;color:var(--text-dim);line-height:1.55}
@@ -83,7 +83,7 @@
     /* ── How it works ────────────────────────────────── */
     .how{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;counter-reset:step}
     .step{position:relative;padding:28px 24px 24px;background:linear-gradient(180deg,var(--panel) 0%,var(--bg-soft) 100%);border:1px solid var(--border);border-radius:var(--radius-lg)}
-    .step::before{counter-increment:step;content:counter(step);position:absolute;top:-16px;left:24px;width:32px;height:32px;border-radius:50%;background:var(--orange);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;box-shadow:0 6px 16px -4px var(--orange-glow)}
+    .step::before{counter-increment:step;content:counter(step);position:absolute;top:-16px;left:24px;width:32px;height:32px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;box-shadow:0 6px 16px -4px var(--primary-glow)}
     .step h3{font-size:15px;font-weight:600;margin:14px 0 8px;letter-spacing:-0.2px}
     .step p{font-size:13px;color:var(--text-dim);line-height:1.6}
     @media (max-width:760px){.how{grid-template-columns:1fr;gap:18px}}
@@ -92,21 +92,21 @@
     .price-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;max-width:880px;margin:0 auto}
     .price-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px 22px;text-align:center;transition:all 0.2s;position:relative}
     .price-card:hover{border-color:var(--border-light);transform:translateY(-2px)}
-    .price-card.featured{border-color:var(--orange);background:linear-gradient(180deg,rgba(255,108,55,0.06) 0%,var(--panel) 100%)}
-    .price-card .featured-pill{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--orange);color:#fff;font-size:10px;font-weight:700;padding:4px 12px;border-radius:99px;letter-spacing:0.6px}
+    .price-card.featured{border-color:var(--primary);background:linear-gradient(180deg,rgba(0,200,255,0.06) 0%,var(--panel) 100%)}
+    .price-card .featured-pill{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--primary);color:#fff;font-size:10px;font-weight:700;padding:4px 12px;border-radius:99px;letter-spacing:0.6px}
     .price-card .name{font-size:14px;font-weight:600;color:var(--text-dim);margin-bottom:6px}
     .price-card .amount{font-size:34px;font-weight:800;letter-spacing:-1px;color:var(--text);margin-bottom:2px}
     .price-card .amount .currency{font-size:18px;font-weight:600;vertical-align:top;color:var(--text-dim);margin-right:2px}
     .price-card .period{font-size:12px;color:var(--text-mute);margin-bottom:16px}
-    .price-card .per-day{font-size:11px;color:var(--orange);font-weight:600;background:var(--orange-soft);padding:3px 10px;border-radius:10px;display:inline-block;margin-bottom:14px}
+    .price-card .per-day{font-size:11px;color:var(--primary);font-weight:600;background:var(--primary-soft);padding:3px 10px;border-radius:10px;display:inline-block;margin-bottom:14px}
     .price-card a{display:block;padding:10px 14px;border:1px solid var(--border-light);border-radius:8px;font-size:13px;font-weight:600;transition:all 0.15s;color:var(--text)}
-    .price-card a:hover{border-color:var(--orange);color:var(--orange)}
-    .price-card.featured a{background:var(--orange);border-color:var(--orange);color:#fff}
-    .price-card.featured a:hover{background:#ff7e4d;color:#fff}
+    .price-card a:hover{border-color:var(--primary);color:var(--primary)}
+    .price-card.featured a{background:var(--primary);border-color:var(--primary);color:#fff}
+    .price-card.featured a:hover{background:var(--primary-dark);color:#fff}
 
     /* ── Final CTA ───────────────────────────────────── */
     .final-cta{background:linear-gradient(135deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--border);border-radius:18px;padding:64px 32px;text-align:center;position:relative;overflow:hidden}
-    .final-cta::before{content:'';position:absolute;inset:0;background:radial-gradient(600px 300px at 50% 0%,var(--orange-soft) 0%,transparent 60%);pointer-events:none}
+    .final-cta::before{content:'';position:absolute;inset:0;background:radial-gradient(600px 300px at 50% 0%,var(--primary-soft) 0%,transparent 60%);pointer-events:none}
     .final-cta h2{font-size:36px;font-weight:800;letter-spacing:-1px;margin-bottom:14px;position:relative}
     .final-cta p{font-size:16px;color:var(--text-dim);margin-bottom:30px;max-width:540px;margin-left:auto;margin-right:auto;position:relative}
     .final-cta .btns{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;position:relative}
@@ -117,8 +117,8 @@
     <div class="hero-bg"></div>
     <div class="hero-inner">
         <div class="hero-pill"><span class="dot"></span> Live for NSE traders</div>
-        <h1>Find <span class="accent">high-conviction</span> trades in the Nifty 250.</h1>
-        <p>An 18-parameter scoring engine ranks every NSE stock daily. Live Angel One prices, regime-aware filters, and a built-in portfolio tracker — in one fast workspace.</p>
+        <h1>AI-Driven <span class="accent">Smart Screener</span> for 2200+ NSE Stocks.</h1>
+        <p>Unlock professional-grade analysis. Ranks 2200+ active NSE stocks daily using 25+ technical indicators and 12-layer AI intelligence. Built-in portfolio manager, risk-reward entry zones, strict stop-losses, and live price updates.</p>
         <div class="hero-cta">
             <a href="{{ url_for('auth.local_login') }}" class="btn btn-primary btn-lg">Sign In
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
@@ -134,7 +134,7 @@
         <div class="hero-mock">
             <div class="mock-bar">
                 <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
-                <div class="url">nse-screener · Dashboard</div>
+                <div class="url">ai-smart-screener · Dashboard</div>
             </div>
             <div class="mock-body">
                 <div class="mock-side">
@@ -169,13 +169,13 @@
         <div class="features">
             <div class="feature">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 6-6"/></svg></div>
-                <h3>18-parameter scoring</h3>
-                <p>RSI, MACD, EMA crossovers, ATR risk, Bollinger position, OBV, delivery percentage, and 11 more — distilled into a single score from 0–100 per stock, refreshed every hour.</p>
+                <h3>25+ Technical Indicators & AI</h3>
+                <p>RSI, MACD, EMA crossovers, ATR risk, Bollinger position, OBV, delivery percentage, and 12-layer macro/sector intelligence analysis — distilled into a single composite score from 0–100 per stock.</p>
             </div>
             <div class="feature">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></div>
-                <h3>Live Angel One prices</h3>
-                <p>WebSocket stream for 575+ symbols. No 15-min delay, no refresh-and-pray. Prices update on the dashboard as the market moves.</p>
+                <h3>Live Price Updates</h3>
+                <p>WebSocket streaming and fast fallback for real-time prices. No 15-min delay. Watch prices update on your dashboard in real-time as the market moves.</p>
             </div>
             <div class="feature">
                 <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
