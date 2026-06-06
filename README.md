@@ -128,26 +128,59 @@ Double-click `SmartScreener.lnk` or run `start_screener.bat`:
 
 ## API Endpoints
 
+### Core
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/results` | Get all scanned stock results |
-| GET | `/api/status` | Scan progress + system status |
+| GET | `/api/dashboard` | Composite endpoint — status + results + sectors + paper stats |
+| GET | `/api/results` | All scanned stock results (slimmed, ~873 KB) |
+| GET | `/api/status` | Scan progress + HC/golden/adv/dec counts |
+| GET | `/api/search-list` | Lightweight symbol list for autocomplete (~71 KB) |
+| GET | `/api/stock/<symbol>` | Full stock detail for drawer (all fields) |
+| GET | `/api/health` | System health + pool metrics |
+
+### Filtered Lists
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/golden` | Golden stocks only |
+| GET | `/api/high-conviction` | High conviction stocks only |
+| GET | `/api/breakouts` | Breakout candidates |
+| POST | `/api/watchlist/details` | Watchlist stock details (POST with symbols array) |
+
+### Paper Trading & Outcome Intelligence
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/paper-trades` | All paper trades (open + closed) |
+| GET | `/api/paper-trades/stats` | Win rate, expectancy, model comparison |
+| GET | `/api/paper-trades/equity-curve` | Equity curve chart data |
+
+### Scanner & Data
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
 | POST | `/api/scan` | Trigger a new scan |
 | POST | `/api/force-scan` | Force refresh (bypass cache) |
 | GET | `/api/export/csv` | Export results as CSV |
-| GET | `/api/custom-stocks` | Get user's custom stock list |
+| GET | `/api/custom-stocks` | User's custom stock list |
 | POST | `/api/custom-stocks` | Add a custom stock |
 | DELETE | `/api/custom-stocks/<symbol>` | Remove a custom stock |
-| GET | `/api/live-prices` | Get live prices for displayed stocks |
 | GET | `/api/macro` | Market regime + macro indicators |
 | GET | `/api/news` | Latest market news and alerts |
 
 ## Deployment
 
+### Requirements
+
+| Environment | File | Includes |
+|-------------|------|----------|
+| **Railway / Production** | `requirements.txt` | Core + Flask + gunicorn + torch |
+| **Desktop (local)** | `requirements-desktop.txt` | Everything above + `pywebview` |
+
 ### Railway (Production)
 
 ```bash
-# Requirements (no desktop dependencies)
 pip install -r requirements.txt
 
 # Procfile (auto-detected by Railway)
@@ -167,6 +200,19 @@ Required environment variables on Railway:
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
 
+#### Supabase Connection
+
+Use **Transaction Pooler** (port `6543`), not Session Pooler (port `5432`).
+Session mode has a 15-connection hard limit that causes `EMAXCONNSESSION` errors.
+
+```
+# Recommended
+postgresql://user:pass@host:6543/postgres
+
+# Avoid
+postgresql://user:pass@host:5432/postgres
+```
+
 ### Desktop Mode (Local)
 
 ```bash
@@ -184,30 +230,49 @@ python app.py
 
 See [DEPLOY.md](DEPLOY.md) for detailed deployment instructions.
 
+## Performance
+
+Payload sizes after V6 optimization (75% reduction from V5):
+
+| Endpoint | Size | Cache TTL |
+|----------|------|-----------|
+| `/api/status` | ~1 KB | 5s |
+| `/api/search-list` | ~71 KB | 60s |
+| `/api/dashboard` | ~870 KB | 10s |
+| `/api/results` | ~873 KB | 10s |
+| `/api/golden` | ~0-50 KB | — |
+| `/api/breakouts` | ~22 KB | — |
+| `/api/watchlist/details` | ~6 KB | — |
+
+Heavy fields (`chart_data`, `signals`, `fundamentals`, `trade`) are stripped from list endpoints and loaded on-demand via `/api/stock/<symbol>` in the detail drawer.
+
 ## Project Structure
 
 ```
 smart-screener/
-├── app.py                  # Flask application entry
-├── scanner.py              # Stock scanning engine
-├── analyzer.py             # Technical analysis
-├── fundamentals.py         # Fundamental analysis
-├── news_engine.py          # News sentiment pipeline
-├── db.py                   # Database abstraction
+├── app.py                  # Flask entry + background threads
+├── scanner.py              # Stock scanning engine (Phase 1 + 2)
+├── analyzer.py             # 18-factor technical analysis
+├── db.py                   # Supabase + SQLite dual-backend
+├── live_feed.py            # Angel One WebSocket live prices
+├── cache_layer.py          # TTL memory cache for API responses
+├── config.py               # Centralized configuration
+├── intelligence/            # FinBERT, GDELT, RRG, macro layers
 ├── routes/
 │   ├── api.py              # REST API endpoints
-│   ├── pages.py            # Page routes
-│   ├── auth.py             # Authentication
+│   ├── pages.py            # V3 page routes
+│   ├── auth.py             # Google OAuth + local auth
+│   ├── admin.py            # Admin endpoints
 │   └── portfolio.py        # Portfolio management
 ├── templates/
-│   ├── index.html          # V6 Dashboard (Command Center)
-│   ├── local_login.html    # Standalone login page
-│   ├── _public_base.html   # Public pages base
-│   └── ...
+│   ├── _app_base.html      # V3 base layout + sidebar
+│   ├── v3/                 # V3 pages (top_picks, golden, etc.)
+│   └── index.html          # Legacy V2 (backward compat)
 ├── static/                 # CSS, JS, images
-├── cache/                  # File-based cache
-├── start_screener.bat      # Windows control panel
-└── requirements.txt        # Python dependencies
+├── requirements.txt        # Production dependencies
+├── requirements-desktop.txt # Desktop mode (+ pywebview)
+├── Procfile                # Railway/Heroku deployment
+└── start_screener.bat      # Windows control panel
 ```
 
 ## License
