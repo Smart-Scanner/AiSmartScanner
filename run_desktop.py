@@ -9,7 +9,14 @@ app_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(app_dir)
 sys.path.insert(0, app_dir)
 
-import webview
+try:
+    import webview
+except ImportError:
+    raise SystemExit(
+        "\n"
+        "  Desktop dependencies missing!\n"
+        "  Run: pip install -r requirements-desktop.txt\n"
+    )
 import logzero
 
 log = logging.getLogger("desktop_launcher")

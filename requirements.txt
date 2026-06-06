@@ -30,7 +30,6 @@ pandas-ta>=0.3.14b0
 transformers>=4.40.0
 torch>=2.3.0
 psycopg2-binary>=2.9.0
-pywebview>=6.2.1
 
 # ── Performance (P2 TTL cache + P3 Gzip) ─────────────────
 cachetools>=5.3.0

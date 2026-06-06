@@ -144,21 +144,43 @@ Double-click `SmartScreener.lnk` or run `start_screener.bat`:
 
 ## Deployment
 
-### Docker
+### Railway (Production)
 
 ```bash
-docker build -t smart-screener .
-docker run -p 5050:5050 --env-file .env smart-screener
+# Requirements (no desktop dependencies)
+pip install -r requirements.txt
+
+# Procfile (auto-detected by Railway)
+web: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
 ```
 
-### Cloud Providers
+Required environment variables on Railway:
 
-| Provider | Recommended Setup |
-|----------|------------------|
-| **AWS** | EC2 t3.small + RDS PostgreSQL |
-| **DigitalOcean** | Droplet $12/mo + Managed DB |
-| **Vultr** | Cloud Compute + Managed DB |
-| **Oracle Cloud** | Always Free VM + Autonomous DB |
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | Supabase PostgreSQL connection string |
+| `ANGEL_API_KEY` | Angel One SmartAPI key |
+| `ANGEL_CLIENT_ID` | Angel One client ID |
+| `ANGEL_MPIN` | Angel One MPIN |
+| `ANGEL_TOTP_SECRET` | Angel One TOTP secret |
+| `FLASK_SECRET_KEY` | Flask session signing key |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
+
+### Desktop Mode (Local)
+
+```bash
+# Install with desktop GUI dependencies
+pip install -r requirements-desktop.txt
+
+# Launch native desktop window
+python run_desktop.py
+
+# Or run as web server only
+python app.py
+```
+
+### Other Cloud Providers
 
 See [DEPLOY.md](DEPLOY.md) for detailed deployment instructions.
 

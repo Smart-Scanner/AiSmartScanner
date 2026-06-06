@@ -802,8 +802,8 @@ def debug_macro_state():
 
 @api_bp.route("/api/stocks")
 def get_all_scanned_stocks():
-    """Return all scanned stocks."""
-    return jsonify({"stocks": db.load_results(TOP_N_RESULTS)})
+    """Return all scanned stocks (slimmed — heavy fields loaded via /api/stock/<symbol>)."""
+    return jsonify({"stocks": _slim_results(db.load_results(TOP_N_RESULTS))})
 
 
 @api_bp.route("/api/top-candidates")
