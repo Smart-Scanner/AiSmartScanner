@@ -429,6 +429,15 @@ def _build_scan_dict(cached: dict) -> dict:
     """Build scan sub-dict from cached DB result."""
     return {
         "score": cached["score"], "risk_score": cached["risk_score"],
+        # Factor sub-scores for drawer radar chart + confidence calc
+        "technical_score": cached.get("technical_score", 0),
+        "fundamental_score": cached.get("fundamental_score", 0),
+        "earnings_momentum_score": cached.get("earnings_momentum_score", 0),
+        "smart_money_score": cached.get("smart_money_score", 0),
+        "smart_money_100": cached.get("smart_money_100", 0),
+        "sector_rotation_score": cached.get("sector_rotation_score", 0),
+        "news_sentiment_score": cached.get("news_sentiment_score", 0),
+        "macro_score": cached.get("macro_score", 0),
         "risk_reward": cached["risk_reward"],
         "target_price": cached["target_price"], "target_pct": cached.get("target_pct"),
         "stop_loss": cached["stop_loss"], "stop_loss_pct": cached.get("stop_loss_pct"),
