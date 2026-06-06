@@ -568,6 +568,8 @@ def live_prices():
         ws_prices.update(rest_prices)
 
     result = {}
+    # Batch load all scan data in one query instead of N+1 per-symbol calls
+    scan_map = db.get_stocks_map(list(ws_prices.keys()))
     for sym, data in ws_prices.items():
         price = data.get("ltp", 0)
         if not price:
@@ -579,7 +581,7 @@ def live_prices():
             "change_pct": data.get("change_pct", 0),
             "volume": data.get("volume", 0), "last_update": data.get("last_update", ""),
         }
-        scan_data = db.get_stock(sym)
+        scan_data = scan_map.get(sym)
         if scan_data:
             entry["scan_price"] = scan_data.get("price")
         result[sym] = entry

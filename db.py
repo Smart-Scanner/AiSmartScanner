@@ -94,6 +94,25 @@ def pool_status() -> dict:
         "pg_cooldown_remaining_s": max(0, round(_pg_cooldown_until - time.time())),
     }
 
+def log_pool_health():
+    """Log connection pool metrics for observability."""
+    pool = _pg_pool
+    if pool is None:
+        return
+    try:
+        # psycopg2 ThreadedConnectionPool tracks _used and _pool internally
+        used = len(getattr(pool, '_used', {}))
+        idle = len(getattr(pool, '_pool', []))
+        maxconn = getattr(pool, 'maxconn', 0)
+        waiting = max(0, used - maxconn) if used > maxconn else 0
+        log.info("[DB POOL] active=%s idle=%s waiting=%s maxconn=%s", used, idle, waiting, maxconn)
+    except Exception:
+        pass
+
+# ─── Configurable batch size ───
+DB_BATCH_SIZE = int(os.getenv("DB_BATCH_SIZE", "250"))
+
+
 # ─── Type helpers ───
 
 def _to_native(val):
@@ -180,8 +199,18 @@ def execute_db(query: str, params=None, fetch: str = None):
                 conn.autocommit = True
                 query_pg = query.replace("?", "%s")
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    _t0 = time.perf_counter()
                     cur.execute(query_pg, params or ())
-                    return _collect_result(cur, fetch)
+                    result = _collect_result(cur, fetch)
+                    _dur_ms = (time.perf_counter() - _t0) * 1000
+                    # Tiered slow-query logging
+                    if _dur_ms > 1000:
+                        log.critical("[DB CRITICAL QUERY] %sms | %s", round(_dur_ms), query_pg[:150])
+                    elif _dur_ms > 200:
+                        log.error("[DB SLOW QUERY] %sms | %s", round(_dur_ms), query_pg[:150])
+                    elif _dur_ms > 50:
+                        log.warning("[DB SLOW QUERY] %sms | %s", round(_dur_ms), query_pg[:150])
+                    return result
             except Exception as exc:
                 if "PoolError" in type(exc).__name__ or "connection pool exhausted" in str(exc).lower():
                     # Pool exhausted — retry once after 50ms (connection likely freed)
@@ -1345,36 +1374,338 @@ def dlq_entry_count() -> int:
 
 # ─── Scan Results ───
 
+def _chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+def _bulk_upsert_pg(table_name, sql_template, rows, cursor):
+    """Execute chunked bulk UPSERT via execute_values with per-table timing."""
+    from psycopg2.extras import execute_values
+    total_rows = 0
+    for chunk in _chunks(rows, DB_BATCH_SIZE):
+        t0 = time.perf_counter()
+        execute_values(cursor, sql_template, chunk, page_size=DB_BATCH_SIZE)
+        dur = (time.perf_counter() - t0) * 1000
+        total_rows += len(chunk)
+        log.info("[UPSERT] table=%s duration=%sms rows=%s", table_name, round(dur), len(chunk))
+    return total_rows
+
 @timed("db_write_batch")
 def save_results(results: list[dict], meta: dict = None):
     """Save scan results to DB and populate normalized tables.
-    Phase 5: staleness guard + DLQ fallback on failure.
+
+    Deploy A.1: Bulk UPSERT rewrite.
+    - PostgreSQL: uses execute_values() with chunked batches (DB_BATCH_SIZE).
+    - SQLite fallback: preserved as emergency parachute.
+    - Warm staleness guard: single query pre-loads deep scan symbols.
+    - Per-table timing: [UPSERT] logs for each table.
+    - Transaction timing: [SAVE_RESULTS] total KPI.
+    - Scan metrics: [SCAN] processed/saved/skipped.
+    - Pool health: [DB POOL] active/idle/waiting.
     """
+    save_start = time.perf_counter()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     scan_date = datetime.now().strftime("%Y-%m-%d")
 
-    saved_count = 0
+    # ── Warm Staleness Guard (1 query) ──
+    deep_scanned_symbols = set()
+    try:
+        if is_postgresql() and not pg_cooldown_active():
+            rows = execute_db(
+                "SELECT symbol FROM scan_results WHERE scan_date = ? AND (data->>'scan_mode') = 'deep'",
+                (scan_date,), fetch="all"
+            )
+        else:
+            rows = execute_db(
+                "SELECT symbol FROM scan_results WHERE scan_date = ? AND json_extract(data, '$.scan_mode') = 'deep'",
+                (scan_date,), fetch="all"
+            )
+        deep_scanned_symbols = {row["symbol"] for row in (rows or [])}
+    except Exception:
+        pass  # proceed without guard if check fails
+
+    # ── Filter results: skip fast overwrites of deep scans ──
+    to_save = []
+    skipped = 0
     for r in results:
-        sym = r["symbol"]
-
-        # Phase 5: Staleness guard -- don't overwrite today's deep scan with fast scan
         new_mode = r.get("scan_mode", "fast")
-        if new_mode == "fast":
-            try:
-                existing = execute_db(
-                    "SELECT data FROM scan_results WHERE symbol = ? AND scan_date = ?",
-                    (sym, scan_date), fetch="one"
-                )
-                if existing:
-                    existing_data = _parse_data_column(existing["data"])
-                    if existing_data and existing_data.get("scan_mode") == "deep":
-                        log.debug("Staleness guard: skipping fast overwrite of deep scan for %s", sym)
-                        continue
-            except Exception:
-                pass  # proceed with write if check fails
+        if new_mode == "fast" and r["symbol"] in deep_scanned_symbols:
+            log.debug("Staleness guard: skipping fast overwrite of deep scan for %s", r["symbol"])
+            skipped += 1
+            continue
+        to_save.append(r)
 
+    if not to_save:
+        log.info("[SCAN] processed=%s saved=0 skipped=%s duration=%.1fs",
+                 len(results), skipped,
+                 (time.perf_counter() - save_start))
+        if meta:
+            for k, v in meta.items():
+                set_meta(k, v)
+        return
+
+    # ── Try PostgreSQL bulk path ──
+    if is_postgresql() and not pg_cooldown_active():
+        pool = _get_pg_pool()
+        if pool:
+            conn = None
+            try:
+                conn = pool.getconn()
+                conn.autocommit = False  # explicit transaction for atomicity
+                cursor = conn.cursor()
+
+                # ── Prepare batch data ──
+                scan_results_rows = []
+                score_history_rows = []
+                stocks_rows = []
+                sentiment_rows = []
+                technical_rows = []
+                fundamentals_rows = []
+                final_scores_rows = []
+                all_news_symbols = []
+                news_rows = []
+
+                for r in to_save:
+                    sym = r["symbol"]
+                    f = r.get("fundamentals", {})
+
+                    # 1. scan_results
+                    scan_results_rows.append((
+                        sym, json.dumps(r), r.get("score", 0),
+                        1 if r.get("high_conviction") else 0,
+                        r.get("sector", ""), scan_date, now
+                    ))
+
+                    # 2. score_history
+                    score_history_rows.append((
+                        sym, r.get("score", 0), r.get("price", 0.0),
+                        r.get("rsi"), scan_date
+                    ))
+
+                    # 3. stocks
+                    stocks_rows.append((
+                        sym, r.get("name", sym), r.get("sector", "Other"),
+                        f.get("industry", ""), now
+                    ))
+
+                    # 4. news — collect symbols and articles
+                    all_news_symbols.append(sym)
+                    gdelt_data = r.get("gdelt", {})
+                    articles = list(gdelt_data.get("articles", []))
+                    news_s = r.get("news_sentiment", {})
+                    for item in news_s.get("items", []):
+                        if item.get("source") == "marketaux":
+                            articles.append({
+                                "title": item.get("title", ""),
+                                "score": item.get("score", 0.0),
+                                "source": "marketaux",
+                                "age_h": 1.0
+                            })
+                    for art in articles[:10]:
+                        news_rows.append((
+                            sym, art.get("title", ""),
+                            art.get("url", ""), art.get("source", "GDELT"),
+                            art.get("age_h", 12.0), art.get("score", 0.0), now
+                        ))
+
+                    # 5. sentiment_scores
+                    sentiment_rows.append((
+                        sym, scan_date, gdelt_data.get("sentiment", 0.0),
+                        gdelt_data.get("spike", 1.0), gdelt_data.get("freshness", 0.0),
+                        r.get("news_sentiment_score", 0.0), now
+                    ))
+
+                    # 6. technical_indicators
+                    technical_rows.append((
+                        sym, scan_date, r.get("rsi"), r.get("adx"),
+                        r.get("macd_signal"), r.get("volume_ratio"),
+                        r.get("atr_pct"), r.get("stoch_k"), r.get("stoch_d"),
+                        r.get("pct_1w"), r.get("pct_2w"), r.get("pct_1m"),
+                        r.get("bb_position"), r.get("dist_from_high"),
+                        r.get("rs_vs_nifty"), r.get("vwap_position"),
+                        True if r.get("is_breakout") else False,
+                        True if r.get("vp_divergence") else False,
+                        r.get("weekly_trend", "flat"),
+                        True if r.get("below_ema200") else False,
+                        r.get("high_52w"), r.get("low_52w"),
+                        r.get("pullback_pct"), now
+                    ))
+
+                    # 7. fundamentals
+                    fundamentals_rows.append((
+                        sym, f.get("pe"), f.get("pb"), f.get("fwd_pe"),
+                        f.get("roe"), f.get("roa"), f.get("revenue_growth"),
+                        f.get("earnings_growth"), f.get("debt_to_equity"),
+                        f.get("promoter_pct"), f.get("market_cap"),
+                        f.get("free_cash_flow"), f.get("total_revenue"),
+                        f.get("capex"), f.get("eps_fwd"), f.get("eps_trail"),
+                        f.get("fund_score", 0), now
+                    ))
+
+                    # 8. final_scores
+                    final_scores_rows.append((
+                        sym, scan_date, r.get("news_sentiment_score", 0.0),
+                        r.get("news_spike_score", 0.0), r.get("technical_score", 0.0),
+                        r.get("fundamental_score", 0.0), r.get("macro_score", 0.0),
+                        r.get("marketaux_catalyst_score", 0.0),
+                        r.get("score", 0), r.get("grade", ""),
+                        True if r.get("high_conviction") else False,
+                        True if r.get("bear_play") else False,
+                        True if r.get("is_golden") else False, now
+                    ))
+
+                # ── Execute bulk UPSERTs ──
+
+                # 1. scan_results
+                _bulk_upsert_pg("scan_results", """
+                    INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at)
+                    VALUES %s
+                    ON CONFLICT(symbol) DO UPDATE SET
+                        data=EXCLUDED.data, score=EXCLUDED.score,
+                        high_conviction=EXCLUDED.high_conviction, sector=EXCLUDED.sector,
+                        scan_date=EXCLUDED.scan_date, updated_at=EXCLUDED.updated_at
+                """, scan_results_rows, cursor)
+
+                # 2. score_history
+                _bulk_upsert_pg("score_history", """
+                    INSERT INTO score_history (symbol, score, price, rsi, scan_date)
+                    VALUES %s
+                    ON CONFLICT(symbol, scan_date) DO UPDATE SET
+                        score=EXCLUDED.score, price=EXCLUDED.price, rsi=EXCLUDED.rsi
+                """, score_history_rows, cursor)
+
+                # 3. stocks
+                _bulk_upsert_pg("stocks", """
+                    INSERT INTO stocks (symbol, name, sector, industry, updated_at)
+                    VALUES %s
+                    ON CONFLICT(symbol) DO UPDATE SET
+                        name=EXCLUDED.name, sector=EXCLUDED.sector,
+                        industry=EXCLUDED.industry, updated_at=EXCLUDED.updated_at
+                """, stocks_rows, cursor)
+
+                # 4. news_articles — batch DELETE + bulk INSERT
+                if all_news_symbols:
+                    t0 = time.perf_counter()
+                    placeholders = ",".join(["%s"] * len(all_news_symbols))
+                    cursor.execute(
+                        f"DELETE FROM news_articles WHERE symbol IN ({placeholders})",
+                        all_news_symbols
+                    )
+                    dur = (time.perf_counter() - t0) * 1000
+                    log.info("[UPSERT] table=news_articles_delete duration=%sms rows=%s",
+                             round(dur), len(all_news_symbols))
+
+                if news_rows:
+                    _bulk_upsert_pg("news_articles", """
+                        INSERT INTO news_articles (symbol, title, url, source, age_hours, raw_score, scanned_at)
+                        VALUES %s
+                    """, news_rows, cursor)
+
+                # 5. sentiment_scores
+                _bulk_upsert_pg("sentiment_scores", """
+                    INSERT INTO sentiment_scores (symbol, scan_date, gdelt_sentiment, gdelt_spike, gdelt_freshness, final_sentiment_score, updated_at)
+                    VALUES %s
+                    ON CONFLICT(symbol, scan_date) DO UPDATE SET
+                        gdelt_sentiment=EXCLUDED.gdelt_sentiment, gdelt_spike=EXCLUDED.gdelt_spike,
+                        gdelt_freshness=EXCLUDED.gdelt_freshness, final_sentiment_score=EXCLUDED.final_sentiment_score,
+                        updated_at=EXCLUDED.updated_at
+                """, sentiment_rows, cursor)
+
+                # 6. technical_indicators
+                _bulk_upsert_pg("technical_indicators", """
+                    INSERT INTO technical_indicators (
+                        symbol, scan_date, rsi, adx, macd_signal, volume_ratio, atr_pct, stoch_k, stoch_d,
+                        pct_1w, pct_2w, pct_1m, bb_position, dist_from_high, rs_vs_nifty, vwap_position,
+                        is_breakout, vp_divergence, weekly_trend, below_ema200, high_52w, low_52w, pullback_pct, updated_at
+                    ) VALUES %s
+                    ON CONFLICT(symbol, scan_date) DO UPDATE SET
+                        rsi=EXCLUDED.rsi, adx=EXCLUDED.adx, macd_signal=EXCLUDED.macd_signal,
+                        volume_ratio=EXCLUDED.volume_ratio, atr_pct=EXCLUDED.atr_pct, stoch_k=EXCLUDED.stoch_k,
+                        stoch_d=EXCLUDED.stoch_d, pct_1w=EXCLUDED.pct_1w, pct_2w=EXCLUDED.pct_2w, pct_1m=EXCLUDED.pct_1m,
+                        bb_position=EXCLUDED.bb_position, dist_from_high=EXCLUDED.dist_from_high, rs_vs_nifty=EXCLUDED.rs_vs_nifty,
+                        vwap_position=EXCLUDED.vwap_position, is_breakout=EXCLUDED.is_breakout, vp_divergence=EXCLUDED.vp_divergence,
+                        weekly_trend=EXCLUDED.weekly_trend, below_ema200=EXCLUDED.below_ema200, high_52w=EXCLUDED.high_52w,
+                        low_52w=EXCLUDED.low_52w, pullback_pct=EXCLUDED.pullback_pct, updated_at=EXCLUDED.updated_at
+                """, technical_rows, cursor)
+
+                # 7. fundamentals
+                _bulk_upsert_pg("fundamentals", """
+                    INSERT INTO fundamentals (
+                        symbol, pe, pb, fwd_pe, roe, roa, revenue_growth, earnings_growth,
+                        debt_to_equity, promoter_pct, market_cap, free_cash_flow, total_revenue,
+                        capex, eps_fwd, eps_trail, fund_score, updated_at
+                    ) VALUES %s
+                    ON CONFLICT(symbol) DO UPDATE SET
+                        pe=EXCLUDED.pe, pb=EXCLUDED.pb, fwd_pe=EXCLUDED.fwd_pe, roe=EXCLUDED.roe, roa=EXCLUDED.roa,
+                        revenue_growth=EXCLUDED.revenue_growth, earnings_growth=EXCLUDED.earnings_growth,
+                        debt_to_equity=EXCLUDED.debt_to_equity, promoter_pct=EXCLUDED.promoter_pct,
+                        market_cap=EXCLUDED.market_cap, free_cash_flow=EXCLUDED.free_cash_flow,
+                        total_revenue=EXCLUDED.total_revenue, capex=EXCLUDED.capex, eps_fwd=EXCLUDED.eps_fwd,
+                        eps_trail=EXCLUDED.eps_trail, fund_score=EXCLUDED.fund_score, updated_at=EXCLUDED.updated_at
+                """, fundamentals_rows, cursor)
+
+                # 8. final_scores
+                _bulk_upsert_pg("final_scores", """
+                    INSERT INTO final_scores (
+                        symbol, scan_date, news_sentiment_score, news_spike_score, technical_score,
+                        fundamental_score, macro_score, marketaux_score, final_score, grade,
+                        high_conviction, bear_play, is_golden, updated_at
+                    ) VALUES %s
+                    ON CONFLICT(symbol, scan_date) DO UPDATE SET
+                        news_sentiment_score=EXCLUDED.news_sentiment_score, news_spike_score=EXCLUDED.news_spike_score,
+                        technical_score=EXCLUDED.technical_score, fundamental_score=EXCLUDED.fundamental_score,
+                        macro_score=EXCLUDED.macro_score, marketaux_score=EXCLUDED.marketaux_score,
+                        final_score=EXCLUDED.final_score, grade=EXCLUDED.grade,
+                        high_conviction=EXCLUDED.high_conviction, bear_play=EXCLUDED.bear_play,
+                        is_golden=EXCLUDED.is_golden, updated_at=EXCLUDED.updated_at
+                """, final_scores_rows, cursor)
+
+                # ── Commit transaction ──
+                conn.commit()
+                saved_count = len(to_save)
+
+                # ── Transaction timing ──
+                save_duration = (time.perf_counter() - save_start) * 1000
+                log.info("[SAVE_RESULTS] rows=%s duration=%sms", saved_count, round(save_duration))
+
+                # ── Scan metrics ──
+                log.info("[SCAN] processed=%s saved=%s skipped=%s duration=%.1fs",
+                         len(results), saved_count, skipped,
+                         save_duration / 1000)
+
+                # ── Pool health ──
+                log_pool_health()
+
+                # ── Meta ──
+                if meta:
+                    for k, v in meta.items():
+                        set_meta(k, v)
+
+                return  # PG bulk path succeeded
+
+            except Exception as exc:
+                log.error("Bulk UPSERT failed: %s — falling back to per-row SQLite", exc)
+                if conn:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                # Fall through to SQLite per-row path
+            finally:
+                if conn:
+                    try:
+                        conn.autocommit = True  # restore default
+                        pool.putconn(conn)
+                    except Exception:
+                        pass
+
+    # ── SQLite fallback path (per-row, kept as emergency parachute) ──
+    saved_count = 0
+    for r in to_save:
+        sym = r["symbol"]
         try:
-            # 1. Main scan results table (JSON)
+            # 1. scan_results
             execute_db("""
                 INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1404,7 +1735,7 @@ def save_results(results: list[dict], meta: dict = None):
             # 4. news_articles
             execute_db("DELETE FROM news_articles WHERE symbol=?", (sym,))
             gdelt_data = r.get("gdelt", {})
-            articles = gdelt_data.get("articles", [])
+            articles = list(gdelt_data.get("articles", []))
             news_s = r.get("news_sentiment", {})
             for item in news_s.get("items", []):
                 if item.get("source") == "marketaux":
@@ -1454,6 +1785,7 @@ def save_results(results: list[dict], meta: dict = None):
             ))
 
             # 7. fundamentals
+            f = r.get("fundamentals", {})
             execute_db("""
                 INSERT INTO fundamentals (
                     symbol, pe, pb, fwd_pe, roe, roa, revenue_growth, earnings_growth,
@@ -1498,11 +1830,16 @@ def save_results(results: list[dict], meta: dict = None):
             log.warning("DB write failed for %s: %s -- queueing to DLQ", sym, exc)
             queue_deferred_write([r])
 
+    # ── Transaction timing (SQLite path) ──
+    save_duration = (time.perf_counter() - save_start) * 1000
+    log.info("[SAVE_RESULTS] rows=%s duration=%sms (sqlite_fallback)", saved_count, round(save_duration))
+    log.info("[SCAN] processed=%s saved=%s skipped=%s duration=%.1fs",
+             len(results), saved_count, skipped, save_duration / 1000)
+
     if meta:
         for k, v in meta.items():
             set_meta(k, v)
 
-    log.info("Saved %d/%d results to DB", saved_count, len(results))
 
 def save_macro_events(events: list):
     """Save Forex Factory macro events into the macro_events table."""
