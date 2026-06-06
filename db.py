@@ -31,12 +31,20 @@ DB_PATH = Path(__file__).parent / "cache" / "screener.db"
 DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
 print("DATABASE_URL EXISTS:", bool(DATABASE_URL))
 
-print("DATABASE_URL EXISTS:", bool(DATABASE_URL))
-
 if DATABASE_URL:
     print("DATABASE_URL STARTS WITH POSTGRES:",
           DATABASE_URL.startswith(("postgres://", "postgresql://")))
     print("DATABASE_URL LENGTH:", len(DATABASE_URL))
+
+
+def is_postgresql() -> bool:
+    """Check if PostgreSQL is configured."""
+    return bool(
+        DATABASE_URL and (
+            DATABASE_URL.startswith("postgres://")
+            or DATABASE_URL.startswith("postgresql://")
+        )
+    )
 
 # ─── ThreadedConnectionPool (Phase 1) ───
 
