@@ -74,24 +74,26 @@
 ### 1. Environment Variables
 
 ```bash
-# Required
+# Angel One SmartAPI (required for market data)
 ANGEL_API_KEY=your_angel_one_api_key
 ANGEL_CLIENT_ID=your_client_id
-ANGEL_PASSWORD=your_password
-ANGEL_TOTP_KEY=your_totp_secret
+ANGEL_MPIN=your_mpin
+ANGEL_TOTP_SECRET=your_totp_secret
 
-# Database (pick one)
-SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_KEY=your_supabase_key
-# OR use SQLite (default, no config needed)
+# Database — PostgreSQL connection string (Supabase Transaction Pooler recommended)
+# Use port 6543 (transaction pooler), NOT 5432 (session pooler)
+# If not set, falls back to local SQLite automatically
+DATABASE_URL=postgresql://user:pass@db.xxx.supabase.co:6543/postgres
+
+# Flask session signing
+FLASK_SECRET_KEY=your_flask_secret_key
+
+# Google OAuth (required for login)
+GOOGLE_CLIENT_ID=your_google_oauth_id
+GOOGLE_CLIENT_SECRET=your_google_oauth_secret
 
 # Optional
 MARKETAUX_API_KEY=your_marketaux_key
-GOOGLE_CLIENT_ID=your_google_oauth_id
-GOOGLE_CLIENT_SECRET=your_google_oauth_secret
-SECRET_KEY=your_flask_secret
-LOCAL_USERNAME=admin
-LOCAL_PASSWORD=admin123
 ```
 
 ### 2. Install & Run
