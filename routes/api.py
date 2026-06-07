@@ -147,34 +147,42 @@ def force_scan():
 @api_bp.route("/api/status")
 def scan_status():
     def _compute():
+        t0 = time.time()
         state = scan_state.status()
-        hc_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE high_conviction = 1", fetch="count")
-        
-        # Use PG syntax when available and healthy; fallback to SQLite-safe syntax
-        # to avoid crashes when execute_db silently falls back to SQLite
+
+        # Phase C: Single aggregation query replaces 4 separate COUNT queries
+        # Uses COALESCE to handle empty tables safely (prevents NULL returns)
         use_pg = db.is_postgresql() and not db.pg_cooldown_active()
         try:
             if use_pg:
-                golden_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE (data->>'is_golden')::text = 'true' OR (data->>'is_golden')::text = '1'", fetch="count")
+                agg = db.execute_db("""
+                    SELECT
+                        COALESCE(SUM(high_conviction), 0) as hc_count,
+                        COALESCE(SUM(CASE WHEN (data->>'is_golden')::text IN ('true','1') THEN 1 ELSE 0 END), 0) as golden_count,
+                        COALESCE(SUM(CASE WHEN (data->>'change_pct')::numeric > 0 OR (data->>'price_change_pct')::numeric > 0 THEN 1 ELSE 0 END), 0) as adv_count,
+                        COALESCE(SUM(CASE WHEN (data->>'change_pct')::numeric < 0 OR (data->>'price_change_pct')::numeric < 0 THEN 1 ELSE 0 END), 0) as dec_count
+                    FROM scan_results
+                """, fetch="one")
             else:
                 raise Exception("use sqlite")
         except Exception:
-            golden_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE json_extract(data, '$.is_golden') = 1 OR json_extract(data, '$.is_golden') = 'true'", fetch="count")
-        try:
-            if use_pg:
-                adv_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE (data->>'change_pct')::numeric > 0 OR (data->>'price_change_pct')::numeric > 0", fetch="count")
-            else:
-                raise Exception("use sqlite")
-        except Exception:
-            adv_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE CAST(json_extract(data, '$.change_pct') AS REAL) > 0 OR CAST(json_extract(data, '$.price_change_pct') AS REAL) > 0", fetch="count")
-        try:
-            if use_pg:
-                dec_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE (data->>'change_pct')::numeric < 0 OR (data->>'price_change_pct')::numeric < 0", fetch="count")
-            else:
-                raise Exception("use sqlite")
-        except Exception:
-            dec_count = db.execute_db("SELECT COUNT(*) FROM scan_results WHERE CAST(json_extract(data, '$.change_pct') AS REAL) < 0 OR CAST(json_extract(data, '$.price_change_pct') AS REAL) < 0", fetch="count")
-            
+            agg = db.execute_db("""
+                SELECT
+                    COALESCE(SUM(high_conviction), 0) as hc_count,
+                    COALESCE(SUM(CASE WHEN json_extract(data, '$.is_golden') IN (1, 'true') THEN 1 ELSE 0 END), 0) as golden_count,
+                    COALESCE(SUM(CASE WHEN CAST(json_extract(data, '$.change_pct') AS REAL) > 0 OR CAST(json_extract(data, '$.price_change_pct') AS REAL) > 0 THEN 1 ELSE 0 END), 0) as adv_count,
+                    COALESCE(SUM(CASE WHEN CAST(json_extract(data, '$.change_pct') AS REAL) < 0 OR CAST(json_extract(data, '$.price_change_pct') AS REAL) < 0 THEN 1 ELSE 0 END), 0) as dec_count
+                FROM scan_results
+            """, fetch="one")
+
+        hc_count = agg.get("hc_count", 0) if isinstance(agg, dict) else 0
+        golden_count = agg.get("golden_count", 0) if isinstance(agg, dict) else 0
+        adv_count = agg.get("adv_count", 0) if isinstance(agg, dict) else 0
+        dec_count = agg.get("dec_count", 0) if isinstance(agg, dict) else 0
+
+        db_time = round((time.time() - t0) * 1000)
+        log.info("[STATUS PERF] cache_hit=false | db_time=%dms | query_count=2 | total_time=%dms", db_time, db_time)
+
         return {
             "scanning": state["scanning"],
             "progress": state["progress"],
