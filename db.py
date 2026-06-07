@@ -235,13 +235,13 @@ def execute_db(query: str, params=None, fetch: str = None):
                     cur.execute(query_pg, params or ())
                     result = _collect_result(cur, fetch)
                     _dur_ms = (time.perf_counter() - _t0) * 1000
-                    # Tiered slow-query logging
+                    # Phase F: Tiered slow-query logging + pool telemetry
                     if _dur_ms > 1000:
-                        log.critical("[DB CRITICAL QUERY] %sms | %s", round(_dur_ms), query_pg[:150])
+                        log.critical("[SLOW QUERY] query=%.150s | duration=%dms", query_pg, round(_dur_ms))
+                        log_pool_health()
                     elif _dur_ms > 200:
-                        log.error("[DB SLOW QUERY] %sms | %s", round(_dur_ms), query_pg[:150])
-                    elif _dur_ms > 50:
-                        log.warning("[DB SLOW QUERY] %sms | %s", round(_dur_ms), query_pg[:150])
+                        log.warning("[DB SLOW QUERY] %dms | %s", round(_dur_ms), query_pg[:150])
+                        log_pool_health()
                     return result
             except Exception as exc:
                 if "PoolError" in type(exc).__name__ or "connection pool exhausted" in str(exc).lower():
@@ -284,6 +284,9 @@ def execute_db(query: str, params=None, fetch: str = None):
                     except Exception:
                         pass
 
+    # Phase G: SQLite fallback telemetry
+    log.warning("[SQLITE FALLBACK USED] query=%.100s", query)
+    counters.inc("sqlite_fallback_used")
     return _execute_sqlite(query, params, fetch)
 
 # ─── Database Initialisation ───

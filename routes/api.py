@@ -159,8 +159,8 @@ def scan_status():
                     SELECT
                         COALESCE(SUM(high_conviction), 0) as hc_count,
                         COALESCE(SUM(CASE WHEN (data->>'is_golden')::text IN ('true','1') THEN 1 ELSE 0 END), 0) as golden_count,
-                        COALESCE(SUM(CASE WHEN (data->>'change_pct')::numeric > 0 OR (data->>'price_change_pct')::numeric > 0 THEN 1 ELSE 0 END), 0) as adv_count,
-                        COALESCE(SUM(CASE WHEN (data->>'change_pct')::numeric < 0 OR (data->>'price_change_pct')::numeric < 0 THEN 1 ELSE 0 END), 0) as dec_count
+                        COALESCE(SUM(CASE WHEN COALESCE(NULLIF(data->>'change_pct',''),'0')::numeric > 0 OR COALESCE(NULLIF(data->>'price_change_pct',''),'0')::numeric > 0 THEN 1 ELSE 0 END), 0) as adv_count,
+                        COALESCE(SUM(CASE WHEN COALESCE(NULLIF(data->>'change_pct',''),'0')::numeric < 0 OR COALESCE(NULLIF(data->>'price_change_pct',''),'0')::numeric < 0 THEN 1 ELSE 0 END), 0) as dec_count
                     FROM scan_results
                 """, fetch="one")
             else:
@@ -200,6 +200,7 @@ def scan_status():
 
 @api_bp.route("/api/search-list")
 def get_search_list():
+    t0 = time.time()
     def _compute():
         results = db.get_all_results()
         search_list = []
@@ -214,6 +215,8 @@ def get_search_list():
             })
         return search_list
     data = cache_layer.get_or_compute(cache_layer.search_cache, "search-list", _compute)
+    total_ms = round((time.time() - t0) * 1000)
+    log.info("[SEARCH PERF] total_time=%dms", total_ms)
     return jsonify(data)
 
 

@@ -443,6 +443,16 @@ def run_full_scan():
         hc_count = sum(1 for r in results if r.get("high_conviction"))
         log.info("Done in %.0fs! %d scored, %d HC", elapsed, len(results), hc_count)
 
+        # Phase F: Structured scan performance telemetry
+        _scan_id = getattr(scan_state, "_scan_id", None) or "unknown"
+        _rate = round(len(results) / elapsed, 2) if elapsed > 0 else 0
+        log.info(
+            "[SCAN PERF] scan_id=%s | symbols=%d | results_saved=%d | failed=%d | "
+            "duration=%dms | rate=%.2f/sec",
+            _scan_id, total, len(results), total - len(results),
+            round(elapsed * 1000), _rate
+        )
+
         # Persist timing metrics baseline
         try:
             import json
