@@ -41,6 +41,12 @@ _META_TTL = 30           # seconds — stale reads acceptable for display-only d
 # ── Phase 1C: slim_data — pre-stripped JSON for list/card views ─────────
 # These heavy fields account for ~92% of the /api/results payload.
 # slim_data stores everything EXCEPT these fields, reducing 3.6MB → ~300KB.
+# ╔══════════════════════════════════════════════════════════════╗
+# ║ IMPORTANT: Whenever a new large field is added to scan      ║
+# ║ result payloads, _HEAVY_FIELDS must be reviewed and updated.║
+# ║ Failure to do so may silently increase dashboard payload.   ║
+# ║ Slim payload must remain significantly smaller than full.   ║
+# ╚══════════════════════════════════════════════════════════════╝
 _HEAVY_FIELDS = frozenset({
     "chart_data", "signals", "fundamentals", "trade", "order_book",
     "seasonal", "news_sentiment", "support_resistance", "sector_rotation",
@@ -710,6 +716,24 @@ def init_db():
     _init_sqlite()
 
     auto_clear_daily_cache()
+
+    # ── Phase B: One-time slim_data backfill on startup ──────────────────
+    MAX_BACKFILL_ROWS_PER_STARTUP = 1000
+    try:
+        row = execute_db("SELECT COUNT(*) as count FROM scan_results WHERE slim_data IS NULL", fetch="one")
+        rows_needing_backfill = row["count"] if row else 0
+        if rows_needing_backfill > MAX_BACKFILL_ROWS_PER_STARTUP:
+            log.warning("[SLIM BACKFILL] Skipping startup backfill: %d rows exceeds safety limit of %d. Requires manual maintenance run.",
+                        rows_needing_backfill, MAX_BACKFILL_ROWS_PER_STARTUP)
+        elif rows_needing_backfill > 0:
+            backfilled = backfill_missing_slim_data()
+            log.info("[SLIM BACKFILL] Startup maintenance: backfilled %d rows", backfilled)
+        else:
+            log.info("[SLIM BACKFILL] No rows need backfill")
+    except Exception as exc:
+        log.warning("[SLIM BACKFILL] Startup backfill failed (non-fatal): %s", exc)
+
+    log_slim_coverage()
 
 
 def _init_sqlite():
@@ -1984,6 +2008,8 @@ def save_results(results: list[dict], meta: dict = None):
         for k, v in meta.items():
             set_meta(k, v)
 
+    log_slim_coverage()
+
 
 def save_macro_events(events: list):
     """Save Forex Factory macro events into the macro_events table."""
@@ -2147,6 +2173,46 @@ def _ensure_trade_populated(r):
     except Exception as e:
         log.warning("Fallback trade generation failed: %s", e)
     return r
+
+
+# ── Phase B: slim_data backfill & coverage helpers ───────────────────────
+_SLIM_BACKFILL_BATCH_SIZE = int(os.getenv("SLIM_BACKFILL_BATCH_SIZE", "50"))
+
+
+def log_slim_coverage():
+    """Log current slim_data coverage ratio."""
+    try:
+        row = execute_db("SELECT COUNT(*) as total, COUNT(slim_data) as slim FROM scan_results", fetch="one")
+        if row:
+            total = row.get("total", 0) if isinstance(row, dict) else 0
+            slim = row.get("slim", 0) if isinstance(row, dict) else 0
+            pct = round((slim / total * 100)) if total > 0 else 100
+            log.info("[SLIM COVERAGE] %d/%d (%d%%)", slim, total, pct)
+    except Exception:
+        pass
+
+
+def backfill_missing_slim_data() -> int:
+    """One-time backfill: populate slim_data for rows where it's NULL.
+    Uses _build_slim(). Batch processing. Idempotent. Safe re-run."""
+    rows = execute_db("SELECT symbol, data FROM scan_results WHERE slim_data IS NULL", fetch="all")
+    if not rows:
+        return 0
+    backfilled = 0
+    for row in rows:
+        try:
+            raw_data = row["data"] if isinstance(row, dict) else row[1]
+            parsed = _parse_data_column(raw_data)
+            slim_val = _build_slim(parsed) if parsed else None
+            if slim_val:
+                sym = row["symbol"] if isinstance(row, dict) else row[0]
+                execute_db("UPDATE scan_results SET slim_data=? WHERE symbol=?", (slim_val, sym))
+                backfilled += 1
+        except Exception as exc:
+            log.warning("[SLIM BACKFILL] Failed for row: %s", exc)
+    log.info("[SLIM BACKFILL] backfilled %d/%d rows", backfilled, len(rows))
+    return backfilled
+
 
 def _parse_data_column(val):
     if not val:
