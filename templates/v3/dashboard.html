@@ -198,6 +198,8 @@
 <script>
 const loadingEl = document.getElementById('dashboardLoading');
 const contentEl = document.getElementById('dashboardContent');
+let _breadthChart = null;
+let _breadthObserver = null;
 
 function setLoadStep(step) {
     for (let i = 1; i <= 4; i++) {
@@ -312,7 +314,7 @@ async function loadPageData() {
                     </div>
                     <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
                         ${s.target_price ? `<span style="font-size:11px;color:var(--text-muted)">Target \u20B9${s.target_price.toFixed(0)}</span>` : ''}
-                        ${s.risk_reward ? `<span style="font-size:11px;color:var(--text-muted)">R:R ${s.risk_reward.toFixed(1)}</span>` : ''}
+                        ${s.risk_reward ? `<span style="font-size:11px;color:var(--text-muted)">R:R 1:${s.risk_reward.toFixed(1)}</span>` : ''}
                         ${s.is_golden ? '<span class="v3-signal-pill golden" style="font-size:10px;padding:1px 6px">&#9733; Golden</span>' : ''}
                         ${s.high_conviction ? '<span class="v3-signal-pill hc" style="font-size:10px;padding:1px 6px">&#9889; HC</span>' : ''}
                     </div></div>`;
@@ -323,16 +325,19 @@ async function loadPageData() {
                 document.getElementById('briefBestOpp').textContent = `${best.symbol} (Score ${best.score}, Confidence ${Math.round(bConf)}%) " ${sigText((best.signals||[])[0]) || 'Top ranked'}`;
             }
 
-            // P6: Lazy load breadth chart
+            // P6: Lazy load breadth chart (with lifecycle cleanup)
             const bCtx = document.getElementById('breadthChart');
             if (bCtx && typeof Chart !== 'undefined') {
-                const obs = new IntersectionObserver((entries) => {
+                // Destroy previous chart and observer to prevent accumulation on refresh
+                if (_breadthChart) { _breadthChart.destroy(); _breadthChart = null; }
+                if (_breadthObserver) { _breadthObserver.disconnect(); _breadthObserver = null; }
+                _breadthObserver = new IntersectionObserver((entries) => {
                     if (entries[0].isIntersecting) {
-                        new Chart(bCtx, { type:'bar', data:{labels:['Advances','Declines','Unchanged'], datasets:[{data:[adv,dec,unch], backgroundColor:['#10B981','#EF4444','#64748B'], borderRadius:4, barThickness:28}]}, options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false},ticks:{color:'#64748B',font:{size:10,weight:600}}},y:{display:false}}} });
-                        obs.disconnect();
+                        _breadthChart = new Chart(bCtx, { type:'bar', data:{labels:['Advances','Declines','Unchanged'], datasets:[{data:[adv,dec,unch], backgroundColor:['#10B981','#EF4444','#64748B'], borderRadius:4, barThickness:28}]}, options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false},ticks:{color:'#64748B',font:{size:10,weight:600}}},y:{display:false}}} });
+                        _breadthObserver.disconnect();
                     }
                 }, {threshold:0.1});
-                obs.observe(bCtx);
+                _breadthObserver.observe(bCtx);
             }
         } else {
             document.getElementById('briefSummary').textContent = `Regime: ${status.market_regime||'Unknown'}. No scan results yet.`;

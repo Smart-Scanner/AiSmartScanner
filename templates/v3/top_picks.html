@@ -329,7 +329,7 @@ function getRankReasons(s) {
     if (sm100 > 70) reasons.push('Smart Money Accumulation');
     if (sect100 > 70) reasons.push('Sector Leader');
     if (s.high_conviction) reasons.push('High Conviction');
-    if ((s.risk_reward || 0) > 2.0) reasons.push(`Risk Reward ${(s.risk_reward || 0).toFixed(1)}`);
+    if ((s.risk_reward || 0) > 2.0) reasons.push(`Risk Reward 1:${(s.risk_reward || 0).toFixed(1)}`);
     if (s.is_breakout) reasons.push('Breakout Pattern');
     if (s.is_golden) reasons.push('Golden Stock');
     const fund100 = Math.min(100, (s.fundamental_score || 0) / 10 * 100);
@@ -395,7 +395,7 @@ function renderCard(s, rank) {
     const cl = confLevel(conf);
     const badges = getOpportunityBadges(s);
     const inWL = isInWatchlist(s.symbol);
-    const rr = (s.risk_reward || 0).toFixed(1);
+    const rr = (s.risk_reward || 0) > 0 ? '1:' + (s.risk_reward || 0).toFixed(1) : '--';
     const target = s.target_price ? '\u20b9' + s.target_price.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
     const sl = s.stop_loss ? '\u20b9' + s.stop_loss.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
 
@@ -419,7 +419,7 @@ function renderCard(s, rank) {
         <div class="tp-card-metrics">
             <div class="tp-card-metric">
                 <div class="tp-card-metric-label">R:R</div>
-                <div class="tp-card-metric-value">${rr}:1</div>
+                <div class="tp-card-metric-value">${rr}</div>
             </div>
             <div class="tp-card-metric">
                 <div class="tp-card-metric-label">Target</div>
@@ -446,7 +446,7 @@ function renderCompactRow(s, rank) {
         <td>${s.symbol}</td>
         <td><span class="v3-score ${scoreClass(s.score)}" style="font-size:12px;padding:2px 8px">${s.score}</span></td>
         <td><span class="tp-conf ${cl}" style="font-size:10px;padding:2px 8px"><span class="dot"></span> ${conf}% ${confLabel(conf)}</span></td>
-        <td style="font-family:'JetBrains Mono',monospace">${(s.risk_reward || 0).toFixed(1)}:1</td>
+        <td style="font-family:'JetBrains Mono',monospace">${(s.risk_reward || 0) > 0 ? '1:' + (s.risk_reward || 0).toFixed(1) : '--'}</td>
         <td style="font-family:'JetBrains Mono',monospace">\u20b9${(s.price || 0).toLocaleString('en-IN', {maximumFractionDigits:2})}</td>
         <td>${s.sector || 'Other'}</td>
     </tr>`;

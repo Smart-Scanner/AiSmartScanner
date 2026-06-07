@@ -57,10 +57,91 @@ _HEAVY_FIELDS = frozenset({
 })
 _DB_USE_SLIM = os.getenv("DB_USE_SLIM", "true").lower() == "true"
 
+# ── Phase 0.5: Data Integrity — required fields for valid scan results ──────
+_REQUIRED_FIELDS = frozenset({"score", "sector", "price"})
+_RECOMMENDED_FIELDS = frozenset({"risk_reward", "target_price", "stop_loss", "weekly_trend", "trade"})
+
+
+def validate_scan_result(stock: dict) -> tuple[bool, list[str]]:
+    """Validate a single scan result has all critical fields.
+    Returns (is_valid, list_of_issues).
+    """
+    issues = []
+    if not isinstance(stock, dict):
+        return False, ["not a dict"]
+    for f in _REQUIRED_FIELDS:
+        if f not in stock or stock[f] is None:
+            issues.append(f"missing required: {f}")
+    for f in _RECOMMENDED_FIELDS:
+        if f not in stock or stock[f] is None:
+            issues.append(f"missing recommended: {f}")
+    # trade object should have entry_low at minimum
+    trade = stock.get("trade")
+    if trade and isinstance(trade, dict):
+        if "entry_low" not in trade:
+            issues.append("trade missing entry_low")
+    elif "trade" in _RECOMMENDED_FIELDS:
+        pass  # already flagged above
+    is_valid = not any("missing required" in i for i in issues)
+    return is_valid, issues
+
+
+def run_data_integrity_audit():
+    """Startup audit: validate all scan results in DB. Logs summary."""
+    try:
+        rows = execute_db("SELECT data FROM scan_results LIMIT 2000", fetch="all")
+        if not rows:
+            log.info("[DATA INTEGRITY] No scan results to audit")
+            return
+        valid = 0
+        invalid = 0
+        issues_summary = {}  # field -> count
+        for row in rows:
+            r = _parse_data_column(row.get("data"))
+            if not r:
+                invalid += 1
+                continue
+            is_valid, issues = validate_scan_result(r)
+            if is_valid:
+                valid += 1
+            else:
+                invalid += 1
+            for issue in issues:
+                issues_summary[issue] = issues_summary.get(issue, 0) + 1
+        log.info("[DATA INTEGRITY] valid=%d invalid=%d total=%d", valid, invalid, valid + invalid)
+        if issues_summary:
+            top_issues = sorted(issues_summary.items(), key=lambda x: -x[1])[:10]
+            for issue, count in top_issues:
+                log.warning("[DATA INTEGRITY]   %s: %d stocks", issue, count)
+    except Exception as exc:
+        log.warning("[DATA INTEGRITY] Audit failed (non-fatal): %s", exc)
+
 
 def _build_slim(r: dict) -> str:
-    """Build slim JSON string from a result dict, stripping heavy fields."""
-    return json.dumps({k: v for k, v in r.items() if k not in _HEAVY_FIELDS})
+    """Build slim JSON string from a result dict, stripping heavy fields.
+
+    Extracts a compact trade_summary per the Trade Contract Matrix:
+    entry_low, entry_high, stop_loss, target1, target2, target3,
+    risk_reward, booking_plan, target_1, target_2.
+    """
+    slim = {k: v for k, v in r.items() if k not in _HEAVY_FIELDS}
+    trade = r.get("trade")
+    if isinstance(trade, dict):
+        trade_summary = {
+            "entry_low":    trade.get("entry_low"),
+            "entry_high":   trade.get("entry_high"),
+            "stop_loss":    trade.get("stop_loss"),
+            "target1":      trade.get("target1"),
+            "target2":      trade.get("target2"),
+            "target3":      trade.get("target3"),
+            "target_1":     trade.get("target_1") or trade.get("target1"),
+            "target_2":     trade.get("target_2") or trade.get("target2"),
+            "risk_reward":  trade.get("risk_reward"),
+            "booking_plan": trade.get("booking_plan"),
+        }
+        # Keep compact: drop None values
+        slim["trade_summary"] = {k: v for k, v in trade_summary.items() if v is not None}
+    return json.dumps(slim)
 
 
 def is_postgresql() -> bool:
@@ -244,7 +325,17 @@ def execute_db(query: str, params=None, fetch: str = None):
                         log_pool_health()
                     return result
             except Exception as exc:
-                if "PoolError" in type(exc).__name__ or "connection pool exhausted" in str(exc).lower():
+                exc_str = str(exc).lower()
+                is_connection_error = (
+                    "PoolError" in type(exc).__name__ or 
+                    "connection pool exhausted" in exc_str or
+                    "connection" in exc_str or 
+                    "terminating" in exc_str or 
+                    "closed" in exc_str or
+                    "operationalerror" in type(exc).__name__.lower()
+                )
+                
+                if "PoolError" in type(exc).__name__ or "connection pool exhausted" in exc_str:
                     # Pool exhausted — retry once after 50ms (connection likely freed)
                     conn = None  # no connection to return
                     time.sleep(0.05)
@@ -265,8 +356,8 @@ def execute_db(query: str, params=None, fetch: str = None):
                                 pass
                             conn = None
                         # fall through to SQLite (no cooldown — pool is fine, just busy)
-                else:
-                    log.error("PG execute failed: %s | Query: %.200s", exc, query)
+                elif is_connection_error:
+                    log.error("PG connection error: %s | Query: %.200s", exc, query)
                     counters.inc("db_failures")
                     _pg_cooldown_until = time.time() + 60
                     # Destroy the failed connection so the pool doesn't reuse it
@@ -277,6 +368,18 @@ def execute_db(query: str, params=None, fetch: str = None):
                             pass
                         conn = None
                     # fall through to SQLite
+                else:
+                    # Query syntax error, missing column, or data error
+                    # Do NOT trigger global cooldown, just log and fallback for this specific query
+                    log.error("PG query error (syntax/data): %s | Query: %.200s", exc, query)
+                    counters.inc("db_failures")
+                    if conn:
+                        try:
+                            pool.putconn(conn)
+                        except Exception:
+                            pass
+                        conn = None
+                    # fall through to SQLite without triggering cooldown
             finally:
                 if conn:
                     try:
@@ -654,6 +757,16 @@ def init_db():
                     CREATE INDEX IF NOT EXISTS idx_paper_trades_model ON paper_trades(model_version);
                 """)
 
+                # Sprint 1 Phase 1: Functional indexes for golden/breakout JSONB queries
+                try:
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_scan_results_golden ON scan_results(((data->>'is_golden')::text)) WHERE (data->>'is_golden')::text IN ('true','1');")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_scan_results_breakout ON scan_results(((data->>'is_breakout')::text)) WHERE (data->>'is_breakout')::text IN ('true','1');")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_score_history_date ON score_history(scan_date DESC);")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_news_articles_date ON news_articles(scanned_at DESC);")
+                    log.info("Sprint 1: Functional indexes for golden/breakout created")
+                except Exception as e:
+                    log.warning("Sprint 1: Functional index creation failed (non-fatal): %s", e)
+
                 # Phase 1C: slim_data column (safe ALTER — no-op if exists)
                 try:
                     cur.execute("ALTER TABLE scan_results ADD COLUMN IF NOT EXISTS slim_data JSONB;")
@@ -737,6 +850,12 @@ def init_db():
         log.warning("[SLIM BACKFILL] Startup backfill failed (non-fatal): %s", exc)
 
     log_slim_coverage()
+
+    # ── Phase 0.5: Data Integrity Audit on startup ───────────────────────
+    try:
+        run_data_integrity_audit()
+    except Exception as exc:
+        log.warning("[DATA INTEGRITY] Startup audit failed (non-fatal): %s", exc)
 
 
 def _init_sqlite():
@@ -1170,7 +1289,12 @@ _SCAN_LOCK_TIMEOUT_MIN = 30  # stale scan recovery threshold
 class ScanState:
     """DB-backed scan state. Single source of truth for scan progress.
     Uses current_scan_state (single row, O(1) reads) + scan_runs (history).
+
+    Sprint 1 Phase 1: Added memory cache for is_scanning (2s TTL)
+    to eliminate redundant DB queries from /api/status polling.
     """
+    _is_scanning_cache = None  # (bool, timestamp)
+    _IS_SCANNING_TTL = 2.0     # seconds
 
     def start(self, total: int, mode: str = "manual") -> str:
         """Start a new scan. Returns scan_id."""
@@ -1190,6 +1314,7 @@ class ScanState:
         """, (scan_id, mode, now, total, now))
         self._scan_id = scan_id
         self._total = total
+        ScanState._is_scanning_cache = (True, time.time())  # Sprint 1: immediate cache update
         return scan_id
 
     def update(self, **kwargs):
@@ -1215,8 +1340,17 @@ class ScanState:
             )
 
     def set_progress(self, value: int):
-        """Convenience: update processed_count."""
-        self.update(processed_count=value)
+        """Convenience: update processed_count.
+
+        Sprint 1 Phase 1: Batched writes — only writes to DB every 25 stocks
+        or on the final stock. Reduces DB writes from ~611 to ~25 per scan.
+        """
+        total = getattr(self, '_total', 0)
+        # Write every 25 stocks, on first, or on last
+        if value == 1 or value == total or value % 25 == 0:
+            self.update(processed_count=value)
+            # Update memory cache to reflect we're still scanning
+            ScanState._is_scanning_cache = (True, time.time())
 
     def complete(self, success: bool = True, error_message: str = ""):
         """Mark scan as complete."""
@@ -1243,6 +1377,7 @@ class ScanState:
             WHERE id=1
         """, (now,))
         self._scan_id = None
+        ScanState._is_scanning_cache = (False, time.time())  # Sprint 1: immediate cache update
 
     def finish(self):
         """Alias for complete(success=True). Backward compat with old ScanState."""
@@ -1250,9 +1385,17 @@ class ScanState:
 
     @property
     def is_scanning(self) -> bool:
+        # Sprint 1 Phase 1: Memory cache (2s TTL) to avoid 2 DB queries per call
+        cached = ScanState._is_scanning_cache
+        if cached is not None:
+            val, ts = cached
+            if (time.time() - ts) < ScanState._IS_SCANNING_TTL:
+                return val
         self._recover_stale()
         row = execute_db("SELECT status FROM current_scan_state WHERE id=1", fetch="one")
-        return row["status"] == "running" if row else False
+        result = row["status"] == "running" if row else False
+        ScanState._is_scanning_cache = (result, time.time())
+        return result
 
     @property
     def cancel_requested(self) -> bool:
@@ -2231,37 +2374,71 @@ def _parse_data_column(val):
 
 def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
     """Load scan results from DB, ordered by score.
-    
-    Phase 1C: When slim=True AND DB_USE_SLIM is enabled, reads the pre-stripped
-    slim_data column (~300KB) instead of the full data column (~3.6MB).
-    Falls back to data column if slim_data is NULL for any row.
+
+    Sprint 1 Phase 1: When slim=True, query ONLY slim_data column (not both).
+    This avoids transferring the full data JSONB (~6KB/row) from PG when
+    slim_data (~600B/row) is sufficient. Falls back to data column only
+    for rows where slim_data IS NULL.
     """
+    global _DB_USE_SLIM
     t0 = time.perf_counter()
+    rows = []
+    fallback_rows = []
+    
     if slim and _DB_USE_SLIM:
-        rows = execute_db(
-            "SELECT slim_data, data FROM scan_results ORDER BY score DESC LIMIT ?",
-            (limit,), fetch="all"
-        )
+        # Sprint 1: Two-pass approach — first try slim-only, then fallback
+        try:
+            rows = execute_db(
+                "SELECT slim_data FROM scan_results WHERE slim_data IS NOT NULL ORDER BY score DESC LIMIT ?",
+                (limit,), fetch="all"
+            )
+            slim_count = len(rows) if rows else 0
+            # If we got fewer than limit, fill remaining from data column
+            if slim_count < limit:
+                remaining = limit - slim_count
+                fallback_rows = execute_db(
+                    "SELECT data FROM scan_results WHERE slim_data IS NULL ORDER BY score DESC LIMIT ?",
+                    (remaining,), fetch="all"
+                )
+        except Exception as e:
+            # If slim_data column does not exist (e.g. init_db failed or hasn't run)
+            # execute_db will log the syntax error but we need to disable slim queries to survive
+            log.warning("[DB PERF] slim_data query failed, disabling _DB_USE_SLIM permanently: %s", str(e)[:100])
+            _DB_USE_SLIM = False
+            rows = []
+            fallback_rows = execute_db(
+                "SELECT data FROM scan_results ORDER BY score DESC LIMIT ?",
+                (limit,), fetch="all"
+            )
     else:
-        rows = execute_db(
+        fallback_rows = execute_db(
             "SELECT data FROM scan_results ORDER BY score DESC LIMIT ?",
             (limit,), fetch="all"
         )
     t_query = round((time.perf_counter() - t0) * 1000, 2)
-    
+
     t0 = time.perf_counter()
     results = []
     slim_hits = 0
-    for row in rows:
+    # Parse slim_data rows
+    for row in (rows or []):
         try:
-            # Phase 1C: prefer slim_data if available and slim mode requested
-            raw = None
-            if slim and _DB_USE_SLIM:
-                raw = row.get("slim_data")
-                if raw:
+            raw = row.get("slim_data")
+            if raw:
+                r = _parse_data_column(raw)
+                if r:
+                    # Single Mapping Location: reconstruct trade from trade_summary
+                    ts = r.pop("trade_summary", None)
+                    if ts:
+                        r["trade"] = ts
                     slim_hits += 1
-            if not raw:
-                raw = row["data"]
+                    results.append(r)
+        except Exception:
+            pass
+    # Parse fallback data rows
+    for row in (fallback_rows or []):
+        try:
+            raw = row.get("data")
             r = _parse_data_column(raw)
             if r:
                 if not slim:
@@ -2270,8 +2447,9 @@ def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
         except Exception:
             pass
     t_parse = round((time.perf_counter() - t0) * 1000, 2)
-    
-    mode = f"slim({slim_hits}/{len(rows)})" if slim and _DB_USE_SLIM else "full"
+
+    total_rows = slim_hits + len(fallback_rows or [])
+    mode = f"slim({slim_hits}/{total_rows})" if slim and _DB_USE_SLIM else "full"
     log.info("[DB PERF] load_results limit=%d mode=%s | query=%s ms | parse_json=%s ms | total_rows=%d", limit, mode, t_query, t_parse, len(results))
     print(f"[DB PERF] load_results limit={limit} mode={mode} | query={t_query} ms | parse_json={t_parse} ms | total_rows={len(results)}", flush=True)
     return results

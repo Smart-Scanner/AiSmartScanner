@@ -1069,6 +1069,8 @@ def get_paper_trade_stats():
     return jsonify(cache_layer.get_or_compute(cache_layer.stats_cache, "stats", _compute))
 
 
+_dashboard_loaded = False
+
 @api_bp.route("/api/dashboard")
 def get_dashboard():
     """Single composite endpoint for the V3 dashboard.
@@ -1076,22 +1078,28 @@ def get_dashboard():
     Returns status + results summary + heatmap + sector + paper stats
     in ONE request instead of 5+. Cached for 10s.
     """
+    global _dashboard_loaded
+    is_first_load = not _dashboard_loaded
+    if is_first_load:
+        _dashboard_loaded = True
+        log.info("[DASHBOARD FIRST LOAD] First API call to /api/dashboard")
+
     t_start = time.perf_counter()
-    timings = {"cache_hit": True, "status": 0.0, "load_results": 0.0, "sector_rotation": 0.0, "paper_stats": 0.0}
+    timings = {"was_computed": False}
 
     def _compute():
-        timings["cache_hit"] = False
-        
+        timings["was_computed"] = True
+
         # Status
         t0 = time.perf_counter()
         state = scan_state.status()
-        timings["status"] = round((time.perf_counter() - t0) * 1000, 2)
+        timings["status_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
         # Results (pre-sorted by score)
         t0 = time.perf_counter()
         results = db.load_results(DASHBOARD_MAX_RESULTS, slim=True)
         total_analyzed = db.get_result_count()
-        timings["load_results"] = round((time.perf_counter() - t0) * 1000, 2)
+        timings["load_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
         # Sector rotation
         t0 = time.perf_counter()
@@ -1100,7 +1108,7 @@ def get_dashboard():
             sectors = get_rrg_data() or []
         except Exception:
             sectors = []
-        timings["sector_rotation"] = round((time.perf_counter() - t0) * 1000, 2)
+        timings["sector_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
         # Paper trade stats
         t0 = time.perf_counter()
@@ -1108,7 +1116,7 @@ def get_dashboard():
             paper_stats = db.get_paper_trade_stats()
         except Exception:
             paper_stats = {}
-        timings["paper_stats"] = round((time.perf_counter() - t0) * 1000, 2)
+        timings["stats_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
         status = {
             "scanning": state["scanning"],
@@ -1128,15 +1136,20 @@ def get_dashboard():
 
     data = cache_layer.get_or_compute(cache_layer.dashboard_cache, "dashboard", _compute)
 
-    t_serialize_start = time.perf_counter()
+    t0 = time.perf_counter()
     resp = jsonify(data)
-    t_serialize_ms = round((time.perf_counter() - t_serialize_start) * 1000, 2)
-
+    serialize_ms = round((time.perf_counter() - t0) * 1000, 2)
     total_ms = round((time.perf_counter() - t_start) * 1000, 2)
 
-    if not timings["cache_hit"]:
-        print(f"[DASH PERF] status={timings['status']} ms | load_results={timings['load_results']} ms | sector_rotation={timings['sector_rotation']} ms | paper_stats={timings['paper_stats']} ms | serialize={t_serialize_ms} ms | total={total_ms} ms", flush=True)
-        logging.getLogger("screener").info("[DASH PERF] status=%s ms | load_results=%s ms | sector_rotation=%s ms | paper_stats=%s ms | serialize=%s ms | total=%s ms", timings['status'], timings['load_results'], timings['sector_rotation'], timings['paper_stats'], t_serialize_ms, total_ms)
+    if timings["was_computed"]:
+        log.info("[DASHBOARD CACHE MISS] total=%.1fms | status=%.1fms load=%.1fms sector=%.1fms stats=%.1fms jsonify=%.1fms",
+                 total_ms, timings.get("status_ms", 0), timings.get("load_ms", 0),
+                 timings.get("sector_ms", 0), timings.get("stats_ms", 0), serialize_ms)
+    else:
+        log.info("[DASHBOARD CACHE HIT] total=%.1fms | jsonify=%.1fms", total_ms, serialize_ms)
+
+    if is_first_load:
+        log.info("[DASHBOARD FIRST LOAD COMPLETE] %.1fms", total_ms)
 
     return resp
 

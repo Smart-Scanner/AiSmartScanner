@@ -741,6 +741,16 @@
                         <div id="layerAccordion"></div>
                     </div>
                     
+                    <!-- Why Recommended / Risks -->
+                    <div class="research-card" id="explainCard" style="display:none">
+                        <h3 class="panel-title">💡 Why Recommended</h3>
+                        <div id="explainPositives" style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px"></div>
+                        <div id="explainRisksWrap" style="display:none">
+                            <h4 style="font-size:13px;color:var(--red);margin:12px 0 6px;font-weight:700">⚠ Risks</h4>
+                            <div id="explainRisks" style="display:flex;flex-direction:column;gap:4px"></div>
+                        </div>
+                    </div>
+
                     <!-- Signals -->
                     <div class="research-card" id="signalsSection" style="display:none">
                         <h3 class="panel-title">⚠️ System Scan Alerts & Signals</h3>
@@ -1211,9 +1221,9 @@ function renderScoreBanner(data) {
     document.getElementById('scoreBanner').innerHTML = `
         <div class="score-item"><div class="label">Score</div><div class="value" style="color:${sc}">${scan.score}/100</div></div>
         <div class="score-item"><div class="label">Risk</div><div class="value" style="color:${rc}">${scan.risk_score}/100</div></div>
-        <div class="score-item"><div class="label">R:R</div><div class="value" style="color:${rrc}">${scan.risk_reward}x</div></div>
-        <div class="score-item"><div class="label">Target</div><div class="value" style="color:var(--green)">₹${scan.target_price.toLocaleString()}</div><div class="sub">+${scan.target_pct}%</div></div>
-        <div class="score-item"><div class="label">Stop Loss</div><div class="value" style="color:var(--red)">₹${scan.stop_loss.toLocaleString()}</div><div class="sub">${scan.stop_loss_pct}%</div></div>
+        <div class="score-item"><div class="label">R:R</div><div class="value" style="color:${rrc}">${scan.risk_reward ? '1:' + scan.risk_reward.toFixed(1) : '--'}</div></div>
+        <div class="score-item"><div class="label">Target</div><div class="value" style="color:var(--green)">${scan.target_price ? '₹' + scan.target_price.toLocaleString() : '--'}</div><div class="sub">${scan.target_pct ? '+' + scan.target_pct + '%' : ''}</div></div>
+        <div class="score-item"><div class="label">Stop Loss</div><div class="value" style="color:var(--red)">${scan.stop_loss ? '₹' + scan.stop_loss.toLocaleString() : '--'}</div><div class="sub">${scan.stop_loss_pct ? scan.stop_loss_pct + '%' : ''}</div></div>
         <div class="score-item" id="livePriceCard"><div class="label">Price <span class="live-dot"></span><span class="live-tag" id="liveTag">LIVE</span></div><div class="value" style="color:var(--primary)" id="livePriceVal">₹${data.price.toLocaleString()}</div><div class="sub" id="liveChangeVal"></div><div class="live-ohlc" id="liveOHLC"></div></div>`;
 }
 
@@ -1222,6 +1232,55 @@ function renderSignals(data) {
     if (!scan||!scan.signals||!scan.signals.length) return;
     document.getElementById('signalsSection').style.display = 'block';
     document.getElementById('signalsList').innerHTML = scan.signals.map(s=>`<div class="signal-item"><span class="signal-dot ${s[2]}"></span><span class="signal-name">${s[0]}</span><span class="signal-detail">${s[1]}</span></div>`).join('');
+}
+
+function renderExplainability(data) {
+    const scan = data.scan;
+    if (!scan) return;
+    const trade = scan.trade || {};
+    const positives = [];
+    const risks = [];
+
+    // Positives (max 4)
+    if (scan.fundamental_score && scan.fundamental_score > 5) positives.push('Strong fundamentals (score: ' + scan.fundamental_score + ')');
+    if (scan.is_breakout) positives.push('Breakout above resistance');
+    if (scan.adx > 25) positives.push('Strong trending momentum (ADX: ' + scan.adx + ')');
+    if (scan.rsi < 40 && scan.rsi > 20) positives.push('Oversold bounce potential (RSI: ' + scan.rsi + ')');
+    if (scan.macd_signal === 'Bullish') positives.push('Bullish MACD crossover');
+    if (scan.volume_ratio > 2) positives.push('Unusual volume surge (' + scan.volume_ratio + 'x)');
+    if (scan.delivery_pct > 60) positives.push('High delivery % (' + scan.delivery_pct + '%)');
+    if (scan.weekly_trend === 'up') positives.push('Weekly uptrend confirmed');
+    if (scan.rs_vs_nifty && scan.rs_vs_nifty > 1) positives.push('Outperforming Nifty');
+    if (scan.risk_score !== undefined && scan.risk_score <= 30) positives.push('Low risk profile (' + scan.risk_score + ')');
+    const rr = trade.risk_reward || scan.risk_reward || 0;
+    if (rr >= 3) positives.push('Excellent R:R (1:' + rr.toFixed(1) + ')');
+    if (scan.high_conviction) positives.push('High conviction pick');
+
+    // Risks (max 3)
+    if (scan.risk_score !== undefined && scan.risk_score > 65) risks.push('Elevated risk score (' + scan.risk_score + '/100)');
+    if (rr > 0 && rr < 1.5) risks.push('Unfavorable R:R (1:' + rr.toFixed(1) + ')');
+    if (scan.rsi > 70) risks.push('Overbought territory (RSI: ' + scan.rsi + ')');
+    if (scan.macd_signal === 'Bearish') risks.push('Bearish MACD signal');
+    if (scan.weekly_trend === 'down') risks.push('Weekly downtrend active');
+    if (scan.volume_ratio != null && scan.volume_ratio < 0.5) risks.push('Below-average volume');
+    if (scan.bear_play) risks.push('Bear play \u2014 counter-trend trade');
+
+    const topPositives = positives.slice(0, 4);
+    const topRisks = risks.slice(0, 3);
+
+    if (topPositives.length === 0 && topRisks.length === 0) return;
+
+    document.getElementById('explainCard').style.display = 'block';
+    document.getElementById('explainPositives').innerHTML = topPositives.map(r =>
+        `<div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="color:var(--green);font-weight:700">\u2713</span><span>${r}</span></div>`
+    ).join('');
+
+    if (topRisks.length > 0) {
+        document.getElementById('explainRisksWrap').style.display = 'block';
+        document.getElementById('explainRisks').innerHTML = topRisks.map(r =>
+            `<div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="color:var(--red)">\u26a0</span><span style="color:var(--text-secondary)">${r}</span></div>`
+        ).join('');
+    }
 }
 
 function renderTargets(data) {
@@ -1795,7 +1854,7 @@ async function loadStock() {
         rb.textContent = 'REGIME: ' + regime.toUpperCase();
         rb.className = 'topbar-regime regime-' + regime;
         if (data.scan && data.scan.high_conviction) document.getElementById('hcBadge').style.display = 'inline';
-        renderScoreBanner(data); renderParams(data); renderSignals(data); renderTargets(data); renderResearch(data); renderDetailedFinancials(data);
+        renderScoreBanner(data); renderParams(data); renderExplainability(data); renderSignals(data); renderTargets(data); renderResearch(data); renderDetailedFinancials(data);
         
         // Render charts inside container
         loadStockCharts();

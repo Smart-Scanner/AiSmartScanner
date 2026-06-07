@@ -49,7 +49,7 @@ async function loadHC() {
             const cl = conf >= 80 ? 'high' : conf >= 50 ? 'medium' : 'low';
             const clLabel = conf >= 80 ? 'HIGH' : conf >= 50 ? 'MED' : 'LOW';
             const sc = (s.score||0) >= 80 ? 'excellent' : (s.score||0) >= 65 ? 'good' : (s.score||0) >= 50 ? 'average' : 'poor';
-            const rr = (s.risk_reward||0).toFixed(1);
+            const rr = (s.risk_reward||0) > 0 ? '1:' + (s.risk_reward||0).toFixed(1) : '--';
             const target = s.target_price ? '\u20b9' + s.target_price.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
             const sl = s.stop_loss ? '\u20b9' + s.stop_loss.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
 
@@ -73,7 +73,7 @@ async function loadHC() {
                 </div>
                 <div class="tp-card-badges">${badges.join('')}</div>
                 <div class="tp-card-metrics">
-                    <div class="tp-card-metric"><div class="tp-card-metric-label">R:R</div><div class="tp-card-metric-value">${rr}:1</div></div>
+                    <div class="tp-card-metric"><div class="tp-card-metric-label">R:R</div><div class="tp-card-metric-value">${rr}</div></div>
                     <div class="tp-card-metric"><div class="tp-card-metric-label">Target</div><div class="tp-card-metric-value" style="color:var(--success)">${target}</div></div>
                     <div class="tp-card-metric"><div class="tp-card-metric-label">Stop</div><div class="tp-card-metric-value" style="color:var(--danger)">${sl}</div></div>
                 </div>

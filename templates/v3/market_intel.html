@@ -1,14 +1,237 @@
 {% extends "_app_base.html" %}
 {% set active_page = "market_intel" %}
-{% block title %}Market Overview{% endblock %}
+{% block title %}Market Intelligence{% endblock %}
 {% block content %}
-<div class="v3-page-header">
-    <div class="v3-page-title">Market Overview</div>
-    <div class="v3-page-subtitle">Macro events, news, sector rotation, and world markets</div>
+<style>
+.mi-page { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
+.mi-header { margin-bottom: 24px; }
+.mi-title { font-size: 22px; font-weight: 700; color: var(--text); }
+.mi-subtitle { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.mi-grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+@media (min-width: 900px) { .mi-grid { grid-template-columns: 1fr 1fr; } }
+.mi-widget {
+    background: var(--card-bg, var(--surface));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    position: relative;
+}
+.mi-widget.full-width { grid-column: 1 / -1; }
+.mi-widget-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.mi-widget-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.mi-widget-meta { font-size: 10px; color: var(--text-muted); text-align: right; }
+.mi-widget-meta span { display: block; }
+.mi-loading { text-align: center; padding: 40px; color: var(--text-muted); font-size: 13px; }
+.mi-error { text-align: center; padding: 30px; color: var(--danger, #ff5252); font-size: 13px; border: 1px dashed var(--danger, #ff5252); border-radius: 8px; background: rgba(255,82,82,0.05); }
+.mi-empty { text-align: center; padding: 30px; color: var(--text-muted); font-size: 13px; }
+
+/* Sector Rotation */
+.sr-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sr-table th { text-align: left; padding: 6px 8px; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border); font-size: 11px; }
+.sr-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.sr-quad { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.sr-leading { background: var(--green, #00c853); }
+.sr-improving { background: var(--primary, #4dabf7); }
+.sr-weakening { background: var(--yellow, #ffc107); }
+.sr-lagging { background: var(--red, #ff5252); }
+
+/* Macro Events */
+.me-list { list-style: none; padding: 0; margin: 0; }
+.me-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.me-item:last-child { border-bottom: none; }
+.me-impact { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; }
+.me-impact.high { background: #ff5252; }
+.me-impact.medium { background: #ffc107; }
+.me-impact.low { background: #78909c; }
+.me-time { color: var(--text-muted); font-size: 11px; flex-shrink: 0; width: 50px; font-family: 'JetBrains Mono', monospace; }
+.me-title { color: var(--text); flex: 1; }
+.me-country { color: var(--text-muted); font-size: 10px; }
+
+/* Macro Summary */
+.macro-regime { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; margin-bottom: 12px; }
+.macro-regime.bullish { background: rgba(0,200,83,0.15); color: var(--green, #00c853); }
+.macro-regime.bearish { background: rgba(255,82,82,0.15); color: var(--red, #ff5252); }
+.macro-regime.neutral, .macro-regime.unknown { background: rgba(120,144,156,0.15); color: var(--text-muted); }
+.macro-kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.macro-kpi { background: var(--surface-elevated, var(--surface)); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; }
+.macro-kpi-label { font-size: 10px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.macro-kpi-value { font-size: 16px; font-weight: 700; color: var(--text); font-family: 'JetBrains Mono', monospace; }
+</style>
+
+<div class="mi-page">
+    <div class="mi-header">
+        <div class="mi-title">Market Intelligence</div>
+        <div class="mi-subtitle">Sector rotation, macro indicators, and upcoming economic events</div>
+    </div>
+
+    <div class="mi-grid">
+        <!-- Sector Rotation Widget -->
+        <div class="mi-widget" id="sector">
+            <div class="mi-widget-header">
+                <div class="mi-widget-title">📊 Sector Rotation (RRG)</div>
+                <div class="mi-widget-meta" id="sector-meta"></div>
+            </div>
+            <div id="sector-body"><div class="mi-loading">Loading sector data...</div></div>
+        </div>
+
+        <!-- Macro Summary Widget -->
+        <div class="mi-widget" id="macro-summary">
+            <div class="mi-widget-header">
+                <div class="mi-widget-title">🌍 Macro Summary</div>
+                <div class="mi-widget-meta" id="macro-meta"></div>
+            </div>
+            <div id="macro-body"><div class="mi-loading">Loading macro data...</div></div>
+        </div>
+
+        <!-- Smart Money Widget (anchor target for sidebar /market#smart-money) -->
+        <div class="mi-widget" id="smart-money">
+            <div class="mi-widget-header">
+                <div class="mi-widget-title">💰 Smart Money Flow</div>
+                <div class="mi-widget-meta" id="smart-money-meta"></div>
+            </div>
+            <div id="smart-money-body"><div class="mi-empty">Smart money flow data is displayed per-stock in the scanner drawer. Aggregate flow dashboard coming soon.</div></div>
+        </div>
+
+        <!-- Macro Events Widget -->
+        <div class="mi-widget full-width" id="earnings">
+            <div class="mi-widget-header">
+                <div class="mi-widget-title">📅 Macro Events Calendar</div>
+                <div class="mi-widget-meta" id="events-meta"></div>
+            </div>
+            <div id="events-body"><div class="mi-loading">Loading economic events...</div></div>
+        </div>
+    </div>
 </div>
-<div class="v3-empty-state">
-    <div class="v3-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-    <div class="v3-empty-title">Coming in Phase 5</div>
-    <div class="v3-empty-desc">Combined macro events, news headlines, sector rotation RRG, and world markets view.</div>
-</div>
+
+<script>
+(function() {
+    const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' });
+
+    function setMeta(id, source) {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = `<span>Source: ${source}</span><span>Updated: ${now}</span>`;
+    }
+
+    function renderError(containerId, msg) {
+        document.getElementById(containerId).innerHTML = `<div class="mi-error">⚠ ${msg}</div>`;
+    }
+
+    function renderEmpty(containerId, msg) {
+        document.getElementById(containerId).innerHTML = `<div class="mi-empty">${msg}</div>`;
+    }
+
+    // ── Sector Rotation (isolated) ─────────────────────────────
+    fetch('/api/sector-rotation')
+        .then(r => r.json())
+        .then(data => {
+            setMeta('sector-meta', '/api/sector-rotation');
+            if (data.error) { renderError('sector-body', 'Sector data unavailable: ' + data.error); return; }
+            const sectors = data.sectors;
+            if (!sectors || (Array.isArray(sectors) && sectors.length === 0) || (typeof sectors === 'object' && Object.keys(sectors).length === 0)) {
+                renderEmpty('sector-body', 'No sector rotation data available. Data will appear after the next scan.');
+                return;
+            }
+            // sectors can be object {name: {quadrant, rs_ratio, rs_momentum}} or array
+            const list = Array.isArray(sectors) ? sectors : Object.entries(sectors).map(([k,v]) => ({name: k, ...v}));
+            const quadColors = { Leading: 'sr-leading', Improving: 'sr-improving', Weakening: 'sr-weakening', Lagging: 'sr-lagging' };
+            let html = `<table class="sr-table"><thead><tr><th>Sector</th><th>Quadrant</th><th>RS Ratio</th><th>RS Momentum</th></tr></thead><tbody>`;
+            list.forEach(s => {
+                const q = s.quadrant || 'Unknown';
+                const qc = quadColors[q] || '';
+                html += `<tr>
+                    <td><span class="sr-quad ${qc}"></span>${s.name || s.sector || '--'}</td>
+                    <td>${q}</td>
+                    <td style="font-family:'JetBrains Mono',monospace">${s.rs_ratio != null ? s.rs_ratio.toFixed(2) : '--'}</td>
+                    <td style="font-family:'JetBrains Mono',monospace">${s.rs_momentum != null ? s.rs_momentum.toFixed(2) : '--'}</td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            document.getElementById('sector-body').innerHTML = html;
+        })
+        .catch(err => renderError('sector-body', 'Failed to load sector data'));
+
+    // ── Macro Summary (isolated) ───────────────────────────────
+    fetch('/api/macro')
+        .then(r => r.json())
+        .then(data => {
+            setMeta('macro-meta', '/api/macro');
+            if (data.error) { renderError('macro-body', 'Macro data unavailable: ' + data.error); return; }
+            const regime = data.regime || 'unknown';
+            const rc = regime.toLowerCase();
+            let html = `<div class="macro-regime ${rc}">${regime.toUpperCase()}</div>`;
+            
+            // World markets
+            const world = data.world || {};
+            const macro = data.macro || {};
+            const kpis = [];
+            if (world.nifty50) kpis.push({ label: 'Nifty 50', value: world.nifty50 });
+            if (world.sensex) kpis.push({ label: 'Sensex', value: world.sensex });
+            if (world.sp500) kpis.push({ label: 'S&P 500', value: world.sp500 });
+            if (world.dji) kpis.push({ label: 'Dow Jones', value: world.dji });
+            if (world.vix) kpis.push({ label: 'India VIX', value: world.vix });
+            if (macro.dxy) kpis.push({ label: 'DXY', value: macro.dxy });
+            if (macro.gold) kpis.push({ label: 'Gold', value: macro.gold });
+            if (macro.crude) kpis.push({ label: 'Crude Oil', value: macro.crude });
+            
+            // Also check for nested objects with .last or .value
+            Object.entries({...world, ...macro}).forEach(([k, v]) => {
+                if (v && typeof v === 'object' && v.last != null && !kpis.find(x => x.label.toLowerCase().replace(/\s/g,'') === k.toLowerCase())) {
+                    kpis.push({ label: k.replace(/_/g, ' '), value: v.last });
+                }
+            });
+
+            if (kpis.length === 0) {
+                html += '<div class="mi-empty">No macro indicators available yet.</div>';
+            } else {
+                html += '<div class="macro-kpi-grid">';
+                kpis.forEach(kpi => {
+                    const val = typeof kpi.value === 'number' ? kpi.value.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : kpi.value;
+                    html += `<div class="macro-kpi"><div class="macro-kpi-label">${kpi.label}</div><div class="macro-kpi-value">${val}</div></div>`;
+                });
+                html += '</div>';
+            }
+            document.getElementById('macro-body').innerHTML = html;
+        })
+        .catch(err => renderError('macro-body', 'Failed to load macro data'));
+
+    // ── Macro Events (isolated) ────────────────────────────────
+    fetch('/api/macro-events')
+        .then(r => r.json())
+        .then(data => {
+            setMeta('events-meta', '/api/macro-events');
+            if (data.error) { renderError('events-body', 'Events data unavailable: ' + data.error); return; }
+            const events = data.events || [];
+            if (events.length === 0) {
+                renderEmpty('events-body', 'No upcoming macro events found. Calendar data will refresh automatically.');
+                return;
+            }
+            let html = '<ul class="me-list">';
+            events.slice(0, 20).forEach(ev => {
+                const impact = (ev.impact || 'low').toLowerCase();
+                const time = ev.time || '--:--';
+                const title = ev.title || ev.event || '--';
+                const country = ev.country || ev.currency || '';
+                html += `<li class="me-item">
+                    <div class="me-impact ${impact}"></div>
+                    <div class="me-time">${time}</div>
+                    <div class="me-title">${title} <span class="me-country">${country}</span></div>
+                </li>`;
+            });
+            html += '</ul>';
+            if (data.regime) {
+                html += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted)">Macro Regime: <strong>${data.regime}</strong></div>`;
+            }
+            document.getElementById('events-body').innerHTML = html;
+        })
+        .catch(err => renderError('events-body', 'Failed to load events data'));
+
+    // ── Scroll to anchor on load ───────────────────────────────
+    if (window.location.hash) {
+        setTimeout(() => {
+            const target = document.querySelector(window.location.hash);
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 500);
+    }
+})();
+</script>
 {% endblock %}
