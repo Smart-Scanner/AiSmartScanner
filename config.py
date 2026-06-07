@@ -27,6 +27,9 @@ _ON_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
 MAX_WORKERS = 3 if _ON_RAILWAY else 4   # 4 parallel workers (intelligence adds per-stock overhead)
 MAX_RAW_SCORE = 380   # 25 technical indicators (~220 pts) + 12 intelligence layers (~160 pts)
 TOP_N_RESULTS = 3000
+# Phase D: Dashboard endpoints use a smaller limit for faster queries.
+# TOP_N_RESULTS remains unchanged at 3000 for export/admin endpoints.
+DASHBOARD_MAX_RESULTS = int(os.getenv("DASHBOARD_MAX_RESULTS", "500"))
 
 # Batch scan settings — more conservative on Railway (shared IP gets rate-limited faster)
 BATCH_SIZE = 30 if _ON_RAILWAY else 80

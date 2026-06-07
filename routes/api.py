@@ -78,7 +78,7 @@ def safe_float(v, default=None):
     except Exception:
         return default
 
-from config import TOP_N_RESULTS, DATA_LOOKBACK_DAYS
+from config import TOP_N_RESULTS, DASHBOARD_MAX_RESULTS, DATA_LOOKBACK_DAYS
 from stocks import SECTORS
 from universe import get_universe_stats
 from scanner import scan_state, run_full_scan
@@ -230,7 +230,7 @@ def get_results():
         timings["cache_hit"] = False
         
         t0 = time.perf_counter()
-        results = db.load_results(TOP_N_RESULTS, slim=True)
+        results = db.load_results(DASHBOARD_MAX_RESULTS, slim=True)
         timings["load_results"] = round((time.perf_counter() - t0) * 1000, 2)
         
         t0 = time.perf_counter()
@@ -883,7 +883,7 @@ def debug_macro_state():
 @api_bp.route("/api/stocks")
 def get_all_scanned_stocks():
     """Return all scanned stocks (slimmed — heavy fields loaded via /api/stock/<symbol>)."""
-    return jsonify({"stocks": db.load_results(TOP_N_RESULTS, slim=True)})
+    return jsonify({"stocks": db.load_results(DASHBOARD_MAX_RESULTS, slim=True)})
 
 
 @api_bp.route("/api/top-candidates")
@@ -1079,7 +1079,7 @@ def get_dashboard():
 
         # Results (pre-sorted by score)
         t0 = time.perf_counter()
-        results = db.load_results(TOP_N_RESULTS, slim=True)
+        results = db.load_results(DASHBOARD_MAX_RESULTS, slim=True)
         total_analyzed = db.get_result_count()
         timings["load_results"] = round((time.perf_counter() - t0) * 1000, 2)
 
