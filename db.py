@@ -30,6 +30,14 @@ DB_PATH = Path(__file__).parent / "cache" / "screener.db"
 
 DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
 
+# ── Phase 1: In-memory scan_meta cache ──────────────────────────────────
+# Eliminates ~272ms DB round-trip per get_meta() call.
+# Write-through on set_meta() keeps cache consistent.
+# clear_meta_cache() called on scan start/end for instant UI refresh.
+_META_CACHE_ENABLED = os.getenv("ENABLE_META_CACHE", "true").lower() == "true"
+_meta_cache: dict = {}   # key -> (parsed_value, timestamp)
+_META_TTL = 30           # seconds — stale reads acceptable for display-only data
+
 
 def is_postgresql() -> bool:
     """Check if PostgreSQL is configured."""
@@ -448,6 +456,15 @@ def init_db():
                     cur.execute("ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS detailed_json JSONB;")
                 except Exception as e:
                     log.warning("ALTER TABLE fundamentals detailed_json failed: %s", e)
+
+                # Phase 1: Essential performance indexes
+                try:
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_scan_results_score ON scan_results(score DESC);")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_return ON paper_trades(return_pct);")
+                    log.info("Performance indexes verified")
+                except Exception as e:
+                    log.warning("Index creation failed (non-fatal): %s", e)
 
                 # Phase 6: scan state tables
                 cur.execute("""
@@ -2108,24 +2125,49 @@ def get_result_count() -> int:
     return execute_db("SELECT COUNT(*) as cnt FROM scan_results", fetch="count")
 
 def get_meta(key: str, default=None):
-    """Get a metadata value."""
+    """Get a metadata value. Served from memory cache when fresh."""
+    if _META_CACHE_ENABLED:
+        now = time.time()
+        cached = _meta_cache.get(key)
+        if cached is not None:
+            val, ts = cached
+            if now - ts < _META_TTL:
+                return val  # Cache hit — zero DB cost
+
+    # Cache miss or disabled — hit DB
     row = execute_db("SELECT value FROM scan_meta WHERE key=?", (key,), fetch="one")
     if row:
         val = row["value"]
         try:
-            return json.loads(val)
+            parsed = json.loads(val)
         except (json.JSONDecodeError, TypeError, ValueError):
-            return val
+            parsed = val
+        if _META_CACHE_ENABLED:
+            _meta_cache[key] = (parsed, time.time())
+        return parsed
+    if _META_CACHE_ENABLED:
+        _meta_cache[key] = (default, time.time())
     return default
 
 def set_meta(key: str, value):
-    """Set a metadata value."""
+    """Set a metadata value. Write-through to memory cache."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     v = json.dumps(value) if not isinstance(value, str) else value
     execute_db("""
         INSERT INTO scan_meta (key, value, updated_at) VALUES (?, ?, ?)
         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
     """, (key, v, now))
+    # Write-through: update cache immediately
+    if _META_CACHE_ENABLED:
+        _meta_cache[key] = (value, time.time())
+
+def clear_meta_cache(key=None):
+    """Invalidate meta cache. Call on scan start/complete, regime update, login refresh."""
+    if key:
+        _meta_cache.pop(key, None)
+    else:
+        _meta_cache.clear()
+    log.debug("Meta cache cleared: %s", key or "ALL")
 
 def get_stock(symbol: str) -> dict | None:
     """Get a single stock's scan data."""

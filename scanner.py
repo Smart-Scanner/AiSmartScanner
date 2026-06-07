@@ -313,6 +313,7 @@ def run_full_scan():
         log.debug("save_active_universe failed (non-fatal): %s", exc)
 
     scan_state.start(total, mode="manual")
+    db.clear_meta_cache()  # Phase 1: ensure fresh metadata during scan
     log.info("Scan: %d stocks...", total)
     start_time = time.monotonic()
 
@@ -474,3 +475,4 @@ def run_full_scan():
         # Ensure state is reset even on unexpected errors
         if scan_state.is_scanning:
             scan_state.complete(success=True)
+        db.clear_meta_cache()  # Phase 1: ensure fresh metadata after scan
