@@ -2935,7 +2935,176 @@ def save_portfolio_daily(nifty_price: float = None):
 
 
 def get_paper_trade_stats() -> dict:
-    """Get aggregated paper trading statistics."""
+    """Get aggregated paper trading statistics.
+    
+    Phase 1 V2: Consolidated from 21 queries to 5 queries.
+    Uses CASE WHEN (SQLite+PG compatible) instead of PG-only FILTER.
+    Gated by ENABLE_PAPER_STATS_V2 (default: true).
+    """
+    if os.getenv("ENABLE_PAPER_STATS_V2", "true").lower() != "true":
+        return _get_paper_trade_stats_v1()
+
+    t_start = time.perf_counter()
+
+    # ── Query 1: Single aggregation replaces 14 scalar queries ──
+    t0 = time.perf_counter()
+    agg = execute_db("""
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN status='CLOSED' THEN 1 ELSE 0 END) as closed,
+            SUM(CASE WHEN status='CLOSED' AND return_pct > 0 THEN 1 ELSE 0 END) as wins,
+            AVG(CASE WHEN status='CLOSED' THEN return_pct ELSE NULL END) as avg_ret,
+            AVG(CASE WHEN status='CLOSED' THEN days_held ELSE NULL END) as avg_days,
+            AVG(CASE WHEN status='CLOSED' THEN max_drawdown_pct ELSE NULL END) as avg_dd,
+            AVG(CASE WHEN status='CLOSED' AND alpha_pct IS NOT NULL THEN alpha_pct ELSE NULL END) as avg_alpha,
+            MIN(CASE WHEN status='CLOSED' THEN max_drawdown_pct ELSE NULL END) as max_dd,
+            SUM(CASE WHEN status='CLOSED' AND return_pct > 0 THEN return_pct ELSE 0 END) as sum_wins,
+            SUM(CASE WHEN status='CLOSED' AND return_pct <= 0 THEN ABS(return_pct) ELSE 0 END) as sum_losses,
+            SUM(CASE WHEN status='CLOSED' AND is_golden=1 THEN 1 ELSE 0 END) as golden_total,
+            SUM(CASE WHEN status='CLOSED' AND is_golden=1 AND return_pct > 0 THEN 1 ELSE 0 END) as golden_wins,
+            SUM(CASE WHEN status='CLOSED' AND high_conviction=1 THEN 1 ELSE 0 END) as hc_total,
+            SUM(CASE WHEN status='CLOSED' AND high_conviction=1 AND return_pct > 0 THEN 1 ELSE 0 END) as hc_wins
+        FROM paper_trades
+    """, fetch="one") or {}
+    t_agg = round((time.perf_counter() - t0) * 1000, 2)
+
+    total_cnt = (agg.get("total") or 0)
+    closed_cnt = (agg.get("closed") or 0)
+    win_cnt = (agg.get("wins") or 0)
+    loss_cnt = closed_cnt - win_cnt
+    total_win = (agg.get("sum_wins") or 0)
+    total_loss = (agg.get("sum_losses") or 0)
+    golden_cnt = (agg.get("golden_total") or 0)
+    golden_win_cnt = (agg.get("golden_wins") or 0)
+    hc_cnt = (agg.get("hc_total") or 0)
+    hc_win_cnt = (agg.get("hc_wins") or 0)
+
+    profit_factor = round(total_win / total_loss, 2) if total_loss > 0 else 0
+    avg_win = total_win / win_cnt if win_cnt > 0 else 0
+    avg_loss = total_loss / loss_cnt if loss_cnt > 0 else 0
+    win_rate_dec = win_cnt / closed_cnt if closed_cnt > 0 else 0
+    expectancy = round((win_rate_dec * avg_win) - ((1 - win_rate_dec) * avg_loss), 2) if closed_cnt > 0 else 0
+
+    # ── Query 2: Best/worst trades ──
+    t0 = time.perf_counter()
+    best = execute_db("SELECT symbol, return_pct FROM paper_trades WHERE status='CLOSED' ORDER BY return_pct DESC LIMIT 1", fetch="one")
+    worst = execute_db("SELECT symbol, return_pct FROM paper_trades WHERE status='CLOSED' ORDER BY return_pct ASC LIMIT 1", fetch="one")
+    t_best_worst = round((time.perf_counter() - t0) * 1000, 2)
+
+    # ── Query 3: Factor attribution (winners vs losers in one query) ──
+    t0 = time.perf_counter()
+    factor = execute_db("""
+        SELECT
+            AVG(CASE WHEN return_pct > 0 THEN technical_score ELSE NULL END) as win_tech,
+            AVG(CASE WHEN return_pct > 0 THEN fundamental_score ELSE NULL END) as win_fund,
+            AVG(CASE WHEN return_pct > 0 THEN earnings_momentum_score ELSE NULL END) as win_earn,
+            AVG(CASE WHEN return_pct > 0 THEN smart_money_score ELSE NULL END) as win_smart,
+            AVG(CASE WHEN return_pct > 0 THEN risk_score ELSE NULL END) as win_risk,
+            AVG(CASE WHEN return_pct > 0 THEN score_at_entry ELSE NULL END) as win_score,
+            AVG(CASE WHEN return_pct <= 0 THEN technical_score ELSE NULL END) as loss_tech,
+            AVG(CASE WHEN return_pct <= 0 THEN fundamental_score ELSE NULL END) as loss_fund,
+            AVG(CASE WHEN return_pct <= 0 THEN earnings_momentum_score ELSE NULL END) as loss_earn,
+            AVG(CASE WHEN return_pct <= 0 THEN smart_money_score ELSE NULL END) as loss_smart,
+            AVG(CASE WHEN return_pct <= 0 THEN risk_score ELSE NULL END) as loss_risk,
+            AVG(CASE WHEN return_pct <= 0 THEN score_at_entry ELSE NULL END) as loss_score
+        FROM paper_trades WHERE status='CLOSED'
+    """, fetch="one") or {}
+    t_factor = round((time.perf_counter() - t0) * 1000, 2)
+
+    # ── Query 4-5: Group breakdowns (already efficient GROUP BY) ──
+    t0 = time.perf_counter()
+    by_version = execute_db("""
+        SELECT model_version, COUNT(*) as trades,
+               SUM(CASE WHEN return_pct > 0 THEN 1 ELSE 0 END) as wins,
+               AVG(return_pct) as avg_return,
+               AVG(alpha_pct) as avg_alpha
+        FROM paper_trades WHERE status='CLOSED'
+        GROUP BY model_version ORDER BY model_version
+    """, fetch="all") or []
+
+    by_sector = execute_db("""
+        SELECT sector, COUNT(*) as trades,
+               AVG(return_pct) as avg_return
+        FROM paper_trades WHERE status='CLOSED'
+        GROUP BY sector ORDER BY avg_return DESC LIMIT 10
+    """, fetch="all") or []
+
+    by_regime = execute_db("""
+        SELECT market_regime, COUNT(*) as trades,
+               AVG(return_pct) as avg_return
+        FROM paper_trades WHERE status='CLOSED'
+        GROUP BY market_regime
+    """, fetch="all") or []
+    t_groups = round((time.perf_counter() - t0) * 1000, 2)
+
+    total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+    log.info("[DB PERF] get_paper_trade_stats V2 | total_queries=5 | t_agg=%s ms | t_best_worst=%s ms | t_factor=%s ms | t_groups=%s ms | total=%s ms", t_agg, t_best_worst, t_factor, t_groups, total_ms)
+    print(f"[DB PERF] get_paper_trade_stats V2 | total_queries=5 | t_agg={t_agg} ms | t_best_worst={t_best_worst} ms | t_factor={t_factor} ms | t_groups={t_groups} ms | total={total_ms} ms", flush=True)
+
+    def _r(v): return round(v or 0, 2)
+
+    return {
+        "total_trades": total_cnt,
+        "open_trades": total_cnt - closed_cnt,
+        "closed_trades": closed_cnt,
+        "win_rate": round((win_cnt / closed_cnt * 100), 1) if closed_cnt > 0 else 0,
+        "avg_return_pct": _r(agg.get("avg_ret")),
+        "avg_days_held": round((agg.get("avg_days") or 0), 1),
+        "avg_drawdown_pct": _r(agg.get("avg_dd")),
+        "max_drawdown_pct": _r(agg.get("max_dd")),
+        "avg_alpha_pct": _r(agg.get("avg_alpha")),
+        "profit_factor": profit_factor,
+        "expectancy": expectancy,
+        "best_trade": {"symbol": best["symbol"], "return_pct": best["return_pct"]} if best else None,
+        "worst_trade": {"symbol": worst["symbol"], "return_pct": worst["return_pct"]} if worst else None,
+        # Conviction breakdowns
+        "golden_stock": {
+            "trades": golden_cnt,
+            "win_rate": round(golden_win_cnt / golden_cnt * 100, 1) if golden_cnt > 0 else 0,
+        },
+        "high_conviction": {
+            "trades": hc_cnt,
+            "win_rate": round(hc_win_cnt / hc_cnt * 100, 1) if hc_cnt > 0 else 0,
+        },
+        # Factor attribution
+        "factor_attribution": {
+            "winners": {
+                "avg_score": _r(factor.get("win_score")),
+                "avg_technical": _r(factor.get("win_tech")),
+                "avg_fundamental": _r(factor.get("win_fund")),
+                "avg_earnings": _r(factor.get("win_earn")),
+                "avg_smart_money": _r(factor.get("win_smart")),
+                "avg_risk": _r(factor.get("win_risk")),
+            },
+            "losers": {
+                "avg_score": _r(factor.get("loss_score")),
+                "avg_technical": _r(factor.get("loss_tech")),
+                "avg_fundamental": _r(factor.get("loss_fund")),
+                "avg_earnings": _r(factor.get("loss_earn")),
+                "avg_smart_money": _r(factor.get("loss_smart")),
+                "avg_risk": _r(factor.get("loss_risk")),
+            },
+        },
+        "by_model_version": [
+            {"version": r["model_version"], "trades": r["trades"],
+             "win_rate": round(r["wins"] / r["trades"] * 100, 1) if r["trades"] > 0 else 0,
+             "avg_return": _r(r["avg_return"]),
+             "avg_alpha": _r(r["avg_alpha"])}
+            for r in by_version
+        ],
+        "by_sector": [
+            {"sector": r["sector"], "trades": r["trades"], "avg_return": _r(r["avg_return"])}
+            for r in by_sector
+        ],
+        "by_regime": [
+            {"regime": r["market_regime"], "trades": r["trades"], "avg_return": _r(r["avg_return"])}
+            for r in by_regime
+        ],
+    }
+
+
+def _get_paper_trade_stats_v1() -> dict:
+    """Original 21-query version. Fallback when ENABLE_PAPER_STATS_V2=false."""
     t_start = time.perf_counter()
     
     t0 = time.perf_counter()
@@ -2955,7 +3124,6 @@ def get_paper_trade_stats() -> dict:
     win_cnt = (wins or {}).get("cnt") or 0
 
     t0 = time.perf_counter()
-    # Profit Factor & Expectancy
     sum_wins = execute_db("SELECT SUM(return_pct) as total FROM paper_trades WHERE status='CLOSED' AND return_pct > 0", fetch="one")
     sum_losses = execute_db("SELECT SUM(ABS(return_pct)) as total FROM paper_trades WHERE status='CLOSED' AND return_pct <= 0", fetch="one")
     loss_cnt = closed_cnt - win_cnt
@@ -2969,13 +3137,10 @@ def get_paper_trade_stats() -> dict:
     t_expectancy = round((time.perf_counter() - t0) * 1000, 2)
 
     t0 = time.perf_counter()
-    # Golden Stock win rate
     golden_total = execute_db("SELECT COUNT(*) as cnt FROM paper_trades WHERE status='CLOSED' AND is_golden=1", fetch="one")
     golden_wins = execute_db("SELECT COUNT(*) as cnt FROM paper_trades WHERE status='CLOSED' AND is_golden=1 AND return_pct > 0", fetch="one")
     golden_cnt = (golden_total or {}).get("cnt") or 0
     golden_win_cnt = (golden_wins or {}).get("cnt") or 0
-
-    # High Conviction win rate
     hc_total = execute_db("SELECT COUNT(*) as cnt FROM paper_trades WHERE status='CLOSED' AND high_conviction=1", fetch="one")
     hc_wins = execute_db("SELECT COUNT(*) as cnt FROM paper_trades WHERE status='CLOSED' AND high_conviction=1 AND return_pct > 0", fetch="one")
     hc_cnt = (hc_total or {}).get("cnt") or 0
@@ -2983,7 +3148,6 @@ def get_paper_trade_stats() -> dict:
     t_conviction = round((time.perf_counter() - t0) * 1000, 2)
 
     t0 = time.perf_counter()
-    # Factor attribution: winning vs losing trades
     factor_win = execute_db("""
         SELECT AVG(technical_score) as tech, AVG(fundamental_score) as fund,
                AVG(earnings_momentum_score) as earn, AVG(smart_money_score) as smart,
@@ -2999,10 +3163,7 @@ def get_paper_trade_stats() -> dict:
     t_factor = round((time.perf_counter() - t0) * 1000, 2)
 
     t0 = time.perf_counter()
-    # Max single-trade drawdown
     max_dd = execute_db("SELECT MIN(max_drawdown_pct) as dd FROM paper_trades WHERE status='CLOSED'", fetch="one")
-
-    # By model version
     by_version = execute_db("""
         SELECT model_version, COUNT(*) as trades,
                SUM(CASE WHEN return_pct > 0 THEN 1 ELSE 0 END) as wins,
@@ -3011,16 +3172,12 @@ def get_paper_trade_stats() -> dict:
         FROM paper_trades WHERE status='CLOSED'
         GROUP BY model_version ORDER BY model_version
     """, fetch="all") or []
-
-    # By sector
     by_sector = execute_db("""
         SELECT sector, COUNT(*) as trades,
                AVG(return_pct) as avg_return
         FROM paper_trades WHERE status='CLOSED'
         GROUP BY sector ORDER BY avg_return DESC LIMIT 10
     """, fetch="all") or []
-
-    # By regime
     by_regime = execute_db("""
         SELECT market_regime, COUNT(*) as trades,
                AVG(return_pct) as avg_return
@@ -3030,8 +3187,7 @@ def get_paper_trade_stats() -> dict:
     t_groups = round((time.perf_counter() - t0) * 1000, 2)
 
     total_ms = round((time.perf_counter() - t_start) * 1000, 2)
-    log.info("[DB PERF] get_paper_trade_stats | total_queries=21 | t_basic=%s ms | t_expectancy=%s ms | t_conviction=%s ms | t_factor=%s ms | t_groups=%s ms | total=%s ms", t_basic, t_expectancy, t_conviction, t_factor, t_groups, total_ms)
-    print(f"[DB PERF] get_paper_trade_stats | total_queries=21 | t_basic={t_basic} ms | t_expectancy={t_expectancy} ms | t_conviction={t_conviction} ms | t_factor={t_factor} ms | t_groups={t_groups} ms | total={total_ms} ms", flush=True)
+    log.info("[DB PERF] get_paper_trade_stats V1 | total_queries=21 | t_basic=%s ms | t_expectancy=%s ms | t_conviction=%s ms | t_factor=%s ms | t_groups=%s ms | total=%s ms", t_basic, t_expectancy, t_conviction, t_factor, t_groups, total_ms)
 
     def _r(v): return round(v or 0, 2)
 
@@ -3049,7 +3205,6 @@ def get_paper_trade_stats() -> dict:
         "expectancy": expectancy,
         "best_trade": {"symbol": best["symbol"], "return_pct": best["return_pct"]} if best else None,
         "worst_trade": {"symbol": worst["symbol"], "return_pct": worst["return_pct"]} if worst else None,
-        # Conviction breakdowns
         "golden_stock": {
             "trades": golden_cnt,
             "win_rate": round(golden_win_cnt / golden_cnt * 100, 1) if golden_cnt > 0 else 0,
@@ -3058,7 +3213,6 @@ def get_paper_trade_stats() -> dict:
             "trades": hc_cnt,
             "win_rate": round(hc_win_cnt / hc_cnt * 100, 1) if hc_cnt > 0 else 0,
         },
-        # Factor attribution
         "factor_attribution": {
             "winners": {
                 "avg_score": _r(factor_win.get("score")),
@@ -3093,6 +3247,10 @@ def get_paper_trade_stats() -> dict:
             for r in by_regime
         ],
     }
+
+
+
+
 
 
 def get_equity_curve(days: int = 90) -> list[dict]:
