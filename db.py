@@ -38,6 +38,24 @@ _META_CACHE_ENABLED = os.getenv("ENABLE_META_CACHE", "true").lower() == "true"
 _meta_cache: dict = {}   # key -> (parsed_value, timestamp)
 _META_TTL = 30           # seconds — stale reads acceptable for display-only data
 
+# ── Phase 1C: slim_data — pre-stripped JSON for list/card views ─────────
+# These heavy fields account for ~92% of the /api/results payload.
+# slim_data stores everything EXCEPT these fields, reducing 3.6MB → ~300KB.
+_HEAVY_FIELDS = frozenset({
+    "chart_data", "signals", "fundamentals", "trade", "order_book",
+    "seasonal", "news_sentiment", "support_resistance", "sector_rotation",
+    "gdelt", "macro_event", "earnings_signals",
+    # Phase 0 audit fields (internal — never sent to frontend)
+    "_score_components", "_data_source", "_source_reason",
+    "_provider_latency_ms", "_data_staleness_hours",
+})
+_DB_USE_SLIM = os.getenv("DB_USE_SLIM", "true").lower() == "true"
+
+
+def _build_slim(r: dict) -> str:
+    """Build slim JSON string from a result dict, stripping heavy fields."""
+    return json.dumps({k: v for k, v in r.items() if k not in _HEAVY_FIELDS})
+
 
 def is_postgresql() -> bool:
     """Check if PostgreSQL is configured."""
@@ -625,6 +643,15 @@ def init_db():
                     CREATE INDEX IF NOT EXISTS idx_scan_results_score ON scan_results(score DESC);
                     CREATE INDEX IF NOT EXISTS idx_scan_results_hc ON scan_results(high_conviction) WHERE high_conviction = 1;
                     CREATE INDEX IF NOT EXISTS idx_paper_trades_model ON paper_trades(model_version);
+                """)
+
+                # Phase 1C: slim_data column (safe ALTER — no-op if exists)
+                try:
+                    cur.execute("ALTER TABLE scan_results ADD COLUMN IF NOT EXISTS slim_data JSONB;")
+                except Exception:
+                    pass  # column already exists
+
+                cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_news_articles_symbol ON news_articles(symbol);
                 """)
 
@@ -1029,6 +1056,12 @@ def _init_sqlite():
             CREATE INDEX IF NOT EXISTS idx_news_articles_symbol ON news_articles(symbol);
         """)
 
+        # Phase 1C: slim_data column for SQLite
+        try:
+            conn.execute("ALTER TABLE scan_results ADD COLUMN slim_data TEXT;")
+        except Exception:
+            pass  # column already exists
+
         # Phase 0: Trust & Observability — score_audit + scan_audit (SQLite)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS score_audit (
@@ -1408,15 +1441,17 @@ def _save_results_raw(results: list):
     scan_date = datetime.now().strftime("%Y-%m-%d")
     for r in results:
         sym = r["symbol"]
+        slim = _build_slim(r) if _DB_USE_SLIM else None
         execute_db("""
-            INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol) DO UPDATE SET
                 data=excluded.data, score=excluded.score,
                 high_conviction=excluded.high_conviction, sector=excluded.sector,
-                scan_date=excluded.scan_date, updated_at=excluded.updated_at
+                scan_date=excluded.scan_date, updated_at=excluded.updated_at,
+                slim_data=excluded.slim_data
         """, (sym, json.dumps(r), r.get("score", 0), 1 if r.get("high_conviction") else 0,
-              r.get("sector", ""), scan_date, now))
+              r.get("sector", ""), scan_date, now, slim))
 
 
 def _move_to_dlq(batch: DeferredBatch):
@@ -1575,11 +1610,12 @@ def save_results(results: list[dict], meta: dict = None):
                     sym = r["symbol"]
                     f = r.get("fundamentals", {})
 
-                    # 1. scan_results
+                    # 1. scan_results (+ slim_data for Phase 1C)
+                    slim = _build_slim(r) if _DB_USE_SLIM else None
                     scan_results_rows.append((
                         sym, json.dumps(r), r.get("score", 0),
                         1 if r.get("high_conviction") else 0,
-                        r.get("sector", ""), scan_date, now
+                        r.get("sector", ""), scan_date, now, slim
                     ))
 
                     # 2. score_history
@@ -1662,14 +1698,15 @@ def save_results(results: list[dict], meta: dict = None):
 
                 # ── Execute bulk UPSERTs ──
 
-                # 1. scan_results
+                # 1. scan_results (+ slim_data)
                 _bulk_upsert_pg("scan_results", """
-                    INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at)
+                    INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
                     VALUES %s
                     ON CONFLICT(symbol) DO UPDATE SET
                         data=EXCLUDED.data, score=EXCLUDED.score,
                         high_conviction=EXCLUDED.high_conviction, sector=EXCLUDED.sector,
-                        scan_date=EXCLUDED.scan_date, updated_at=EXCLUDED.updated_at
+                        scan_date=EXCLUDED.scan_date, updated_at=EXCLUDED.updated_at,
+                        slim_data=EXCLUDED.slim_data
                 """, scan_results_rows, cursor)
 
                 # 2. score_history
@@ -1810,15 +1847,17 @@ def save_results(results: list[dict], meta: dict = None):
     for r in to_save:
         sym = r["symbol"]
         try:
-            # 1. scan_results
+            # 1. scan_results (+ slim_data)
+            slim = _build_slim(r) if _DB_USE_SLIM else None
             execute_db("""
-                INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol) DO UPDATE SET
                     data=excluded.data, score=excluded.score,
                     high_conviction=excluded.high_conviction, sector=excluded.sector,
-                    scan_date=excluded.scan_date, updated_at=excluded.updated_at
-            """, (sym, json.dumps(r), r.get("score", 0), 1 if r.get("high_conviction") else 0, r.get("sector", ""), scan_date, now))
+                    scan_date=excluded.scan_date, updated_at=excluded.updated_at,
+                    slim_data=excluded.slim_data
+            """, (sym, json.dumps(r), r.get("score", 0), 1 if r.get("high_conviction") else 0, r.get("sector", ""), scan_date, now, slim))
 
             # 2. score_history
             execute_db("""
@@ -2121,26 +2160,51 @@ def _parse_data_column(val):
             return {}
     return {}
 
-def load_results(limit: int = 750) -> list[dict]:
-    """Load scan results from DB, ordered by score."""
+def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
+    """Load scan results from DB, ordered by score.
+    
+    Phase 1C: When slim=True AND DB_USE_SLIM is enabled, reads the pre-stripped
+    slim_data column (~300KB) instead of the full data column (~3.6MB).
+    Falls back to data column if slim_data is NULL for any row.
+    """
     t0 = time.perf_counter()
-    rows = execute_db("SELECT data FROM scan_results ORDER BY score DESC LIMIT ?", (limit,), fetch="all")
+    if slim and _DB_USE_SLIM:
+        rows = execute_db(
+            "SELECT slim_data, data FROM scan_results ORDER BY score DESC LIMIT ?",
+            (limit,), fetch="all"
+        )
+    else:
+        rows = execute_db(
+            "SELECT data FROM scan_results ORDER BY score DESC LIMIT ?",
+            (limit,), fetch="all"
+        )
     t_query = round((time.perf_counter() - t0) * 1000, 2)
     
     t0 = time.perf_counter()
     results = []
+    slim_hits = 0
     for row in rows:
         try:
-            r = _parse_data_column(row["data"])
+            # Phase 1C: prefer slim_data if available and slim mode requested
+            raw = None
+            if slim and _DB_USE_SLIM:
+                raw = row.get("slim_data")
+                if raw:
+                    slim_hits += 1
+            if not raw:
+                raw = row["data"]
+            r = _parse_data_column(raw)
             if r:
-                _ensure_trade_populated(r)
+                if not slim:
+                    _ensure_trade_populated(r)
                 results.append(r)
         except Exception:
             pass
     t_parse = round((time.perf_counter() - t0) * 1000, 2)
     
-    log.info("[DB PERF] load_results limit=%d | query=%s ms | parse_json=%s ms | total_rows=%d", limit, t_query, t_parse, len(results))
-    print(f"[DB PERF] load_results limit={limit} | query={t_query} ms | parse_json={t_parse} ms | total_rows={len(results)}", flush=True)
+    mode = f"slim({slim_hits}/{len(rows)})" if slim and _DB_USE_SLIM else "full"
+    log.info("[DB PERF] load_results limit=%d mode=%s | query=%s ms | parse_json=%s ms | total_rows=%d", limit, mode, t_query, t_parse, len(results))
+    print(f"[DB PERF] load_results limit={limit} mode={mode} | query={t_query} ms | parse_json={t_parse} ms | total_rows={len(results)}", flush=True)
     return results
 
 

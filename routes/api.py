@@ -222,7 +222,7 @@ def get_results():
         timings["cache_hit"] = False
         
         t0 = time.perf_counter()
-        results = db.load_results(TOP_N_RESULTS)
+        results = db.load_results(TOP_N_RESULTS, slim=True)
         timings["load_results"] = round((time.perf_counter() - t0) * 1000, 2)
         
         t0 = time.perf_counter()
@@ -875,7 +875,7 @@ def debug_macro_state():
 @api_bp.route("/api/stocks")
 def get_all_scanned_stocks():
     """Return all scanned stocks (slimmed — heavy fields loaded via /api/stock/<symbol>)."""
-    return jsonify({"stocks": _slim_results(db.load_results(TOP_N_RESULTS))})
+    return jsonify({"stocks": db.load_results(TOP_N_RESULTS, slim=True)})
 
 
 @api_bp.route("/api/top-candidates")
@@ -1071,7 +1071,7 @@ def get_dashboard():
 
         # Results (pre-sorted by score)
         t0 = time.perf_counter()
-        results = db.load_results(TOP_N_RESULTS)
+        results = db.load_results(TOP_N_RESULTS, slim=True)
         total_analyzed = db.get_result_count()
         timings["load_results"] = round((time.perf_counter() - t0) * 1000, 2)
 
