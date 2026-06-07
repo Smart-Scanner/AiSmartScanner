@@ -21,6 +21,9 @@ from ta.volume import OnBalanceVolumeIndicator
 from jugaad_data.nse import stock_df
 import math
 
+# ── Logger Initialization ──
+log = logging.getLogger("api")
+log.info("API logger initialized")
 
 # ── Heavy fields that should only load in drawer via /api/stock/<symbol> ──
 # These 12 fields account for ~92% of the /api/results payload (3.3MB of 3.6MB)
@@ -166,6 +169,7 @@ def scan_status():
             else:
                 raise Exception("use sqlite")
         except Exception:
+            log.exception("[STATUS PG QUERY FAILED]")
             agg = db.execute_db("""
                 SELECT
                     COALESCE(SUM(high_conviction), 0) as hc_count,
@@ -183,10 +187,13 @@ def scan_status():
         db_time = round((time.time() - t0) * 1000)
         log.info("[STATUS PERF] cache_hit=false | db_time=%dms | query_count=2 | total_time=%dms", db_time, db_time)
 
+        log.info("[STATUS DEBUG] state=%s", state)
+        log.info("[STATUS DEBUG] agg=%s type=%s", agg, type(agg))
+
         return {
-            "scanning": state["scanning"],
-            "progress": state["progress"],
-            "total": state["total"],
+            "scanning": state.get("scanning", False),
+            "progress": state.get("progress", 0),
+            "total": state.get("total", 0),
             "last_scan": db.get_meta("last_scan"),
             "market_regime": db.get_meta("market_regime", "unknown"),
             "login_status": db.get_meta("angel_login_status", {}),
