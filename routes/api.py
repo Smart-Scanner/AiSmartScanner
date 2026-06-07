@@ -1133,3 +1133,96 @@ def get_equity_curve():
     except Exception as exc:
         return jsonify({"error": str(exc), "curve": []})
 
+
+# ─── Phase 0: Trust & Observability Endpoints ───
+
+@api_bp.route("/api/score-history/<symbol>")
+def score_history(symbol):
+    """Return score audit trail for a symbol.
+    
+    Answers: Why did score change? What components moved? Which data source?
+    """
+    try:
+        limit = request.args.get("limit", 30, type=int)
+        rows = db.execute_db("""
+            SELECT scan_id, scan_time,
+                   technical_score, earnings_momentum_score,
+                   fundamental_score, smart_money_score, sector_rotation_score,
+                   news_sentiment_score, news_spike_score, macro_score, catalyst_score,
+                   final_score, data_source, source_reason,
+                   provider_latency_ms, data_staleness_hours, scan_version
+            FROM score_audit WHERE symbol=?
+            ORDER BY scan_time DESC LIMIT ?
+        """, (symbol.upper(), limit), fetch="all")
+
+        # Compute deltas if we have at least 2 scans
+        history = rows or []
+        delta = None
+        if history and len(history) >= 2:
+            latest = history[0]
+            prev = history[1]
+            component_keys = [
+                "technical_score", "earnings_momentum_score", "fundamental_score",
+                "smart_money_score", "sector_rotation_score", "news_sentiment_score",
+                "news_spike_score", "macro_score", "catalyst_score"
+            ]
+            delta = {
+                "final_score_change": round((latest.get("final_score") or 0) - (prev.get("final_score") or 0), 2),
+                "components": {
+                    k: round((latest.get(k) or 0) - (prev.get(k) or 0), 2)
+                    for k in component_keys
+                },
+                "source_changed": latest.get("data_source") != prev.get("data_source"),
+                "version_changed": latest.get("scan_version") != prev.get("scan_version"),
+            }
+
+        return jsonify({
+            "symbol": symbol.upper(),
+            "history": history,
+            "delta": delta,
+            "count": len(history),
+        })
+    except Exception as exc:
+        return jsonify({"symbol": symbol.upper(), "history": [], "delta": None, "error": str(exc)})
+
+
+@api_bp.route("/api/health/scan")
+def scan_health():
+    """Operational health of the scanner.
+    
+    Returns last scan time, age, data source, scan version, market regime, and status.
+    """
+    try:
+        from config import SCAN_VERSION
+    except ImportError:
+        SCAN_VERSION = "unknown"
+
+    last_scan = db.get_meta("last_scan")
+    scan_age = None
+    if last_scan:
+        from datetime import datetime as dt
+        try:
+            last_dt = dt.strptime(last_scan, "%Y-%m-%d %H:%M IST")
+            scan_age = round((dt.now() - last_dt).total_seconds() / 60, 1)
+        except Exception:
+            pass
+
+    # Get latest scan_audit for extra context
+    latest_audit = None
+    try:
+        latest_audit = db.execute_db(
+            "SELECT scan_id, duration_ms, stocks_scanned, stocks_succeeded, stocks_failed, data_source, scan_version "
+            "FROM scan_audit ORDER BY start_time DESC LIMIT 1",
+            fetch="one"
+        )
+    except Exception:
+        pass
+
+    return jsonify({
+        "last_scan": last_scan,
+        "scan_age_minutes": scan_age,
+        "scan_version": SCAN_VERSION,
+        "market_regime": db.get_meta("market_regime", "unknown"),
+        "status": "healthy" if scan_age and scan_age < 120 else "stale",
+        "latest_audit": latest_audit,
+    })

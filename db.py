@@ -628,6 +628,51 @@ def init_db():
                     CREATE INDEX IF NOT EXISTS idx_news_articles_symbol ON news_articles(symbol);
                 """)
 
+                # Phase 0: Trust & Observability — score_audit + scan_audit
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS score_audit (
+                        id BIGSERIAL PRIMARY KEY,
+                        symbol TEXT NOT NULL,
+                        scan_id TEXT NOT NULL,
+                        scan_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        technical_score NUMERIC,
+                        earnings_momentum_score NUMERIC,
+                        fundamental_score NUMERIC,
+                        smart_money_score NUMERIC,
+                        sector_rotation_score NUMERIC,
+                        news_sentiment_score NUMERIC,
+                        news_spike_score NUMERIC,
+                        macro_score NUMERIC,
+                        catalyst_score NUMERIC,
+                        final_score NUMERIC NOT NULL,
+                        data_source TEXT,
+                        source_reason TEXT,
+                        provider_latency_ms INTEGER,
+                        data_staleness_hours REAL,
+                        scan_version TEXT,
+                        UNIQUE (symbol, scan_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_score_audit_symbol ON score_audit(symbol);
+                    CREATE INDEX IF NOT EXISTS idx_score_audit_time ON score_audit(scan_time DESC);
+                """)
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS scan_audit (
+                        id BIGSERIAL PRIMARY KEY,
+                        scan_id TEXT,
+                        start_time TIMESTAMP,
+                        end_time TIMESTAMP,
+                        duration_ms BIGINT,
+                        stocks_scanned INTEGER,
+                        stocks_succeeded INTEGER,
+                        stocks_failed INTEGER,
+                        data_source TEXT,
+                        scan_version TEXT,
+                        scan_mode TEXT DEFAULT 'manual'
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_scan_audit_time ON scan_audit(start_time DESC);
+                """)
+
                 log.info("PostgreSQL tables checked/created.")
             finally:
                 conn.close()
@@ -982,6 +1027,49 @@ def _init_sqlite():
             CREATE INDEX IF NOT EXISTS idx_scan_results_score ON scan_results(score DESC);
             CREATE INDEX IF NOT EXISTS idx_scan_results_hc ON scan_results(high_conviction);
             CREATE INDEX IF NOT EXISTS idx_news_articles_symbol ON news_articles(symbol);
+        """)
+
+        # Phase 0: Trust & Observability — score_audit + scan_audit (SQLite)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS score_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                scan_id TEXT NOT NULL,
+                scan_time TEXT NOT NULL DEFAULT (datetime('now')),
+                technical_score REAL,
+                earnings_momentum_score REAL,
+                fundamental_score REAL,
+                smart_money_score REAL,
+                sector_rotation_score REAL,
+                news_sentiment_score REAL,
+                news_spike_score REAL,
+                macro_score REAL,
+                catalyst_score REAL,
+                final_score REAL NOT NULL,
+                data_source TEXT,
+                source_reason TEXT,
+                provider_latency_ms INTEGER,
+                data_staleness_hours REAL,
+                scan_version TEXT,
+                UNIQUE (symbol, scan_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_score_audit_symbol ON score_audit(symbol);
+            CREATE INDEX IF NOT EXISTS idx_score_audit_time ON score_audit(scan_time DESC);
+
+            CREATE TABLE IF NOT EXISTS scan_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                duration_ms INTEGER,
+                stocks_scanned INTEGER,
+                stocks_succeeded INTEGER,
+                stocks_failed INTEGER,
+                data_source TEXT,
+                scan_version TEXT,
+                scan_mode TEXT DEFAULT 'manual'
+            );
+            CREATE INDEX IF NOT EXISTS idx_scan_audit_time ON scan_audit(start_time DESC);
         """)
 
         log.info("SQLite Database initialized: %s", DB_PATH)
@@ -2168,6 +2256,86 @@ def clear_meta_cache(key=None):
     else:
         _meta_cache.clear()
     log.debug("Meta cache cleared: %s", key or "ALL")
+
+
+# ─── Phase 0: Trust & Observability — Audit Functions ───
+
+def save_score_audit(results: list, scan_id: str, scan_version: str):
+    """Batch-insert score audit rows for one scan cycle.
+    
+    Uses individual execute_db calls (not executemany) because:
+    1. execute_db handles PG/SQLite dual-path automatically
+    2. ON CONFLICT DO NOTHING makes partial failures safe
+    3. Runs once per scan (~500 rows), not per request
+    
+    Gated by ENABLE_SCORE_AUDIT env var (default: true).
+    """
+    if not os.getenv("ENABLE_SCORE_AUDIT", "true").lower() == "true":
+        return
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    inserted = 0
+    for r in results:
+        try:
+            comp = r.get("_score_components", {})
+            execute_db("""
+                INSERT INTO score_audit
+                (symbol, scan_id, scan_time, technical_score, earnings_momentum_score,
+                 fundamental_score, smart_money_score, sector_rotation_score,
+                 news_sentiment_score, news_spike_score, macro_score, catalyst_score,
+                 final_score, data_source, source_reason, provider_latency_ms,
+                 data_staleness_hours, scan_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                r.get("symbol", ""),
+                scan_id,
+                now,
+                comp.get("technical"),
+                comp.get("earnings_momentum"),
+                comp.get("fundamental"),
+                comp.get("smart_money"),
+                comp.get("sector_rotation"),
+                comp.get("news_sentiment"),
+                comp.get("news_spike"),
+                comp.get("macro"),
+                comp.get("catalyst"),
+                r.get("score", 0),
+                r.get("_data_source", "UNKNOWN"),
+                r.get("_source_reason", "UNKNOWN"),
+                r.get("_provider_latency_ms"),
+                r.get("_data_staleness_hours"),
+                scan_version,
+            ))
+            inserted += 1
+        except Exception as exc:
+            # ON CONFLICT or other error — skip this row, continue batch
+            log.debug("score_audit insert skipped for %s: %s", r.get("symbol"), exc)
+    if inserted:
+        log.info("Phase 0: score_audit saved %d/%d rows (scan_id=%s)", inserted, len(results), scan_id[:20])
+
+
+def save_scan_audit(scan_id: str, start_time: str, end_time: str,
+                    duration_ms: int, stocks_scanned: int,
+                    stocks_succeeded: int, stocks_failed: int,
+                    data_source: str, scan_version: str,
+                    scan_mode: str = "manual"):
+    """Insert one scan_audit row summarising the scan run."""
+    if not os.getenv("ENABLE_SCORE_AUDIT", "true").lower() == "true":
+        return
+    try:
+        execute_db("""
+            INSERT INTO scan_audit
+            (scan_id, start_time, end_time, duration_ms, stocks_scanned,
+             stocks_succeeded, stocks_failed, data_source, scan_version, scan_mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            scan_id, start_time, end_time, duration_ms,
+            stocks_scanned, stocks_succeeded, stocks_failed,
+            data_source, scan_version, scan_mode,
+        ))
+        log.info("Phase 0: scan_audit saved (scan_id=%s, %d stocks, %dms)",
+                 scan_id[:20], stocks_scanned, duration_ms)
+    except Exception as exc:
+        log.warning("scan_audit insert failed: %s", exc)
 
 def get_stock(symbol: str) -> dict | None:
     """Get a single stock's scan data."""

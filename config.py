@@ -3,6 +3,10 @@
 import os
 from pathlib import Path
 
+# Phase 0: Scan version — increment on ANY scoring formula change
+SCAN_VERSION = "v3.0.0"
+
+
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Auth — Session Secret Key

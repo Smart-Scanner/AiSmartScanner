@@ -457,6 +457,33 @@ def run_full_scan():
         except Exception as exc:
             log.warning("Failed to persist timing baseline: %s", exc)
 
+        # Phase 0: Trust & Observability — audit trail
+        try:
+            from config import SCAN_VERSION
+            _scan_id = getattr(scan_state, "_scan_id", None) or "unknown"
+            _scan_start_str = datetime.fromtimestamp(start_time + time.time() - time.monotonic()).strftime("%Y-%m-%d %H:%M:%S")
+            _scan_end_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # Score audit: one row per stock per scan
+            db.save_score_audit(results, _scan_id, SCAN_VERSION)
+
+            # Scan audit: one row per scan run
+            db.save_scan_audit(
+                scan_id=_scan_id,
+                start_time=_scan_start_str,
+                end_time=_scan_end_str,
+                duration_ms=round(elapsed * 1000),
+                stocks_scanned=total,
+                stocks_succeeded=len(results),
+                stocks_failed=total - len(results),
+                data_source="ANGEL",  # primary source used
+                scan_version=SCAN_VERSION,
+                scan_mode="manual",
+            )
+        except Exception as exc:
+            log.warning("Phase 0: audit trail failed (non-fatal): %s", exc)
+
+
         # Subscribe all to live feed
         live_feed.subscribe([r["symbol"] for r in results])
 

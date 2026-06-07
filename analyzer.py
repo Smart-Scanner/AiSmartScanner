@@ -320,12 +320,20 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         clean = symbol.replace(".NS", "")
 
         # ── DATA FETCH ─────────────────────────────────────────────
+        _fetch_start = time.monotonic()  # Phase 0: measure provider latency
+        _data_source = "UNKNOWN"
+        _source_reason = "UNKNOWN"
         if ext_df is not None:
             df = ext_df
+            _data_source = "ANGEL"
+            _source_reason = "ANGEL_OK"
         else:
             end_date = date.today()
             start_date = end_date - timedelta(days=DATA_LOOKBACK_DAYS)
             df = stock_df(symbol=clean, from_date=start_date, to_date=end_date)
+            _data_source = "JUGAAD"
+            _source_reason = "ANGEL_UNAVAILABLE"
+        _fetch_latency_ms = round((time.monotonic() - _fetch_start) * 1000)
 
         if df.empty or len(df) < 50:
             return None
@@ -1103,6 +1111,24 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
             "pullback_pct": round(abs(dist_high), 1),
             # Scan metadata
             "scan_mode": scan_mode,
+            # Phase 0: Audit metadata (consumed by save_score_audit)
+            "_score_components": {
+                "technical": round(tech_score_30, 2),
+                "earnings_momentum": round(earnings_mom_15, 2),
+                "fundamental": round(fundamental_score_10, 2),
+                "smart_money": round(smart_money_10, 2),
+                "sector_rotation": round(sector_rotation_10, 2),
+                "news_sentiment": round(news_sentiment_8, 2),
+                "news_spike": round(news_spike_2, 2),
+                "macro": round(macro_score_5, 2),
+                "catalyst": round(catalyst_score_10, 2),
+            },
+            "_data_source": _data_source,
+            "_source_reason": _source_reason,
+            "_provider_latency_ms": _fetch_latency_ms,
+            "_data_staleness_hours": round(
+                (time.time() - df["DATE"].iloc[-1].timestamp()) / 3600, 1
+            ) if hasattr(df["DATE"].iloc[-1], "timestamp") else None,
         }
 
     except (KeyError, ValueError, IndexError, TypeError) as exc:
