@@ -493,6 +493,180 @@ def run_full_scan():
         except Exception as exc:
             log.warning("Phase 0: audit trail failed (non-fatal): %s", exc)
 
+        # ── R1 EVIDENCE COLLECTION (Append-Only, Schema-Frozen) ──────
+        try:
+            import csv as _csv
+            from datetime import date as _obs_date
+            from pathlib import Path as _Path
+
+            _R1_DEPLOY_DATE = "2026-06-08"
+            _today_str = now_ist().strftime("%Y-%m-%d")
+            _obs_day = (_obs_date.today() - _obs_date.fromisoformat(_R1_DEPLOY_DATE)).days + 1
+            _scan_id = getattr(scan_state, "_scan_id", None) or "unknown"
+            _release = "R1.0"
+            _audit_dir = _Path(__file__).parent / "release_audits"
+            _audit_dir.mkdir(parents=True, exist_ok=True)
+
+            # Scan status classification
+            _fail_count = total - len(results)
+            if _fail_count == 0:
+                _scan_status = "SUCCESS"
+            elif len(results) > total * 0.5:
+                _scan_status = "PARTIAL"
+            else:
+                _scan_status = "FAILED"
+
+            # Pre-compute score percentiles
+            _scores = sorted([r.get("score", 0) for r in results]) if results else []
+            def _pct(p):
+                if not _scores: return 0
+                idx = int(len(_scores) * p / 100)
+                return _scores[min(idx, len(_scores) - 1)]
+
+            _hc_count = sum(1 for r in results if r.get("high_conviction"))
+            _golden_count = sum(1 for r in results if r.get("is_golden"))
+            _top_sym = results[0].get("symbol", "") if results else ""
+            _top_score = results[0].get("score", 0) if results else 0
+
+            # Store scan_id for trade_outcomes.csv to reference
+            db.set_meta("current_scan_id", _scan_id)
+
+            _manifest_rows = []  # (artifact_name, rows_written)
+
+            # ── Artifact 1: daily_release1_snapshot.csv ──
+            _snap_path = _audit_dir / "daily_release1_snapshot.csv"
+            _snap_header = not _snap_path.exists()
+            with open(_snap_path, "a", newline="", encoding="utf-8") as f:
+                w = _csv.writer(f)
+                if _snap_header:
+                    w.writerow([
+                        "Date", "Scan ID", "Release Version", "Observation Day",
+                        "Scan Status", "Stocks Attempted", "Stocks Successfully Analyzed",
+                        "Stocks Failed", "HC Count", "Golden Count",
+                        "P50", "P75", "P90", "P95", "P99",
+                        "Max Score", "Top Symbol", "Top Score",
+                    ])
+                w.writerow([
+                    _today_str, _scan_id, _release, _obs_day,
+                    _scan_status, total, len(results), _fail_count,
+                    _hc_count, _golden_count,
+                    _pct(50), _pct(75), _pct(90), _pct(95), _pct(99),
+                    _scores[-1] if _scores else 0, _top_sym, _top_score,
+                ])
+            _manifest_rows.append(("daily_release1_snapshot.csv", 1))
+            log.info("[R1 Evidence] daily_release1_snapshot.csv appended (Day %d)", _obs_day)
+
+            # ── Artifact 2: daily_top20_snapshot.csv ──
+            _top20_path = _audit_dir / "daily_top20_snapshot.csv"
+            _top20_header = not _top20_path.exists()
+            _ranked = sorted(results, key=lambda x: x.get("score", 0), reverse=True)[:20]
+            with open(_top20_path, "a", newline="", encoding="utf-8") as f:
+                w = _csv.writer(f)
+                if _top20_header:
+                    w.writerow([
+                        "Date", "Scan ID", "Release Version", "Observation Day",
+                        "Rank", "Symbol", "Score", "HC", "Golden",
+                        "Risk", "RR", "Sector", "Sector Rotation Score",
+                    ])
+                for rank, r in enumerate(_ranked, 1):
+                    w.writerow([
+                        _today_str, _scan_id, _release, _obs_day,
+                        rank, r.get("symbol", ""), r.get("score", 0),
+                        1 if r.get("high_conviction") else 0,
+                        1 if r.get("is_golden") else 0,
+                        r.get("risk_score", 0), r.get("risk_reward", 0),
+                        r.get("sector", ""), r.get("sector_rotation_score", 0),
+                    ])
+            _manifest_rows.append(("daily_top20_snapshot.csv", len(_ranked)))
+            log.info("[R1 Evidence] daily_top20_snapshot.csv appended (%d rows)", len(_ranked))
+
+            # ── Artifact 3: daily_open_trades_mtm.csv ──
+            _mtm_path = _audit_dir / "daily_open_trades_mtm.csv"
+            _mtm_header = not _mtm_path.exists()
+            _open_trades = db.get_open_paper_trades()
+            # Build price lookup from scan results
+            _price_map = {r.get("symbol", ""): r.get("price", 0) for r in results}
+            _mtm_written = 0
+            with open(_mtm_path, "a", newline="", encoding="utf-8") as f:
+                w = _csv.writer(f)
+                if _mtm_header:
+                    w.writerow([
+                        "Date", "Scan ID", "Release Version", "Observation Day",
+                        "Date Opened", "Symbol", "Entry Price", "Current Price",
+                        "Unrealized Return %", "HC Flag (Entry)", "Score (Entry)",
+                    ])
+                for t in _open_trades:
+                    _sym = t.get("symbol", "")
+                    _entry_p = t.get("entry_price", 0)
+                    _curr_p = _price_map.get(_sym, _entry_p)
+                    _unreal = round(((_curr_p - _entry_p) / _entry_p) * 100, 2) if _entry_p > 0 else 0
+                    w.writerow([
+                        _today_str, _scan_id, _release, _obs_day,
+                        t.get("entry_date", ""), _sym, _entry_p, _curr_p,
+                        _unreal, t.get("high_conviction", 0), t.get("score_at_entry", 0),
+                    ])
+                    _mtm_written += 1
+            _manifest_rows.append(("daily_open_trades_mtm.csv", _mtm_written))
+            log.info("[R1 Evidence] daily_open_trades_mtm.csv appended (%d open trades)", _mtm_written)
+
+            # ── Artifact 4: daily_hc_funnel_snapshot.csv ──
+            _funnel_path = _audit_dir / "daily_hc_funnel_snapshot.csv"
+            _funnel_header = not _funnel_path.exists()
+            from config import (HC_MIN_SCORE, HC_RSI_RANGE, HC_DELIVERY_MIN,
+                                HC_ATR_RANGE, HC_RISK_MAX, HC_MIN_RISK_REWARD,
+                                HC_REQUIRE_MACD_BULLISH, HC_REQUIRE_VOLUME,
+                                HC_MIN_SIGNALS_BULLISH)
+            # Sequential funnel attrition
+            _universe = len(results)
+            _pool = results[:]
+            _pool = [r for r in _pool if HC_RSI_RANGE[0] <= (r.get("rsi") or 0) <= HC_RSI_RANGE[1]]
+            _after_rsi = len(_pool)
+            _pool = [r for r in _pool if (r.get("delivery_pct") or 50.0) >= HC_DELIVERY_MIN]
+            _after_dlv = len(_pool)
+            _pool = [r for r in _pool if HC_ATR_RANGE[0] <= (r.get("atr_pct") or 0) <= HC_ATR_RANGE[1]]
+            _after_atr = len(_pool)
+            _pool = [r for r in _pool if (r.get("risk_score") or 0) <= HC_RISK_MAX]
+            _after_risk = len(_pool)
+            _pool = [r for r in _pool if (r.get("risk_reward") or 0) >= HC_MIN_RISK_REWARD]
+            _after_rr = len(_pool)
+            if HC_REQUIRE_MACD_BULLISH:
+                _pool = [r for r in _pool if r.get("macd_signal") == "Bullish"]
+            _after_vol = len([r for r in _pool if (r.get("volume_ratio") or 1.0) >= HC_REQUIRE_VOLUME])
+            _pool = [r for r in _pool if (r.get("volume_ratio") or 1.0) >= HC_REQUIRE_VOLUME]
+            _after_score = len([r for r in _pool if (r.get("score") or 0) >= HC_MIN_SCORE])
+            with open(_funnel_path, "a", newline="", encoding="utf-8") as f:
+                w = _csv.writer(f)
+                if _funnel_header:
+                    w.writerow([
+                        "Date", "Scan ID", "Release Version", "Observation Day",
+                        "HC Threshold Used", "Universe", "After RSI", "After Delivery",
+                        "After ATR", "After Risk", "After RR",
+                        "After Volume", "After Score", "Final HC",
+                    ])
+                w.writerow([
+                    _today_str, _scan_id, _release, _obs_day,
+                    HC_MIN_SCORE, _universe, _after_rsi, _after_dlv,
+                    _after_atr, _after_risk, _after_rr,
+                    _after_vol, _after_score, _hc_count,
+                ])
+            _manifest_rows.append(("daily_hc_funnel_snapshot.csv", 1))
+            log.info("[R1 Evidence] daily_hc_funnel_snapshot.csv appended (Day %d)", _obs_day)
+
+            # ── Manifest: Artifact Health Check ──
+            _manifest_path = _audit_dir / "manifest.csv"
+            _manifest_hdr = not _manifest_path.exists()
+            with open(_manifest_path, "a", newline="", encoding="utf-8") as f:
+                w = _csv.writer(f)
+                if _manifest_hdr:
+                    w.writerow(["Date", "Scan ID", "Artifact Name", "Rows Written"])
+                for _art_name, _art_rows in _manifest_rows:
+                    w.writerow([_today_str, _scan_id, _art_name, _art_rows])
+            log.info("[R1 Evidence] manifest.csv updated (%d artifacts validated)", len(_manifest_rows))
+
+        except Exception as _ev_exc:
+            log.warning("[R1 Evidence] Evidence collection failed (non-fatal): %s", _ev_exc)
+        # ── END R1 EVIDENCE COLLECTION ────────────────────────────────
+
 
         # Subscribe all to live feed
         live_feed.subscribe([r["symbol"] for r in results])

@@ -1,18 +1,22 @@
 """
-News Sentiment Engine -- Waterfall (Phase 4)
------------------------------------------------
-Waterfall order:
-1. GDELT + FinBERT (bulk cache, O(1) lookup) -- primary (always)
-2. NSE Announcements (1 HTTP call, cached) -- corporate events
-3. Finnhub (60/min, unlimited/day) -- top stock enrichment
-4. Google News RSS (deep/detail mode ONLY) -- shortlisted candidates
-5. MarketAux (50/day) -- supplement for high-score stocks
-6. yfinance .news -- zero-limit fallback with keyword scoring
-7. NewsAPI (100/day) -- global macro headlines only
+News Sentiment Engine — V2 (P0.1 News Intelligence Recovery)
+--------------------------------------------------------------
+Architecture: 5-Layer Provider Hierarchy + Provider-Independent FinBERT
 
-Rate limiting: MarketAux and NewsAPI have day quotas.
-Both are capped at 80 calls/day to preserve buffer.
-yfinance news guarded by yf_guard circuit breaker.
+Layer 1 (Macro):     GDELT + NSE Announcements
+Layer 2 (Stock):     Finnhub (Primary) + MarketAux (Enrichment)
+Layer 3 (Discovery): Google News RSS
+Layer 4 (Emergency): yfinance
+Layer 5 (Global):    NewsAPI (dashboard macro headlines only)
+
+All articles → Normalize → Deduplicate → FinBERT → News Impact → Scanner
+
+Governance:
+- Provider Independence: No provider is a hard dependency
+- FinBERT Independence: Scanner continues if FinBERT fails
+- Scheduler Isolation: Refresh failure ≠ scanner failure
+- Cache-First: Scanner reads cache, refresh jobs populate cache
+- Rate Limit: Configurable per-provider (not hardcoded)
 """
 
 import os
@@ -22,8 +26,12 @@ import logging
 import threading
 import xml.etree.ElementTree as ET
 import requests
+from datetime import datetime, timedelta
+
 from intelligence.news_gdelt_finbert import get_gdelt_sentiment
 from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success
+from intelligence import finbert_engine
+from intelligence import news_cache
 
 log = logging.getLogger("screener")
 
@@ -39,6 +47,11 @@ _NEWSAPI_DAILY_CAP = 80
 
 # Reset counter daily (simple time-based reset)
 _quota_reset_at = time.time() + 86400  # 24h from server start
+
+# Finnhub rate limiter (configurable token bucket)
+_finnhub_lock = threading.Lock()
+_finnhub_last_call = 0.0
+_FINNHUB_MIN_INTERVAL = 1.05  # seconds between calls (60/min safe)
 
 
 def _check_reset():
@@ -67,44 +80,9 @@ def _increment_marketaux_calls():
     db.set_meta("marketaux_calls_count", count + 1)
 
 
-def _keyword_score(text: str) -> float:
-    """Keyword-based fallback sentiment: -1 to +1."""
-    text = text.lower()
-    pos = ["profit", "growth", "order", "contract", "win", "beat", "surge", "record",
-           "expansion", "buyback", "dividend", "upgrade", "rally", "strong", "positive",
-           "revenue up", "awarded", "new high", "outperform"]
-    neg = ["loss", "decline", "miss", "fraud", "penalty", "default", "bankruptcy",
-           "layoff", "cut", "below", "weak", "negative", "selloff", "probe", "fine"]
-    s = sum(1 for w in pos if w in text) - sum(1 for w in neg if w in text)
-    return max(-1.0, min(1.0, s * 0.25))
-
-
-def _fetch_yfinance_news(symbol: str) -> tuple:
-    """Zero-limit fallback: yfinance .news with keyword scoring. Guarded by yf_guard."""
-    if not yf_is_available():
-        log.debug("yf_guard OPEN -- skipping yfinance news for %s", symbol)
-        return 0, []
-    try:
-        import yfinance as yf
-        tk = yf.Ticker(symbol + ".NS")
-        news = tk.news or []
-        yf_record_success()
-        if not news:
-            return 0, []
-        headlines = [n.get("title", "") for n in news[:10] if n.get("title")]
-        scores = [_keyword_score(h) for h in headlines]
-        avg = sum(scores) / len(scores) if scores else 0
-        items = [{"title": h, "score": round(s, 2), "source": "yfinance"}
-                 for h, s in zip(headlines, scores)]
-        news_score = round(avg * 10, 1)  # -10 to +10
-        return news_score, items[:5]
-    except Exception as exc:
-        log.debug("yfinance news failed for %s: %s", symbol, exc)
-        yf_record_failure()
-        return 0, []
-
-
-# ---- NSE Announcements (Phase 4) ----
+# ──────────────────────────────────────────────────────────────
+# Layer 1 (Macro): NSE Announcements
+# ──────────────────────────────────────────────────────────────
 _nse_cache: dict = {}       # symbol -> list of announcements
 _nse_cache_ts: float = 0
 _NSE_CACHE_TTL = 1800       # 30 min
@@ -129,12 +107,12 @@ def _fetch_nse_announcements() -> list:
     }
     try:
         url = "https://www.nseindia.com/api/corporate-announcements?index=equities&from_date=&to_date="
-        # NSE needs cookies first
         session = requests.Session()
         session.get("https://www.nseindia.com", headers=headers, timeout=5)
         resp = session.get(url, headers=headers, timeout=8)
         if resp.status_code != 200:
             log.debug("NSE announcements HTTP %d", resp.status_code)
+            news_cache.record_refresh_failure("nse", f"HTTP {resp.status_code}")
             return []
         data = resp.json()
         if not isinstance(data, list):
@@ -158,10 +136,12 @@ def _fetch_nse_announcements() -> list:
             _nse_cache = new_cache
             _nse_cache_ts = time.time()
 
+        news_cache.record_refresh_success("nse")
         log.info("NSE announcements fetched: %d events for %d symbols", len(data[:100]), len(new_cache))
         return list(new_cache.values())
     except Exception as exc:
         log.debug("NSE announcements fetch failed: %s", exc)
+        news_cache.record_refresh_failure("nse", str(exc))
         return []
 
 
@@ -171,56 +151,93 @@ def get_nse_affected_symbols() -> set:
         return set(_nse_cache.keys())
 
 
-# ---- Google News RSS (Phase 4, deep mode ONLY) ----
-def _fetch_google_news_rss(symbol: str) -> tuple:
+# ──────────────────────────────────────────────────────────────
+# Layer 2 (Stock - Primary): Finnhub
+# ──────────────────────────────────────────────────────────────
+
+def _fetch_finnhub_articles(symbol: str) -> list:
     """
-    Parse Google News RSS for stock-specific headlines.
-    CRITICAL: Only call for shortlisted stocks in deep scan mode.
-    Returns (score: float, items: list).
+    Finnhub per-stock news — 60/min, unlimited/day.
+    Returns raw article list (not scored — scoring delegated to FinBERT).
+    Rate limited via configurable token bucket.
     """
+    if not FINNHUB_KEY:
+        return []
+
+    # Check cache first
+    cached = news_cache.get("finnhub", symbol)
+    if cached is not None:
+        return cached
+
+    # Rate limiter (configurable interval)
+    global _finnhub_last_call
+    with _finnhub_lock:
+        elapsed = time.time() - _finnhub_last_call
+        if elapsed < _FINNHUB_MIN_INTERVAL:
+            time.sleep(_FINNHUB_MIN_INTERVAL - elapsed)
+        _finnhub_last_call = time.time()
+
     try:
-        query = f"{symbol}+NSE+stock"
-        url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
-        resp = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
-        if resp.status_code != 200:
-            return 0, []
-
-        root = ET.fromstring(resp.content)
-        items_xml = root.findall(".//item")
-        if not items_xml:
-            return 0, []
-
-        headlines = []
-        for item in items_xml[:10]:
-            title_el = item.find("title")
-            if title_el is not None and title_el.text:
-                headlines.append(title_el.text.strip())
-
-        if not headlines:
-            return 0, []
-
-        scores = [_keyword_score(h) for h in headlines]
-        avg = sum(scores) / len(scores) if scores else 0
-        items = [{"title": h, "score": round(s, 2), "source": "google_rss"}
-                 for h, s in zip(headlines, scores)]
-        return round(avg * 10, 1), items[:5]
-    except Exception as exc:
-        log.debug("Google RSS failed for %s: %s", symbol, exc)
-        return 0, []
-
-
-from datetime import datetime
-
-def _fetch_marketaux(symbol: str) -> tuple:
-    """MarketAux per-stock sentiment (50/day quota)."""
-    if not MARKETAUX_KEY:
-        return None, []
+        now = datetime.now()
+        from_dt = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+        to_dt = now.strftime("%Y-%m-%d")
+        url = (f"https://finnhub.io/api/v1/company-news"
+               f"?symbol={symbol}.NS&from={from_dt}&to={to_dt}&token={FINNHUB_KEY}")
+        resp = requests.get(url, timeout=6)
         
+        if resp.status_code == 429:
+            log.warning("Finnhub rate limit hit for %s", symbol)
+            news_cache.record_refresh_failure("finnhub", "HTTP 429")
+            return []
+        
+        data = resp.json()
+        if not data or not isinstance(data, list):
+            news_cache.put("finnhub", symbol, [])  # Cache empty result
+            return []
+
+        articles = [
+            {
+                "title": a.get("headline", ""),
+                "source": "finnhub",
+                "date": datetime.fromtimestamp(a.get("datetime", 0)).strftime("%Y-%m-%d") if a.get("datetime") else "",
+                "age_hours": max(0, (time.time() - a.get("datetime", time.time())) / 3600) if a.get("datetime") else 12.0,
+            }
+            for a in data[:10] if a.get("headline")
+        ]
+        
+        news_cache.put("finnhub", symbol, articles)
+        news_cache.record_refresh_success("finnhub")
+        return articles
+
+    except Exception as exc:
+        log.debug("Finnhub failed for %s: %s", symbol, exc)
+        news_cache.record_refresh_failure("finnhub", str(exc))
+        return []
+
+
+# ──────────────────────────────────────────────────────────────
+# Layer 2 (Stock - Enrichment): MarketAux
+# ──────────────────────────────────────────────────────────────
+
+def _fetch_marketaux_articles(symbol: str) -> list:
+    """
+    MarketAux per-stock news (50/day quota).
+    Returns raw article list (scoring delegated to FinBERT).
+    Triggered only for high-conviction candidates (tech_score > 80).
+    """
+    if not MARKETAUX_KEY:
+        return []
+
+    # Check cache first
+    cached = news_cache.get("marketaux", symbol)
+    if cached is not None:
+        return cached
+
     try:
         calls_today = _get_marketaux_calls_today()
         if calls_today >= _MARKETAUX_DAILY_CAP:
             log.warning("MarketAux daily quota limit of %d reached.", _MARKETAUX_DAILY_CAP)
-            return None, []
+            return []
 
         _increment_marketaux_calls()
 
@@ -228,122 +245,175 @@ def _fetch_marketaux(symbol: str) -> tuple:
                f"?symbols={symbol}.NSE&filter_entities=true"
                f"&language=en&api_token={MARKETAUX_KEY}&limit=5")
         resp = requests.get(url, timeout=6)
-        
-        # Catch rate limit or billing issues and stop making calls
+
         if resp.status_code in (429, 402, 403):
-            log.warning("MarketAux API returned error status %d. Capping quota for today.", resp.status_code)
+            log.warning("MarketAux API returned error status %d. Capping quota.", resp.status_code)
             import db
             today_str = datetime.now().strftime("%Y-%m-%d")
             db.set_meta("marketaux_calls_count", _MARKETAUX_DAILY_CAP)
-            return None, []
-            
+            news_cache.record_refresh_failure("marketaux", f"HTTP {resp.status_code}")
+            return []
+
         data = resp.json().get("data", [])
-        if not data:
-            return 0.0, []
-            
-        sents = [a.get("sentiment_score", 0) for a in data]
-        items = [{"title": a.get("title", ""),
-                  "score": round(a.get("sentiment_score", 0), 3),
-                  "date":  a.get("published_at", "")[:10],
-                  "source": "marketaux"}
-                 for a in data]
-        avg = sum(sents) / len(sents) if sents else 0
-        score = round(avg * 10, 1)
-        return score, items
+        articles = [
+            {
+                "title": a.get("title", ""),
+                "source": "marketaux",
+                "date": a.get("published_at", "")[:10] if a.get("published_at") else "",
+                "age_hours": 6.0,  # MarketAux doesn't provide exact timestamps for age calc
+            }
+            for a in data if a.get("title")
+        ]
+
+        news_cache.put("marketaux", symbol, articles)
+        news_cache.record_refresh_success("marketaux")
+        return articles
+
     except Exception as exc:
         log.debug("MarketAux failed for %s: %s", symbol, exc)
-        return None, []
+        news_cache.record_refresh_failure("marketaux", str(exc))
+        return []
 
 
-def _fetch_finnhub(symbol: str) -> tuple:
-    """Finnhub per-stock news — 60/min, unlimited/day."""
-    if not FINNHUB_KEY:
-        return None, []
+# ──────────────────────────────────────────────────────────────
+# Layer 3 (Discovery): Google News RSS
+# ──────────────────────────────────────────────────────────────
+
+def _fetch_google_rss_articles(symbol: str) -> list:
+    """
+    Google News RSS for stock-specific headlines.
+    Only called when higher layers yield < 2 articles.
+    """
+    cached = news_cache.get("google_rss", symbol)
+    if cached is not None:
+        return cached
+
     try:
-        from datetime import datetime, timedelta
-        now = datetime.now()
-        from_dt = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-        to_dt = now.strftime("%Y-%m-%d")
-        url = (f"https://finnhub.io/api/v1/company-news"
-               f"?symbol={symbol}.NS&from={from_dt}&to={to_dt}&token={FINNHUB_KEY}")
-        data = requests.get(url, timeout=6).json()
-        if not data or not isinstance(data, list):
-            return None, []
-        headlines = [a.get("headline", "") for a in data[:10] if a.get("headline")]
-        scores = [_keyword_score(h) for h in headlines]
-        avg = sum(scores) / len(scores) if scores else 0
-        items = [{"title": h, "score": round(s, 2), "source": "finnhub"}
-                 for h, s in zip(headlines, scores)]
-        return round(avg * 10, 1), items[:5]
-    except Exception as exc:
-        log.debug("Finnhub failed for %s: %s", symbol, exc)
-        return None, []
+        query = f"{symbol}+NSE+stock"
+        url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
+        resp = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code != 200:
+            news_cache.record_refresh_failure("google_rss", f"HTTP {resp.status_code}")
+            return []
 
+        root = ET.fromstring(resp.content)
+        items_xml = root.findall(".//item")
+        if not items_xml:
+            news_cache.put("google_rss", symbol, [])
+            return []
+
+        articles = []
+        for item in items_xml[:10]:
+            title_el = item.find("title")
+            if title_el is not None and title_el.text:
+                articles.append({
+                    "title": title_el.text.strip(),
+                    "source": "google_rss",
+                    "date": "",
+                    "age_hours": 6.0,
+                })
+
+        news_cache.put("google_rss", symbol, articles)
+        news_cache.record_refresh_success("google_rss")
+        return articles
+
+    except Exception as exc:
+        log.debug("Google RSS failed for %s: %s", symbol, exc)
+        news_cache.record_refresh_failure("google_rss", str(exc))
+        return []
+
+
+# ──────────────────────────────────────────────────────────────
+# Layer 4 (Emergency): yfinance
+# ──────────────────────────────────────────────────────────────
+
+def _fetch_yfinance_articles(symbol: str) -> list:
+    """Zero-limit emergency fallback via yfinance .news. Guarded by yf_guard."""
+    if not yf_is_available():
+        log.debug("yf_guard OPEN -- skipping yfinance news for %s", symbol)
+        return []
+    try:
+        import yfinance as yf
+        tk = yf.Ticker(symbol + ".NS")
+        news = tk.news or []
+        yf_record_success()
+        if not news:
+            return []
+        articles = [
+            {
+                "title": n.get("title", ""),
+                "source": "yfinance",
+                "date": "",
+                "age_hours": 12.0,
+            }
+            for n in news[:10] if n.get("title")
+        ]
+        news_cache.record_refresh_success("yahoo")
+        return articles
+    except Exception as exc:
+        log.debug("yfinance news failed for %s: %s", symbol, exc)
+        yf_record_failure()
+        news_cache.record_refresh_failure("yahoo", str(exc))
+        return []
+
+
+# ──────────────────────────────────────────────────────────────
+# Master Orchestrator: 5-Layer → FinBERT → Impact
+# ──────────────────────────────────────────────────────────────
 
 def fetch_news_sentiment(symbol: str, query_marketaux: bool = False, scan_mode: str = "fast") -> tuple:
     """
-    Master news sentiment function.
+    Master news sentiment function (V2).
     Returns (score: float, items: list, source_breakdown: dict).
-    Score range: roughly -15 to +15.
+    Score range: -15 to +15.
 
-    Waterfall:
-    1. GDELT + FinBERT cache (O(1)) -- always
-    2. Finnhub (if key set)
-    3. Google RSS (deep mode ONLY for shortlisted candidates)
-    4. MarketAux (if query_marketaux and quota available)
-    5. yfinance fallback (if all others empty)
+    5-Layer Architecture:
+    1. Macro: GDELT (cache) + NSE Events
+    2. Stock: Finnhub (Primary) + MarketAux (Enrichment, if query_marketaux)
+    3. Discovery: Google RSS (if above yield < 2 articles)
+    4. Emergency: yfinance (if all others empty)
+
+    All articles → finbert_engine → News Impact Pipeline → Scanner
     """
-    source_breakdown = {}
+    all_articles = []
 
-    # 1. GDELT primary (always first)
+    # ── Layer 1: Macro (GDELT cache + NSE) ──
     gdelt_score, gdelt_articles, spike = get_gdelt_sentiment(symbol)
-    if gdelt_score != 0 or gdelt_articles:
-        source_breakdown["gdelt"] = {"score": gdelt_score, "count": len(gdelt_articles)}
+    if gdelt_articles:
+        for art in gdelt_articles:
+            art["source"] = art.get("source", "gdelt")
+            if "age_hours" not in art:
+                art["age_hours"] = art.get("age_h", 12.0)
+        all_articles.extend(gdelt_articles)
 
-    # 2. Finnhub supplement
-    fh_score, fh_items = _fetch_finnhub(symbol)
-    if fh_score is not None:
-        source_breakdown["finnhub"] = {"score": fh_score, "count": len(fh_items)}
+    # ── Layer 2: Stock (Finnhub Primary) ──
+    fh_articles = _fetch_finnhub_articles(symbol)
+    all_articles.extend(fh_articles)
 
-    # 3. Google RSS (deep mode ONLY for shortlisted candidates)
-    rss_score, rss_items = 0, []
-    if scan_mode == "deep" and abs(gdelt_score) < 2 and (fh_score is None or abs(fh_score or 0) < 2):
-        rss_score, rss_items = _fetch_google_news_rss(symbol)
-        if rss_score != 0:
-            source_breakdown["google_rss"] = {"score": rss_score, "count": len(rss_items)}
+    # ── Layer 2: Stock (MarketAux Enrichment — only if gated) ──
+    if query_marketaux:
+        mx_articles = _fetch_marketaux_articles(symbol)
+        all_articles.extend(mx_articles)
 
-    # 4. MarketAux supplement (only if allowed and GDELT found nothing significant)
-    mx_score, mx_items = None, []
-    if query_marketaux and abs(gdelt_score) < 2 and (fh_score is None or abs(fh_score or 0) < 2):
-        mx_score, mx_items = _fetch_marketaux(symbol)
-        if mx_score is not None:
-            source_breakdown["marketaux"] = {"score": mx_score, "count": len(mx_items)}
+    # ── Layer 3: Discovery (Google RSS — only if above yield < 2 articles) ──
+    if len(all_articles) < 2:
+        rss_articles = _fetch_google_rss_articles(symbol)
+        all_articles.extend(rss_articles)
 
-    # 5. Fallback
-    yf_score, yf_items = 0, []
-    if gdelt_score == 0 and fh_score is None and mx_score is None and rss_score == 0:
-        yf_score, yf_items = _fetch_yfinance_news(symbol)
-        if yf_score != 0:
-            source_breakdown["yfinance"] = {"score": yf_score, "count": len(yf_items)}
+    # ── Layer 4: Emergency (yfinance — only if all others empty) ──
+    if len(all_articles) == 0:
+        yf_articles = _fetch_yfinance_articles(symbol)
+        all_articles.extend(yf_articles)
 
-    # Combine scores (GDELT is primary, others supplement)
-    scores = [s for s in [gdelt_score, fh_score, rss_score, mx_score] if s is not None and s != 0]
-    if scores:
-        final_score = gdelt_score * 0.5 + (sum(scores[1:]) / max(1, len(scores[1:]))) * 0.5 if len(scores) > 1 else gdelt_score
-    else:
-        final_score = yf_score
+    # ── Universal Pipeline: Normalize → Deduplicate → FinBERT → Impact ──
+    result = finbert_engine.process_articles(all_articles)
 
-    # Merge articles
-    all_items = gdelt_articles[:3] + (fh_items or [])[:2] + rss_items[:2] + mx_items[:2]
+    return result["score"], result["items"], result.get("source_breakdown", {})
 
-    # Spike bonus: >3x news volume -> extra signal
-    if spike > 3:
-        final_score += 5
-    elif spike > 1.5:
-        final_score += 2
 
-    return round(final_score, 2), all_items[:6], source_breakdown
-
+# ──────────────────────────────────────────────────────────────
+# Layer 5 (Global): NewsAPI macro headlines (dashboard only)
+# ──────────────────────────────────────────────────────────────
 
 def get_global_headlines() -> list:
     """

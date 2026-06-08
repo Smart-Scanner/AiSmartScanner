@@ -125,6 +125,10 @@ def _build_slim(r: dict) -> str:
     risk_reward, booking_plan, target_1, target_2.
     """
     slim = {k: v for k, v in r.items() if k not in _HEAVY_FIELDS}
+    # Release 1: Preserve news sentiment score in slim payload
+    # (the full news_sentiment object is stripped by _HEAVY_FIELDS for bandwidth)
+    if r.get("news_sentiment"):
+        slim["news_sentiment_score"] = r["news_sentiment"].get("score", 0.0)
     trade = r.get("trade")
     if isinstance(trade, dict):
         trade_summary = {
@@ -3128,6 +3132,42 @@ def close_paper_trade(trade_id: int, exit_price: float, exit_reason: str,
     log.info("[PaperTrade] EXIT: %s @ ₹%.2f (%s), return=%.2f%%, alpha=%.2f%%, held=%d days",
              trade["symbol"], exit_price, exit_reason, return_pct,
              alpha_pct or 0, days_held)
+
+    # ── R1 Evidence Collection: trade_outcomes.csv (Append-Only) ──
+    try:
+        _R1_DEPLOY_DATE = "2026-06-08"
+        from datetime import date as _date
+        _obs_day = (_date.today() - _date.fromisoformat(_R1_DEPLOY_DATE)).days + 1
+        _scan_id = get_meta("current_scan_id") or "manual"
+        _outcomes_path = Path(__file__).parent / "release_audits" / "trade_outcomes.csv"
+        _outcomes_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_header = not _outcomes_path.exists()
+        with open(_outcomes_path, "a", newline="", encoding="utf-8") as f:
+            import csv as _csv
+            w = _csv.writer(f)
+            if _write_header:
+                w.writerow([
+                    "Release Version", "Observation Day", "Scan ID",
+                    "Date Opened", "Date Closed", "Symbol",
+                    "Entry Price", "Exit Price", "Exit Reason",
+                    "HC Flag (Entry)", "Golden Flag (Entry)",
+                    "Score (Entry)", "Risk Score (Entry)", "RR (Entry)",
+                    "Sector", "Return %", "Win/Loss",
+                ])
+            w.writerow([
+                "R1.0", _obs_day, _scan_id,
+                trade.get("entry_date", ""), exit_date, trade["symbol"],
+                entry_price, exit_price, exit_reason,
+                trade.get("high_conviction", 0), trade.get("is_golden", 0),
+                trade.get("score_at_entry", 0), trade.get("risk_score", 0),
+                trade.get("risk_reward", 0),
+                trade.get("sector", ""), round(return_pct, 2),
+                "WIN" if return_pct > 0 else "LOSS",
+            ])
+        log.info("[R1 Evidence] trade_outcomes.csv appended: %s return=%.2f%%", trade["symbol"], return_pct)
+    except Exception as _ev_exc:
+        log.warning("[R1 Evidence] trade_outcomes.csv write failed (non-fatal): %s", _ev_exc)
+
     return True
 
 

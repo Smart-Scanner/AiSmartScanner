@@ -1,0 +1,2 @@
+Date,Scan ID,Release Version,Observation Day,Scan Status,Stocks Attempted,Stocks Successfully Analyzed,Stocks Failed,HC Count,Golden Count,P50,P75,P90,P95,P99,Max Score,Top Symbol,Top Score
+2026-06-08,scan_manual_1780912272_5903ae,R1.0,1,PARTIAL,574,573,1,0,0,38,42,46,48,52,57,PFIZER,57

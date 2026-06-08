@@ -1,13 +1,14 @@
 """
-GDELT + FinBERT News Intelligence Engine
------------------------------------------
+GDELT News Intelligence Engine (Decoupled from FinBERT)
+---------------------------------------------------------
+GDELT bulk article fetching + symbol mapping.
+FinBERT scoring is delegated to intelligence.finbert_engine (Governance Rule #21).
+
 FIXED (production-ready):
 - _parse_age_hours: uses compact UTC format YYYYMMDDHHMMSS (no T separator)
 - baseline_count: floor of 5× per-symbol avg, not 3×
-- removed unused total_w variable
-- batch_size passed to pipeline constructor (not assumed later)
 - _safe_match_token: word-boundary regex prevents false-positives on Airtel/Adani/SBI
-- 4-signal scoring: sentiment avg + volume spike + freshness-weighted confidence + negative penalty
+- GDELT rate limiting via controlled queue approach
 """
 
 import os
@@ -23,50 +24,10 @@ from functools import lru_cache
 log = logging.getLogger("screener")
 
 # ──────────────────────────────────────────────────────────────
-# FinBERT — lazy load once, batch_size in constructor
+# FinBERT scoring — delegated to finbert_engine (Governance #21)
 # ──────────────────────────────────────────────────────────────
-_finbert = None
-_finbert_lock = threading.Lock()
-_FINBERT_BATCH = 32
-
-
-def _get_finbert():
-    global _finbert
-    if _finbert is None:
-        with _finbert_lock:
-            if _finbert is None:
-                try:
-                    from transformers import pipeline
-                    import torch
-                    
-                    # Detect if CUDA (NVIDIA GPU) is available and print details
-                    if torch.cuda.is_available():
-                        device = 0
-                        device_name = torch.cuda.get_device_name(0)
-                        log.info(f"CUDA GPU detected: {device_name}. Loading FinBERT model on GPU (CUDA:0)...")
-                    else:
-                        device = -1
-                        log.info("CUDA GPU not available or not configured in PyTorch. Loading FinBERT model on CPU...")
-                        try:
-                            torch.set_num_threads(2)
-                            torch.set_num_interop_threads(2)
-                            log.info("PyTorch CPU threads limited to 2 to prevent CPU starvation.")
-                        except Exception as thread_exc:
-                            log.warning("Could not limit PyTorch CPU threads: %s", thread_exc)
-                    
-                    _finbert = pipeline(
-                        "text-classification",
-                        model="ProsusAI/finbert",
-                        batch_size=_FINBERT_BATCH,   # set here, not later
-                        truncation=True,
-                        max_length=128,
-                        device=device,
-                    )
-                    log.info("FinBERT loaded OK")
-                except Exception as exc:
-                    log.warning("FinBERT load failed: %s — using keyword fallback", exc)
-                    _finbert = None
-    return _finbert
+from intelligence.finbert_engine import score_articles as _score_articles_finbert
+from intelligence.finbert_engine import _keyword_sentiment
 
 
 # ──────────────────────────────────────────────────────────────
@@ -169,6 +130,10 @@ def fetch_gdelt_india_bulk(hours_back: int = 48) -> list:
     query_failures = 0
     for query in GDELT_QUERIES:
         try:
+            # Controlled rate limiting between queries
+            if query != GDELT_QUERIES[0]:
+                time.sleep(2)  # Controlled queue approach: 2s between sequential queries
+
             params = {
                 "query": query,
                 "mode": "ArtList",
@@ -247,50 +212,18 @@ def _safe_match_token(text: str, term: str) -> bool:
     return re.search(rf"\b{re.escape(term)}\b", text.lower()) is not None
 
 
-# ──────────────────────────────────────────────────────────────
-# FinBERT Batch Scoring
-# ──────────────────────────────────────────────────────────────
-
-def _keyword_sentiment(text: str) -> float:
-    """Fast keyword fallback when FinBERT unavailable."""
-    text_l = text.lower()
-    pos = ["profit", "growth", "order win", "contract", "acquisition", "beat", "surge",
-           "record", "expansion", "buyback", "dividend", "upgrade", "positive", "strong",
-           "rally", "outperform", "revenue up", "wins", "awarded", "new order"]
-    neg = ["loss", "decline", "miss", "downgrade", "fraud", "penalty", "default",
-           "bankruptcy", "layoff", "cut", "below", "weak", "negative",
-           "selloff", "crash", "warning", "probe", "fine", "reject"]
-    score = sum(1 for w in pos if w in text_l) - sum(1 for w in neg if w in text_l)
-    return max(-1.0, min(1.0, score * 0.3))
-
-
 def score_headlines_finbert(headlines: list) -> list:
     """
-    Batch-score list of headline strings with FinBERT.
+    Batch-score list of headline strings.
+    Delegates to finbert_engine for provider-independent scoring.
     Returns list of floats: positive=+conf, negative=-conf, neutral=0.
-    batch_size already set in pipeline constructor.
     """
     if not headlines:
         return []
-    clf = _get_finbert()
-    if clf is None:
-        return [_keyword_sentiment(h) for h in headlines]
-    try:
-        results = clf(headlines, truncation=True, max_length=128)
-        scores = []
-        for r in results:
-            label = r["label"].lower()
-            conf = r["score"]
-            if label == "positive":
-                scores.append(conf)
-            elif label == "negative":
-                scores.append(-conf)
-            else:
-                scores.append(0.0)
-        return scores
-    except Exception as exc:
-        log.warning("FinBERT batch scoring failed: %s", exc)
-        return [_keyword_sentiment(h) for h in headlines]
+    # Build article dicts for the engine
+    articles = [{"title": h, "source": "gdelt", "age_hours": 12.0} for h in headlines]
+    scored = _score_articles_finbert(articles)
+    return [a.get("sentiment", _keyword_sentiment(a["title"])) for a in scored]
 
 
 # ──────────────────────────────────────────────────────────────

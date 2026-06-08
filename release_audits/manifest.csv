@@ -1,0 +1,5 @@
+Date,Scan ID,Artifact Name,Rows Written
+2026-06-08,scan_manual_1780912272_5903ae,daily_release1_snapshot.csv,1
+2026-06-08,scan_manual_1780912272_5903ae,daily_top20_snapshot.csv,20
+2026-06-08,scan_manual_1780912272_5903ae,daily_open_trades_mtm.csv,0
+2026-06-08,scan_manual_1780912272_5903ae,daily_hc_funnel_snapshot.csv,1

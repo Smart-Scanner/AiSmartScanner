@@ -48,16 +48,17 @@ AUTO_SCAN_INTERVAL = int(os.getenv("AUTO_SCAN_INTERVAL", "60"))
 ATR_SL_MULTIPLIER = 2.0
 TARGET_USES_RESISTANCE = True
 
-# High Conviction thresholds — R1-P0-Fix6: tightened for quality
-HC_MIN_SCORE = 50            # was 45 — higher bar for HC flag
+# High Conviction thresholds — Release 1 Calibration (P0.8 Audit-Derived)
+# HC_MIN_SCORE = 55 is a Release 1 observation value subject to P1 Truth Audit.
+HC_MIN_SCORE = 55            # was 50 — calibrated from P0.8 counterfactual ladder
 HC_MIN_SIGNALS_BULLISH = 5
-HC_RSI_RANGE = (28, 70)
-HC_DELIVERY_MIN = 45
+HC_RSI_RANGE = (40, 70)      # was (28, 70) — avoid deep oversold entries
+HC_DELIVERY_MIN = 40         # was 45 — relaxed per audit funnel analysis
 HC_ATR_RANGE = (1.5, 5.5)
-HC_RISK_MAX = 45             # was 60 — meaningful with risk base=15
-HC_REQUIRE_MACD_BULLISH = True
-HC_REQUIRE_VOLUME = 1.0       # min volume ratio
-HC_MIN_RISK_REWARD = 2.2     # was 2.0 — better asymmetry required
+HC_RISK_MAX = 40             # was 45 — tighter risk for quality
+HC_REQUIRE_MACD_BULLISH = False  # was True — disabled to break Intersection of Death
+HC_REQUIRE_VOLUME = 1.0       # min volume ratio — unchanged
+HC_MIN_RISK_REWARD = 2.2     # unchanged
 
 # Bear Play thresholds (oversold bounce in bear market)
 BP_RSI_MAX = 40

@@ -297,6 +297,35 @@ def classify_grade(score: int) -> str:
 
 
 # ===================================================================
+#  FUNDAMENTAL AVAILABILITY CONTRACT (Release 1)
+# ===================================================================
+# A stock is considered Fundamental-Data-Available when the minimum
+# required fundamental dataset used by the scoring engine is present.
+# Normalization eligibility uses this contract and does NOT depend
+# on only PE/PB fields.
+#
+# Scoring-relevant fields: pe, pb, roe, roa, revenue_growth,
+# earnings_growth, debt_to_equity (the 7 fields that drive fund_score).
+# If ALL of these are None, the data is genuinely missing from provider.
+
+_FUND_SCORING_FIELDS = ("pe", "pb", "roe", "roa", "revenue_growth",
+                        "earnings_growth", "debt_to_equity")
+
+
+def _is_fundamental_data_missing(fundamentals: dict) -> bool:
+    """Return True if fundamental data is genuinely unavailable from provider.
+
+    Normalization Contract: This function returns True ONLY when the data
+    source failed to provide ANY of the scoring-relevant fields.
+    A stock with valid but poor fundamentals (all fields present, scoring 0)
+    must NOT be considered missing.
+    """
+    if not fundamentals:
+        return True
+    return all(fundamentals.get(f) is None for f in _FUND_SCORING_FIELDS)
+
+
+# ===================================================================
 #  CORE ANALYSIS — 25 INDICATORS + 12 INTELLIGENCE LAYERS
 # ===================================================================
 
@@ -848,11 +877,22 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
                     bonus -= 1.5
             catalyst_score_10 = min(10.0, max(0.0, 5.0 + bonus))
 
-        final_score = round(
+        # ── Release 1: Fundamental-Only Dynamic Normalization ─────
+        # Normalization Contract: Only remove weights for components that are
+        # completely unavailable. Components available but scoring 0 retain weight.
+        # Fundamental Availability Contract: Check the full set of fields used by
+        # the fundamental scoring engine, not just PE/PB.
+        max_available_weight = 100.0
+        _fund_data_missing = _is_fundamental_data_missing(fundamentals)
+        if _fund_data_missing:
+            max_available_weight -= 10.0
+
+        raw_sum = (
             tech_score_30 + earnings_mom_15 + fundamental_score_10 +
             smart_money_10 + sector_rotation_10 + news_sentiment_8 +
             news_spike_2 + macro_score_5 + catalyst_score_10
         )
+        final_score = round((raw_sum / max_available_weight) * 100) if max_available_weight > 0 else 0
         score_100 = min(100, max(0, final_score))
         grade = classify_grade(score_100)
 
