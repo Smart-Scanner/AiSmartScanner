@@ -6,6 +6,7 @@ NSE Stock Screener + Portfolio Manager with Angel One Live Feed
 
 import os
 import time
+import signal
 import logging
 import threading
 
@@ -38,7 +39,8 @@ import auth_db
 import live_feed
 import cache_layer
 from config import AUTO_SCAN_INTERVAL, FLASK_SECRET_KEY, DATA_LOOKBACK_DAYS
-from scanner import scan_state, has_valid_cache, run_full_scan
+from scanner import scan_state, has_valid_cache, run_full_scan, _shutdown_event
+from scan_context import ScanContext
 from analyzer import fetch_and_analyze
 from routes.pages import pages_bp
 from routes.api import api_bp
@@ -118,7 +120,9 @@ if has_valid_cache():
     threading.Thread(target=lambda: warmup_all(set(cached_syms) if cached_syms else None), daemon=True, name="startup-warmup").start()
 else:
     log.info("No valid cache. Starting first scan...")
-    threading.Thread(target=run_full_scan, daemon=True).start()
+    # Phase 1: Create ScanContext for initial scan
+    _startup_ctx = ScanContext.create(trigger_source="auto", user_id="system", mode="auto")
+    threading.Thread(target=run_full_scan, args=(_startup_ctx,), daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +191,11 @@ def _auto_scan_loop():
             needs_deep = False
             if market_open and (now - last_fast >= _FAST_INTERVAL) and not scan_state.is_scanning:
                 log.info("[AutoScan] Market open -- starting fast scan")
-                run_full_scan()
+                # Phase 1: Create ScanContext for auto-scan
+                _auto_ctx = ScanContext.create(
+                    trigger_source="auto", user_id="system", mode="auto",
+                )
+                run_full_scan(_auto_ctx)
                 last_fast = time.time()
                 db.set_meta("last_fast_scan_ts", str(last_fast))
                 db.set_meta("last_scan_ts", str(last_fast))
@@ -196,7 +204,10 @@ def _auto_scan_loop():
                 last = db.get_meta("last_scan")
                 if not last:
                     log.info("[AutoScan] No data yet -- starting scan")
-                    run_full_scan()
+                    _auto_ctx = ScanContext.create(
+                        trigger_source="auto", user_id="system", mode="auto",
+                    )
+                    run_full_scan(_auto_ctx)
                     last_fast = time.time()
                     db.set_meta("last_fast_scan_ts", str(last_fast))
                     db.set_meta("last_scan_ts", str(last_fast))
@@ -516,6 +527,61 @@ log.info("Outcome checker enabled: every 30 minutes during market hours")
 # Phase 8: Start MarketAux background worker
 from scanner import start_marketaux_worker
 start_marketaux_worker()
+
+# Phase 2: Start Active Watchdog (Section 3, 8)
+from watchdog import start_watchdog
+_watchdog_thread = start_watchdog(_shutdown_event)
+log.info("Watchdog started (Section 3: active stale scan recovery)")
+
+
+# ─── Phase 0B: Graceful Shutdown Handler (Section 12) ─────────────────
+def _graceful_shutdown(signum, frame):
+    """Handle SIGTERM/SIGINT for graceful process termination.
+    Section 12: On shutdown:
+    1. Set shutdown event for all daemon threads
+    2. If a scan is active, transition it to FAILED
+    3. Stop the watchdog
+    """
+    sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+    log.warning("[SHUTDOWN] Signal %s received — initiating graceful shutdown", sig_name)
+
+    # 1. Signal all threads to stop
+    _shutdown_event.set()
+
+    # 2. Flush any active scan to FAILED
+    try:
+        active, active_scan_id = db.is_scan_active()
+        if active:
+            log.warning("[SHUTDOWN] Active scan %s — transitioning to FAILED", active_scan_id)
+            db.transition_scan_state(
+                scan_id=active_scan_id,
+                from_status="running",
+                to_status="failed",
+                reason="graceful_shutdown",
+                actor="system",
+                error_message=f"Process terminated by {sig_name}",
+            )
+    except Exception as exc:
+        log.error("[SHUTDOWN] Failed to flush active scan: %s", exc)
+
+    # 3. Stop watchdog
+    try:
+        from watchdog import stop_watchdog
+        stop_watchdog()
+    except Exception:
+        pass
+
+    log.warning("[SHUTDOWN] Graceful shutdown complete")
+
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, _graceful_shutdown)
+signal.signal(signal.SIGINT, _graceful_shutdown)
+# Windows-specific: SIGBREAK (Ctrl+Break)
+if hasattr(signal, 'SIGBREAK'):
+    signal.signal(signal.SIGBREAK, _graceful_shutdown)
+log.info("Signal handlers registered (SIGTERM, SIGINT) for graceful shutdown")
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5051))

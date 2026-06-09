@@ -826,6 +826,47 @@ def init_db():
                     CREATE INDEX IF NOT EXISTS idx_scan_audit_time ON scan_audit(start_time DESC);
                 """)
 
+                # ── Phase 0A+1: Governance schema additions (backward compatible) ──
+                # Section 5: Context columns on scan_runs
+                for col_def in [
+                    "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS correlation_id TEXT;",
+                    "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS request_id TEXT;",
+                    "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS trigger_source TEXT DEFAULT 'manual';",
+                    "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'system';",
+                    "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS scanner_version TEXT;",
+                    "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS scoring_version TEXT;",
+                    "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS recommendation_version TEXT;",
+                    "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS config_snapshot JSONB;",
+                    "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS parent_scan_id TEXT;",
+                ]:
+                    try:
+                        cur.execute(col_def)
+                    except Exception:
+                        pass  # Column already exists
+
+                # Section 36: Score breakdown for explainability
+                try:
+                    cur.execute("ALTER TABLE score_audit ADD COLUMN IF NOT EXISTS score_breakdown JSONB;")
+                except Exception:
+                    pass
+
+                # Section 4, 30: State transition audit log (append-only)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS scan_state_transitions (
+                        id BIGSERIAL PRIMARY KEY,
+                        scan_id TEXT NOT NULL,
+                        old_state TEXT NOT NULL,
+                        new_state TEXT NOT NULL,
+                        reason TEXT,
+                        actor TEXT DEFAULT 'system',
+                        correlation_id TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_sst_scan_id ON scan_state_transitions(scan_id);
+                    CREATE INDEX IF NOT EXISTS idx_sst_created ON scan_state_transitions(created_at DESC);
+                """)
+                log.info("Governance schema additions verified (scan_state_transitions, context columns)")
+
                 log.info("PostgreSQL tables checked/created.")
             finally:
                 conn.close()
@@ -1255,6 +1296,46 @@ def _init_sqlite():
             CREATE INDEX IF NOT EXISTS idx_scan_audit_time ON scan_audit(start_time DESC);
         """)
 
+        # ── Phase 0A+1: Governance schema additions (SQLite) ──
+        # Section 4, 30: State transition audit log
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS scan_state_transitions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id TEXT NOT NULL,
+                old_state TEXT NOT NULL,
+                new_state TEXT NOT NULL,
+                reason TEXT,
+                actor TEXT DEFAULT 'system',
+                correlation_id TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_sst_scan_id ON scan_state_transitions(scan_id);
+            CREATE INDEX IF NOT EXISTS idx_sst_created ON scan_state_transitions(created_at DESC);
+        """)
+
+        # Section 5: Context columns on scan_runs (SQLite ALTER is limited)
+        for col_sql in [
+            "ALTER TABLE scan_runs ADD COLUMN correlation_id TEXT;",
+            "ALTER TABLE scan_runs ADD COLUMN request_id TEXT;",
+            "ALTER TABLE scan_runs ADD COLUMN trigger_source TEXT DEFAULT 'manual';",
+            "ALTER TABLE scan_runs ADD COLUMN user_id TEXT DEFAULT 'system';",
+            "ALTER TABLE scan_runs ADD COLUMN scanner_version TEXT;",
+            "ALTER TABLE scan_runs ADD COLUMN scoring_version TEXT;",
+            "ALTER TABLE scan_runs ADD COLUMN recommendation_version TEXT;",
+            "ALTER TABLE scan_runs ADD COLUMN config_snapshot TEXT;",
+            "ALTER TABLE scan_runs ADD COLUMN parent_scan_id TEXT;",
+        ]:
+            try:
+                conn.execute(col_sql)
+            except Exception:
+                pass  # Column already exists
+
+        # Section 36: Score breakdown
+        try:
+            conn.execute("ALTER TABLE score_audit ADD COLUMN score_breakdown TEXT;")
+        except Exception:
+            pass
+
         log.info("SQLite Database initialized: %s", DB_PATH)
 
 
@@ -1283,26 +1364,330 @@ def auto_clear_daily_cache():
     except Exception as exc:
         log.warning("Daily cache auto-clear failed: %s", exc)
 
-# ─── Unified Scan State (Phase 6) ───
+# ─── Unified Scan State (Phase 6 + Phase 0A Hardening) ───
 
 import uuid as _uuid
+from events import ACTOR_SYSTEM, ACTOR_WATCHDOG, ACTOR_USER
 
 _SCAN_LOCK_TIMEOUT_MIN = 30  # stale scan recovery threshold
 
 
-class ScanState:
-    """DB-backed scan state. Single source of truth for scan progress.
-    Uses current_scan_state (single row, O(1) reads) + scan_runs (history).
+# ═══════════════════════════════════════════════════════════════
+# Section 30: GOVERNANCE STATE MATRIX
+# Defines all valid state transitions. Any transition not listed
+# here is ILLEGAL and will be rejected with a CRITICAL log.
+# ═══════════════════════════════════════════════════════════════
+VALID_TRANSITIONS = {
+    "created":    {"running", "cancelled", "rejected"},
+    "running":    {"completed", "failed", "cancelled", "stale"},
+    "completed":  set(),           # Terminal — no transitions allowed
+    "failed":     {"recovering"},   # Can retry via new linked scan
+    "cancelled":  set(),           # Terminal
+    "stale":      {"failed"},      # Watchdog marks stale → failed
+    "recovering": {"running"},     # Recovery creates new scan
+    "rejected":   set(),           # Terminal — client error
+    "idle":       {"running"},     # current_scan_state special state
+}
 
-    Sprint 1 Phase 1: Added memory cache for is_scanning (2s TTL)
-    to eliminate redundant DB queries from /api/status polling.
+
+def _is_valid_transition(from_status: str, to_status: str) -> bool:
+    """Check if a state transition is allowed per the governance matrix."""
+    allowed = VALID_TRANSITIONS.get(from_status, set())
+    return to_status in allowed
+
+
+# ═══════════════════════════════════════════════════════════════
+# Section 4, 30: STATE TRANSITION FUNCTIONS
+# Atomic, audited state transitions. Every transition creates
+# an append-only row in scan_state_transitions.
+# ═══════════════════════════════════════════════════════════════
+
+def save_state_transition(scan_id: str, old_state: str, new_state: str,
+                          reason: str = "", actor: str = "system",
+                          correlation_id: str = ""):
+    """Insert an append-only state transition audit row.
+    Section 4: Every state machine transition creates exactly one row.
+    These rows are NEVER updated or deleted.
+    """
+    try:
+        execute_db("""
+            INSERT INTO scan_state_transitions
+            (scan_id, old_state, new_state, reason, actor, correlation_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (scan_id, old_state, new_state, reason or "", actor, correlation_id or ""))
+    except Exception as exc:
+        log.warning("State transition audit insert failed: %s", exc)
+
+
+def transition_scan_state(scan_id: str, from_status: str, to_status: str,
+                          reason: str = "", actor: str = "system",
+                          correlation_id: str = "",
+                          error_message: str = "") -> bool:
+    """Atomically transition a scan's state using conditional UPDATE.
+
+    Section 3, 30, 32:
+    - Validates against VALID_TRANSITIONS matrix
+    - Uses conditional UPDATE WHERE status=from_status (prevents TOCTOU)
+    - If rowcount == 0, the transition was raced or illegal
+    - Always logs the transition to scan_state_transitions (append-only)
+    - Syncs current_scan_state for O(1) UI polling
+
+    Returns True if transition succeeded, False if it was rejected/raced.
+    """
+    # Validate against governance matrix
+    if not _is_valid_transition(from_status, to_status):
+        log.critical(
+            "[STATE MACHINE] ILLEGAL transition rejected: %s -> %s for scan %s (reason=%s, actor=%s)",
+            from_status, to_status, scan_id, reason, actor
+        )
+        return False
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Atomic conditional UPDATE on scan_runs
+    rowcount = execute_db("""
+        UPDATE scan_runs SET status=?, error_message=COALESCE(?, error_message)
+        WHERE scan_id=? AND status=?
+    """, (to_status, error_message or None, scan_id, from_status), fetch="rowcount")
+
+    if rowcount == 0:
+        log.warning(
+            "[STATE MACHINE] Transition raced or invalid: %s -> %s for scan %s (rowcount=0)",
+            from_status, to_status, scan_id
+        )
+        return False
+
+    # Calculate duration if reaching a terminal state
+    if to_status in ("completed", "failed", "cancelled"):
+        try:
+            row = execute_db("SELECT start_time FROM scan_runs WHERE scan_id=?", (scan_id,), fetch="one")
+            duration = 0.0
+            if row and row.get("start_time"):
+                st = datetime.fromisoformat(str(row["start_time"]))
+                duration = (datetime.now() - st).total_seconds()
+            execute_db("""
+                UPDATE scan_runs SET end_time=?, duration_seconds=? WHERE scan_id=?
+            """, (now, round(duration, 1), scan_id))
+        except Exception:
+            pass
+
+    # Sync current_scan_state (Section 6, 29: always update both tables together)
+    _sync_current_scan_state(scan_id, to_status, now)
+
+    # Append-only audit trail (Section 4)
+    save_state_transition(scan_id, from_status, to_status, reason, actor, correlation_id)
+
+    log.info(
+        "[STATE MACHINE] %s -> %s | scan=%s | reason=%s | actor=%s",
+        from_status, to_status, scan_id[:20], reason, actor
+    )
+    return True
+
+
+def _sync_current_scan_state(scan_id: str, status: str, now: str):
+    """Sync the current_scan_state singleton row with scan_runs.
+    Section 6, 29: Both tables are always updated together.
+    """
+    if status in ("completed", "failed", "cancelled", "stale"):
+        # Terminal or near-terminal: reset to idle for UI
+        ui_status = "idle" if status in ("completed", "failed", "cancelled") else status
+        execute_db("""
+            UPDATE current_scan_state SET
+                status=?, phase='', cancel_requested=0, updated_at=?
+            WHERE id=1
+        """, (ui_status, now))
+        ScanState._is_scanning_cache = (False, time.time())
+    else:
+        execute_db("""
+            UPDATE current_scan_state SET
+                status=?, updated_at=?
+            WHERE id=1
+        """, (status, now))
+        if status == "running":
+            ScanState._is_scanning_cache = (True, time.time())
+
+
+# ═══════════════════════════════════════════════════════════════
+# Section 32: ATOMIC LOCK ACQUISITION
+# Eliminates TOCTOU race condition on scan start.
+# ═══════════════════════════════════════════════════════════════
+
+def acquire_scan_lock(scan_context) -> bool:
+    """Atomically acquire the scan lock using conditional UPDATE.
+
+    Section 3, 32:
+    - Uses UPDATE current_scan_state SET status='running' WHERE status != 'running'
+    - If rowcount == 1, lock acquired successfully
+    - If rowcount == 0, another scan is already running — reject
+    - Creates the scan_runs row and logs the transition
+
+    Args:
+        scan_context: ScanContext object with all metadata.
+    Returns:
+        True if lock acquired, False if rejected (scan already running).
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    scan_id = scan_context.scan_id
+
+    # Atomic conditional UPDATE — this IS the lock
+    rowcount = execute_db("""
+        UPDATE current_scan_state SET
+            scan_id=?, mode=?, status='running', phase='init',
+            start_time=?, processed_count=0, failed_count=0,
+            candidate_count=0, cancel_requested=0, updated_at=?
+        WHERE id=1 AND status != 'running'
+    """, (scan_id, scan_context.trigger_source, now, now), fetch="rowcount")
+
+    if rowcount == 0:
+        # Lock NOT acquired — another scan is running
+        log.warning(
+            "[SCAN LOCK] Rejected: scan already running. Attempted scan_id=%s",
+            scan_id[:30]
+        )
+        save_state_transition(scan_id, "created", "rejected",
+                              reason="scan_already_active",
+                              actor=scan_context.trigger_source,
+                              correlation_id=scan_context.correlation_id)
+        return False
+
+    # Lock acquired — create scan_runs row with full context
+    import json as _json
+    execute_db("""
+        INSERT INTO scan_runs
+        (scan_id, mode, status, phase, start_time, candidate_count, created_at,
+         correlation_id, request_id, trigger_source, user_id,
+         scanner_version, scoring_version, recommendation_version,
+         config_snapshot, parent_scan_id)
+        VALUES (?, ?, 'running', 'init', ?, 0, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?)
+    """, (
+        scan_id, scan_context.trigger_source, now, now,
+        scan_context.correlation_id, scan_context.request_id,
+        scan_context.trigger_source, scan_context.user_id,
+        scan_context.scanner_version, scan_context.scoring_version,
+        scan_context.recommendation_version,
+        _json.dumps(scan_context.config_snapshot),
+        scan_context.parent_scan_id,
+    ))
+
+    # Audit trail
+    save_state_transition(scan_id, "idle", "running",
+                          reason="scan_started",
+                          actor=scan_context.trigger_source,
+                          correlation_id=scan_context.correlation_id)
+
+    ScanState._is_scanning_cache = (True, time.time())
+    log.info(
+        "[SCAN LOCK] Acquired: scan_id=%s | trigger=%s | correlation=%s",
+        scan_id[:30], scan_context.trigger_source, scan_context.correlation_id[:12]
+    )
+    return True
+
+
+def is_scan_active() -> tuple[bool, str]:
+    """Check if a scan is currently running.
+    Returns (is_active, active_scan_id).
+    Section 4: Used by API for HTTP 409 duplicate rejection.
+    """
+    row = execute_db("SELECT scan_id, status FROM current_scan_state WHERE id=1", fetch="one")
+    if row and row.get("status") == "running":
+        return True, row.get("scan_id", "")
+    return False, ""
+
+
+def update_scan_progress(scan_id: str, **kwargs):
+    """Update scan progress fields. Accepts: phase, processed_count, failed_count, candidate_count.
+    Section 6: Always updates both scan_runs and current_scan_state together.
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    allowed = {"phase", "processed_count", "failed_count", "candidate_count"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    vals = list(updates.values())
+    # Update current_scan_state
+    execute_db(
+        f"UPDATE current_scan_state SET {set_clause}, updated_at=? WHERE id=1",
+        vals + [now]
+    )
+    # Update scan_runs
+    if scan_id:
+        execute_db(
+            f"UPDATE scan_runs SET {set_clause} WHERE scan_id=?",
+            vals + [scan_id]
+        )
+
+
+def get_scan_cancel_requested() -> bool:
+    """Check if cancellation has been requested for the active scan."""
+    row = execute_db("SELECT cancel_requested FROM current_scan_state WHERE id=1", fetch="one")
+    return bool(row["cancel_requested"]) if row else False
+
+
+def set_scan_cancel_requested(value: bool):
+    """Set cancellation request flag."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    execute_db(
+        "UPDATE current_scan_state SET cancel_requested=?, updated_at=? WHERE id=1",
+        (1 if value else 0, now)
+    )
+
+
+def get_scan_status() -> dict:
+    """Return current scan state as dict. O(1) read.
+    Note: Stale scan recovery is now handled by the Watchdog (Phase 2),
+    not inline during status reads.
+    """
+    row = execute_db("SELECT * FROM current_scan_state WHERE id=1", fetch="one")
+    if not row:
+        return {"scanning": False, "status": "idle", "progress": 0, "total": 0}
+    return {
+        "scanning": row["status"] == "running",
+        "status": row["status"],
+        "mode": row.get("mode", ""),
+        "phase": row.get("phase", ""),
+        "progress": row.get("processed_count", 0),
+        "total": row.get("candidate_count", 0),
+        "failed": row.get("failed_count", 0),
+        "scan_id": row.get("scan_id", ""),
+        "cancel_requested": bool(row.get("cancel_requested", 0)),
+    }
+
+
+class ScanState:
+    """DB-backed scan state — backward-compatible wrapper.
+
+    Phase 0A: This class now delegates to the module-level functions
+    (acquire_scan_lock, transition_scan_state, etc.) for all critical
+    operations. The singleton pattern is preserved ONLY for backward
+    compatibility with callers that use scan_state.is_scanning,
+    scan_state.status(), etc.
+
+    New code should call the module-level functions directly.
     """
     _is_scanning_cache = None  # (bool, timestamp)
     _IS_SCANNING_TTL = 2.0     # seconds
 
-    def start(self, total: int, mode: str = "manual") -> str:
-        """Start a new scan. Returns scan_id."""
-        self._recover_stale()
+    def start(self, total: int, mode: str = "manual", context=None) -> str:
+        """Start a new scan. Returns scan_id.
+        If context (ScanContext) is provided, uses atomic lock.
+        Otherwise, falls back to legacy behavior for backward compatibility.
+        """
+        if context is not None:
+            # Phase 0A: Atomic lock path
+            acquired = acquire_scan_lock(context)
+            if not acquired:
+                return None  # Lock not acquired
+            self._scan_id = context.scan_id
+            self._total = total
+            # Update candidate count now that we know it
+            update_scan_progress(context.scan_id, candidate_count=total)
+            return context.scan_id
+
+        # Legacy path (backward compat for auto-scan and other callers)
         scan_id = f"scan_{mode}_{int(time.time())}_{_uuid.uuid4().hex[:6]}"
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         execute_db("""
@@ -1318,84 +1703,59 @@ class ScanState:
         """, (scan_id, mode, now, total, now))
         self._scan_id = scan_id
         self._total = total
-        ScanState._is_scanning_cache = (True, time.time())  # Sprint 1: immediate cache update
+        ScanState._is_scanning_cache = (True, time.time())
+        save_state_transition(scan_id, "idle", "running", reason="scan_started_legacy", actor="system")
         return scan_id
 
     def update(self, **kwargs):
-        """Update scan progress. Accepts: phase, processed_count, failed_count, candidate_count."""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        allowed = {"phase", "processed_count", "failed_count", "candidate_count"}
-        updates = {k: v for k, v in kwargs.items() if k in allowed}
-        if not updates:
-            return
-        set_clause = ", ".join(f"{k}=?" for k in updates)
-        vals = list(updates.values())
-        # Update current_scan_state
-        execute_db(
-            f"UPDATE current_scan_state SET {set_clause}, updated_at=? WHERE id=1",
-            vals + [now]
-        )
-        # Update scan_runs too
+        """Update scan progress."""
         scan_id = getattr(self, "_scan_id", None)
-        if scan_id:
-            execute_db(
-                f"UPDATE scan_runs SET {set_clause} WHERE scan_id=?",
-                vals + [scan_id]
-            )
+        update_scan_progress(scan_id or "", **kwargs)
 
     def set_progress(self, value: int):
         """Convenience: update processed_count.
-
-        Sprint 1 Phase 1: Batched writes — only writes to DB every 25 stocks
-        or on the final stock. Reduces DB writes from ~611 to ~25 per scan.
+        Batched writes — only writes to DB every 25 stocks or on first/last.
         """
         total = getattr(self, '_total', 0)
-        # Write every 25 stocks, on first, or on last
         if value == 1 or value == total or value % 25 == 0:
             self.update(processed_count=value)
-            # Update memory cache to reflect we're still scanning
             ScanState._is_scanning_cache = (True, time.time())
 
     def complete(self, success: bool = True, error_message: str = ""):
-        """Mark scan as complete."""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        status = "completed" if success else "failed"
+        """Mark scan as complete. Uses atomic transition."""
         scan_id = getattr(self, "_scan_id", None)
+        to_status = "completed" if success else "failed"
         if scan_id:
-            # Calculate duration
-            row = execute_db("SELECT start_time FROM scan_runs WHERE scan_id=?", (scan_id,), fetch="one")
-            duration = 0.0
-            if row and row.get("start_time"):
-                try:
-                    st = datetime.fromisoformat(str(row["start_time"]))
-                    duration = (datetime.now() - st).total_seconds()
-                except Exception:
-                    pass
+            transition_scan_state(
+                scan_id=scan_id,
+                from_status="running",
+                to_status=to_status,
+                reason=error_message or ("scan_completed" if success else "scan_failed"),
+                actor=ACTOR_SYSTEM,
+            )
+        else:
+            # No scan_id — just reset the UI state
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             execute_db("""
-                UPDATE scan_runs SET status=?, end_time=?, duration_seconds=?, error_message=?
-                WHERE scan_id=?
-            """, (status, now, round(duration, 1), error_message or None, scan_id))
-        execute_db("""
-            UPDATE current_scan_state SET
-                status='idle', phase='', cancel_requested=0, updated_at=?
-            WHERE id=1
-        """, (now,))
+                UPDATE current_scan_state SET
+                    status='idle', phase='', cancel_requested=0, updated_at=?
+                WHERE id=1
+            """, (now,))
         self._scan_id = None
-        ScanState._is_scanning_cache = (False, time.time())  # Sprint 1: immediate cache update
+        ScanState._is_scanning_cache = (False, time.time())
 
     def finish(self):
-        """Alias for complete(success=True). Backward compat with old ScanState."""
+        """Alias for complete(success=True)."""
         self.complete(success=True)
 
     @property
     def is_scanning(self) -> bool:
-        # Sprint 1 Phase 1: Memory cache (2s TTL) to avoid 2 DB queries per call
         cached = ScanState._is_scanning_cache
         if cached is not None:
             val, ts = cached
             if (time.time() - ts) < ScanState._IS_SCANNING_TTL:
                 return val
-        self._recover_stale()
+        # Phase 2: No more inline _recover_stale() — Watchdog handles it
         row = execute_db("SELECT status FROM current_scan_state WHERE id=1", fetch="one")
         result = row["status"] == "running" if row else False
         ScanState._is_scanning_cache = (result, time.time())
@@ -1403,64 +1763,15 @@ class ScanState:
 
     @property
     def cancel_requested(self) -> bool:
-        row = execute_db("SELECT cancel_requested FROM current_scan_state WHERE id=1", fetch="one")
-        return bool(row["cancel_requested"]) if row else False
+        return get_scan_cancel_requested()
 
     @cancel_requested.setter
     def cancel_requested(self, value: bool):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        execute_db(
-            "UPDATE current_scan_state SET cancel_requested=?, updated_at=? WHERE id=1",
-            (1 if value else 0, now)
-        )
+        set_scan_cancel_requested(value)
 
     def status(self) -> dict:
         """Return current scan state as dict. O(1) read."""
-        self._recover_stale()
-        row = execute_db("SELECT * FROM current_scan_state WHERE id=1", fetch="one")
-        if not row:
-            return {"scanning": False, "status": "idle", "progress": 0, "total": 0}
-        return {
-            "scanning": row["status"] == "running",
-            "status": row["status"],
-            "mode": row.get("mode", ""),
-            "phase": row.get("phase", ""),
-            "progress": row.get("processed_count", 0),
-            "total": row.get("candidate_count", 0),
-            "failed": row.get("failed_count", 0),
-            "scan_id": row.get("scan_id", ""),
-            "cancel_requested": bool(row.get("cancel_requested", 0)),
-        }
-
-    def _recover_stale(self):
-        """Auto-recover scans stuck in 'running' for > SCAN_LOCK_TIMEOUT_MIN."""
-        try:
-            row = execute_db("SELECT * FROM current_scan_state WHERE id=1", fetch="one")
-            if not row or row["status"] != "running":
-                return
-            updated = row.get("updated_at")
-            if not updated:
-                return
-            try:
-                last_update = datetime.fromisoformat(str(updated))
-                age_min = (datetime.now() - last_update).total_seconds() / 60
-                if age_min > _SCAN_LOCK_TIMEOUT_MIN:
-                    scan_id = row.get("scan_id", "")
-                    log.warning("Stale scan detected (scan_id=%s, age=%.1f min). Recovering...", scan_id, age_min)
-                    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    if scan_id:
-                        execute_db("""
-                            UPDATE scan_runs SET status='failed', end_time=?, error_message='stale_recovery'
-                            WHERE scan_id=?
-                        """, (now, scan_id))
-                    execute_db("""
-                        UPDATE current_scan_state SET status='idle', phase='', cancel_requested=0, updated_at=?
-                        WHERE id=1
-                    """, (now,))
-            except Exception:
-                pass
-        except Exception:
-            pass
+        return get_scan_status()
 
 
 def get_recent_scan_runs(limit: int = 10) -> list:

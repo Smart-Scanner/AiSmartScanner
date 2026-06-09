@@ -6,6 +6,14 @@ from pathlib import Path
 # Phase 0: Scan version — increment on ANY scoring formula change
 SCAN_VERSION = "v3.0.0"
 
+# Section 5, 35: Fine-grained version tracking for reproducibility
+# Bump SCORING_VERSION on any weight/math change in analyzer.py
+SCORING_VERSION = "v3.0.0"
+# Bump RECOMMENDATION_VERSION on any grade/recommendation logic change
+RECOMMENDATION_VERSION = "v1.0.0"
+# Bump UNIVERSE_SELECTION_VERSION on any change to universe.py selection logic
+UNIVERSE_SELECTION_VERSION = "v1.0.0"
+
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------

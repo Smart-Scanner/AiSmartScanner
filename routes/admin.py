@@ -331,11 +331,19 @@ def cancel_scan():
     """Request cancellation of current scan."""
     from flask import jsonify
     import db
-    if not db.scan_state.is_scanning:
+    active, active_scan_id = db.is_scan_active()
+    if not active:
         return jsonify({"status": "no_scan_running"})
-    db.scan_state.cancel_requested = True
-    log.info("Scan cancellation requested by admin: %s", session.get("email", "?"))
-    return jsonify({"status": "cancel_requested"})
+    db.set_scan_cancel_requested(True)
+    # Phase 3: Audit the cancellation request
+    db.save_state_transition(
+        active_scan_id, "running", "running",
+        reason="cancel_requested_by_admin",
+        actor=session.get("email", "admin"),
+    )
+    log.info("Scan cancellation requested by admin: %s (scan_id=%s)",
+             session.get("email", "?"), active_scan_id)
+    return jsonify({"status": "cancel_requested", "scan_id": active_scan_id})
 
 
 @admin_bp.route("/scan-history", methods=["GET"])

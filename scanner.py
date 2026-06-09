@@ -37,12 +37,21 @@ log = logging.getLogger("screener")
 
 
 # ===================================================================
-#  SCAN STATE — DB-backed (Phase 6), imported from db.py
+#  SCAN STATE — DB-backed (Phase 6 + Phase 0A Hardening)
 # ===================================================================
-# The ScanState class now lives in db.py with full DB persistence.
-# scanner.py just imports the singleton.
+# Phase 0A: ScanState class is now a backward-compat wrapper.
+# scanner.py uses the new module-level functions directly.
 
-from db import scan_state
+from db import (
+    scan_state, acquire_scan_lock, transition_scan_state,
+    update_scan_progress, is_scan_active, get_scan_cancel_requested,
+    save_state_transition,
+)
+from scan_context import ScanContext
+from events import ACTOR_SYSTEM, ACTOR_USER, ACTOR_AUTO_SCAN
+
+# Phase 0B: Graceful shutdown event — shared across all daemon threads
+_shutdown_event = threading.Event()
 
 
 # ===================================================================
@@ -56,8 +65,10 @@ _marketaux_overflow_count = 0
 
 
 def _marketaux_worker():
-    """Background daemon: pulls symbols from queue, enriches with MarketAux."""
-    while True:
+    """Background daemon: pulls symbols from queue, enriches with MarketAux.
+    Phase 0B: Checks _shutdown_event for graceful termination.
+    """
+    while not _shutdown_event.is_set():
         try:
             sym = _marketaux_queue.get(timeout=5)
         except _queue_mod.Empty:
@@ -283,22 +294,39 @@ def _shortlist_for_deep_scan(
 #  FULL SCAN -- writes directly to DB
 # ===================================================================
 
+
 @timed("full_scan")
-def run_full_scan():
-    """Run full stock scan. Writes results to DB incrementally."""
+def run_full_scan(context: ScanContext = None):
+    """Run full stock scan. Writes results to DB incrementally.
+
+    Phase 0A: Uses ScanContext for execution ownership.
+    Phase 0B: Guaranteed terminal state via finally block.
+    Phase 1: Full context propagation (correlation_id, versions, config_snapshot).
+    """
+    # Phase 1: Create context if not provided (auto-scan / legacy callers)
+    if context is None:
+        context = ScanContext.create(
+            trigger_source="auto",
+            user_id="system",
+            mode="manual",
+        )
+
+    scan_id = context.scan_id
+    correlation_id = context.correlation_id
+
     # Phase 5: Flush any deferred writes from previous cycle
     try:
         flushed = db.flush_deferred_writes()
         if flushed:
-            log.info("Flushed %d deferred writes from DLQ", flushed)
+            log.info("[%s] Flushed %d deferred writes from DLQ", correlation_id[:12], flushed)
     except Exception as exc:
-        log.warning("DLQ flush failed: %s", exc)
+        log.warning("[%s] DLQ flush failed: %s", correlation_id[:12], exc)
 
     try:
         live_feed.reset_login_circuit_breaker()
     except Exception:
         pass
-        
+
     # Build universe: curated active set + any custom stocks not already included
     curated_symbols = get_fast_scan_universe()
     custom = [s["symbol"] for s in db.get_custom_stocks()]
@@ -312,13 +340,22 @@ def run_full_scan():
     except Exception as exc:
         log.debug("save_active_universe failed (non-fatal): %s", exc)
 
-    scan_state.start(total, mode="manual")
+    # Phase 0A: Atomic lock acquisition via ScanContext
+    lock_acquired = scan_state.start(total, mode=context.trigger_source, context=context)
+    if lock_acquired is None:
+        # Lock not acquired — another scan is running (Section 32: TOCTOU prevention)
+        log.warning("[%s] Scan rejected — another scan is already active", correlation_id[:12])
+        return
+
     db.clear_meta_cache()  # Phase 1: ensure fresh metadata during scan
-    log.info("Scan: %d stocks...", total)
+    log.info("[%s] Scan: %d stocks... (scan_id=%s)", correlation_id[:12], total, scan_id[:20])
     start_time = time.monotonic()
 
+    # Phase 0B: Track whether we reached a terminal state
+    _reached_terminal = False
+
     try:
-        # ── PRE-SCAN INTELLIGENCE WARMUP ──────────────────────────
+        # ── PRE-SCAN INTELLIGENCE WARMUP ────────────────────────────
         # Warms: GDELT+FinBERT article cache, world markets,
         # sector rotation (RRG), Forex Factory macro events.
         # All results cached globally — O(1) per-stock lookup.
@@ -326,7 +363,7 @@ def run_full_scan():
             from intelligence import warmup_all
             warmup_all(set(all_symbols))
         except Exception as exc:
-            log.warning("Intelligence warmup failed (continuing): %s", exc)
+            log.warning("[%s] Intelligence warmup failed (continuing): %s", correlation_id[:12], exc)
 
         # Reset delivery enrichment flag
         reset_delivery_state()
@@ -335,14 +372,20 @@ def run_full_scan():
         nifty_1m, regime = get_nifty50_benchmark()
         db.set_meta("nifty50_1m", nifty_1m)
         db.set_meta("market_regime", regime)
-        log.info("Nifty 1M: %+.2f%% | Regime: %s", nifty_1m, regime.upper())
+        log.info("[%s] Nifty 1M: %+.2f%% | Regime: %s", correlation_id[:12], nifty_1m, regime.upper())
 
         results = []
         failed_symbols = []
         scored_set = set()
 
         # ── PHASE 1: Angel One historical (primary — fresh data) ──
-        log.info("Phase 1: Angel One (%d stocks)...", total)
+        log.info("[%s] Phase 1: Angel One (%d stocks)...", correlation_id[:12], total)
+
+        # Phase 3: Log phase transition
+        save_state_transition(scan_id, "running", "running",
+                              reason="phase1_started", actor=ACTOR_SYSTEM,
+                              correlation_id=correlation_id)
+
         for i, sym in enumerate(all_symbols):
             try:
                 df = live_feed.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
@@ -359,19 +402,25 @@ def run_full_scan():
             scan_state.set_progress(i + 1)
 
             # Phase 6: Check for cancellation
-            if scan_state.cancel_requested:
-                log.warning("Scan cancelled by user at %d/%d", i + 1, total)
-                break
+            if get_scan_cancel_requested():
+                log.warning("[%s] Scan cancelled by user at %d/%d", correlation_id[:12], i + 1, total)
+                transition_scan_state(
+                    scan_id=scan_id, from_status="running", to_status="cancelled",
+                    reason="user_cancelled", actor=ACTOR_USER,
+                    correlation_id=correlation_id,
+                )
+                _reached_terminal = True
+                return
 
             if (i + 1) % 50 == 0:
-                log.info("Phase 1: %d/%d done, %d scored", i + 1, total, len(results))
+                log.info("[%s] Phase 1: %d/%d done, %d scored", correlation_id[:12], i + 1, total, len(results))
 
         scan_state.update(phase="phase1_done")
-        log.info("Phase 1 done: %d scored, %d failed", len(results), len(failed_symbols))
+        log.info("[%s] Phase 1 done: %d scored, %d failed", correlation_id[:12], len(results), len(failed_symbols))
 
         # ── PHASE 2: jugaad_data fallback (has delivery %) ──
         if failed_symbols:
-            log.info("Phase 2: jugaad_data fallback (%d stocks)...", len(failed_symbols))
+            log.info("[%s] Phase 2: jugaad_data fallback (%d stocks)...", correlation_id[:12], len(failed_symbols))
             jugaad_scored = 0
             for batch_start in range(0, len(failed_symbols), BATCH_SIZE):
                 batch = failed_symbols[batch_start:batch_start + BATCH_SIZE]
@@ -401,14 +450,14 @@ def run_full_scan():
                     db.save_results(batch_results)
 
                 batch_num = batch_start // BATCH_SIZE + 1
-                log.info("Phase 2 batch %d: +%d scored", batch_num, jugaad_scored)
+                log.info("[%s] Phase 2 batch %d: +%d scored", correlation_id[:12], batch_num, jugaad_scored)
 
                 # First batch 0 → jugaad blocked, skip
                 if batch_num >= 1 and jugaad_scored == 0:
-                    log.warning("Phase 2: jugaad_data blocked — skipping")
+                    log.warning("[%s] Phase 2: jugaad_data blocked — skipping", correlation_id[:12])
                     break
 
-            log.info("Phase 2 done: +%d from jugaad_data", jugaad_scored)
+            log.info("[%s] Phase 2 done: +%d from jugaad_data", correlation_id[:12], jugaad_scored)
 
         # ── POST-SCAN MARKETAUX: ENQUEUE TO BACKGROUND WORKER (Phase 8) ──
         results.sort(key=lambda x: x.get("score", 0), reverse=True)
@@ -418,7 +467,7 @@ def run_full_scan():
         ]
         if top30_syms:
             enqueue_marketaux(top30_syms)
-            log.info("MarketAux: Enqueued %d top symbols for background enrichment", len(top30_syms))
+            log.info("[%s] MarketAux: Enqueued %d top symbols for background enrichment", correlation_id[:12], len(top30_syms))
 
         # ── FINALIZE ──
         # Apply sector strength (modifies results in-place)
@@ -426,13 +475,13 @@ def run_full_scan():
             heatmap = apply_sector_strength(results)
             db.set_meta("heatmap", heatmap)
         except Exception as exc:
-            log.warning("Heatmap failed: %s", exc)
+            log.warning("[%s] Heatmap failed: %s", correlation_id[:12], exc)
 
         try:
             summary = generate_ai_summary(results, regime)
             db.set_meta("summary", summary)
         except Exception as exc:
-            log.warning("Summary failed: %s", exc)
+            log.warning("[%s] Summary failed: %s", correlation_id[:12], exc)
 
         # Final save — all results with sector strength applied
         db.save_results(results)
@@ -441,15 +490,14 @@ def run_full_scan():
 
         elapsed = time.monotonic() - start_time
         hc_count = sum(1 for r in results if r.get("high_conviction"))
-        log.info("Done in %.0fs! %d scored, %d HC", elapsed, len(results), hc_count)
+        log.info("[%s] Done in %.0fs! %d scored, %d HC", correlation_id[:12], elapsed, len(results), hc_count)
 
         # Phase F: Structured scan performance telemetry
-        _scan_id = getattr(scan_state, "_scan_id", None) or "unknown"
         _rate = round(len(results) / elapsed, 2) if elapsed > 0 else 0
         log.info(
-            "[SCAN PERF] scan_id=%s | symbols=%d | results_saved=%d | failed=%d | "
+            "[SCAN PERF] scan_id=%s | correlation=%s | symbols=%d | results_saved=%d | failed=%d | "
             "duration=%dms | rate=%.2f/sec",
-            _scan_id, total, len(results), total - len(results),
+            scan_id[:20], correlation_id[:12], total, len(results), total - len(results),
             round(elapsed * 1000), _rate
         )
 
@@ -463,23 +511,22 @@ def run_full_scan():
                 "symbol_count": len(results),
                 "operations": get_report()
             }))
-            log.info("Timing baseline persisted to scan_meta")
+            log.info("[%s] Timing baseline persisted to scan_meta", correlation_id[:12])
         except Exception as exc:
-            log.warning("Failed to persist timing baseline: %s", exc)
+            log.warning("[%s] Failed to persist timing baseline: %s", correlation_id[:12], exc)
 
         # Phase 0: Trust & Observability — audit trail
         try:
             from config import SCAN_VERSION
-            _scan_id = getattr(scan_state, "_scan_id", None) or "unknown"
             _scan_start_str = datetime.fromtimestamp(start_time + time.time() - time.monotonic()).strftime("%Y-%m-%d %H:%M:%S")
             _scan_end_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Score audit: one row per stock per scan
-            db.save_score_audit(results, _scan_id, SCAN_VERSION)
+            db.save_score_audit(results, scan_id, SCAN_VERSION)
 
             # Scan audit: one row per scan run
             db.save_scan_audit(
-                scan_id=_scan_id,
+                scan_id=scan_id,
                 start_time=_scan_start_str,
                 end_time=_scan_end_str,
                 duration_ms=round(elapsed * 1000),
@@ -488,10 +535,10 @@ def run_full_scan():
                 stocks_failed=total - len(results),
                 data_source="ANGEL",  # primary source used
                 scan_version=SCAN_VERSION,
-                scan_mode="manual",
+                scan_mode=context.trigger_source,
             )
         except Exception as exc:
-            log.warning("Phase 0: audit trail failed (non-fatal): %s", exc)
+            log.warning("[%s] Phase 0: audit trail failed (non-fatal): %s", correlation_id[:12], exc)
 
         # ── R1 EVIDENCE COLLECTION (Append-Only, Schema-Frozen) ──────
         try:
@@ -502,7 +549,6 @@ def run_full_scan():
             _R1_DEPLOY_DATE = "2026-06-08"
             _today_str = now_ist().strftime("%Y-%m-%d")
             _obs_day = (_obs_date.today() - _obs_date.fromisoformat(_R1_DEPLOY_DATE)).days + 1
-            _scan_id = getattr(scan_state, "_scan_id", None) or "unknown"
             _release = "R1.0"
             _audit_dir = _Path(__file__).parent / "release_audits"
             _audit_dir.mkdir(parents=True, exist_ok=True)
@@ -529,7 +575,7 @@ def run_full_scan():
             _top_score = results[0].get("score", 0) if results else 0
 
             # Store scan_id for trade_outcomes.csv to reference
-            db.set_meta("current_scan_id", _scan_id)
+            db.set_meta("current_scan_id", scan_id)
 
             _manifest_rows = []  # (artifact_name, rows_written)
 
@@ -547,7 +593,7 @@ def run_full_scan():
                         "Max Score", "Top Symbol", "Top Score",
                     ])
                 w.writerow([
-                    _today_str, _scan_id, _release, _obs_day,
+                    _today_str, scan_id, _release, _obs_day,
                     _scan_status, total, len(results), _fail_count,
                     _hc_count, _golden_count,
                     _pct(50), _pct(75), _pct(90), _pct(95), _pct(99),
@@ -570,7 +616,7 @@ def run_full_scan():
                     ])
                 for rank, r in enumerate(_ranked, 1):
                     w.writerow([
-                        _today_str, _scan_id, _release, _obs_day,
+                        _today_str, scan_id, _release, _obs_day,
                         rank, r.get("symbol", ""), r.get("score", 0),
                         1 if r.get("high_conviction") else 0,
                         1 if r.get("is_golden") else 0,
@@ -601,7 +647,7 @@ def run_full_scan():
                     _curr_p = _price_map.get(_sym, _entry_p)
                     _unreal = round(((_curr_p - _entry_p) / _entry_p) * 100, 2) if _entry_p > 0 else 0
                     w.writerow([
-                        _today_str, _scan_id, _release, _obs_day,
+                        _today_str, scan_id, _release, _obs_day,
                         t.get("entry_date", ""), _sym, _entry_p, _curr_p,
                         _unreal, t.get("high_conviction", 0), t.get("score_at_entry", 0),
                     ])
@@ -644,7 +690,7 @@ def run_full_scan():
                         "After Volume", "After Score", "Final HC",
                     ])
                 w.writerow([
-                    _today_str, _scan_id, _release, _obs_day,
+                    _today_str, scan_id, _release, _obs_day,
                     HC_MIN_SCORE, _universe, _after_rsi, _after_dlv,
                     _after_atr, _after_risk, _after_rr,
                     _after_vol, _after_score, _hc_count,
@@ -660,12 +706,12 @@ def run_full_scan():
                 if _manifest_hdr:
                     w.writerow(["Date", "Scan ID", "Artifact Name", "Rows Written"])
                 for _art_name, _art_rows in _manifest_rows:
-                    w.writerow([_today_str, _scan_id, _art_name, _art_rows])
+                    w.writerow([_today_str, scan_id, _art_name, _art_rows])
             log.info("[R1 Evidence] manifest.csv updated (%d artifacts validated)", len(_manifest_rows))
 
         except Exception as _ev_exc:
             log.warning("[R1 Evidence] Evidence collection failed (non-fatal): %s", _ev_exc)
-        # ── END R1 EVIDENCE COLLECTION ────────────────────────────────
+        # ── END R1 EVIDENCE COLLECTION ───────────────────────────────
 
 
         # Subscribe all to live feed
@@ -678,12 +724,34 @@ def run_full_scan():
         except Exception:
             pass
 
+        # Phase 0A: Mark completed via atomic transition
+        transition_scan_state(
+            scan_id=scan_id, from_status="running", to_status="completed",
+            reason="scan_completed", actor=ACTOR_SYSTEM,
+            correlation_id=correlation_id,
+        )
+        _reached_terminal = True
+
     except Exception as exc:
-        log.error("Scan failed: %s", exc)
-        scan_state.complete(success=False, error_message=str(exc)[:500])
+        log.error("[%s] Scan failed: %s", correlation_id[:12], exc)
+        transition_scan_state(
+            scan_id=scan_id, from_status="running", to_status="failed",
+            reason=str(exc)[:500], actor=ACTOR_SYSTEM,
+            correlation_id=correlation_id,
+            error_message=str(exc)[:500],
+        )
+        _reached_terminal = True
         return
     finally:
-        # Ensure state is reset even on unexpected errors
-        if scan_state.is_scanning:
-            scan_state.complete(success=True)
+        # Phase 0B: GUARANTEED terminal state — if we haven't reached one yet,
+        # force it now. This catches edge cases where exceptions bypass the
+        # normal completion path.
+        if not _reached_terminal:
+            log.warning("[%s] Finally block: scan did not reach terminal state — forcing FAILED", correlation_id[:12])
+            transition_scan_state(
+                scan_id=scan_id, from_status="running", to_status="failed",
+                reason="finally_block_recovery", actor=ACTOR_SYSTEM,
+                correlation_id=correlation_id,
+                error_message="scan_exited_without_terminal_state",
+            )
         db.clear_meta_cache()  # Phase 1: ensure fresh metadata after scan

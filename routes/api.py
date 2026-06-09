@@ -85,6 +85,7 @@ from config import TOP_N_RESULTS, DASHBOARD_MAX_RESULTS, DATA_LOOKBACK_DAYS
 from stocks import SECTORS
 from universe import get_universe_stats
 from scanner import scan_state, run_full_scan
+from scan_context import ScanContext
 from analyzer import fetch_and_analyze, yf_guard_status
 from routes.auth import admin_required
 from intelligence.fundamentals import extract_detailed_financials, safe_load_json
@@ -132,19 +133,58 @@ def save_indicator_series(symbol: str, data: dict):
 @api_bp.route("/api/scan", methods=["POST"])
 @admin_required
 def start_scan():
-    if scan_state.is_scanning:
-        return jsonify({"status": "already_scanning"})
-    threading.Thread(target=run_full_scan, daemon=True).start()
-    return jsonify({"status": "started"})
+    # Phase 0A: Check via DB for active scan (not in-memory singleton)
+    active, active_scan_id = db.is_scan_active()
+    if active:
+        # Section 4: HTTP 409 Conflict with active scan info
+        return jsonify({
+            "error": "scan_already_active",
+            "scan_id": active_scan_id,
+            "status": "already_scanning",
+        }), 409
+
+    # Phase 1: Create ScanContext at ingress with full attribution
+    from flask import session as flask_session
+    ctx = ScanContext.create(
+        trigger_source="manual",
+        user_id=str(flask_session.get("user_id", "unknown")),
+        session_id=str(flask_session.get("session_id", "unknown")),
+        mode="manual",
+    )
+    threading.Thread(target=run_full_scan, args=(ctx,), daemon=True).start()
+    return jsonify({
+        "status": "started",
+        "scan_id": ctx.scan_id,
+        "correlation_id": ctx.correlation_id,
+    })
 
 
 @api_bp.route("/api/force-scan", methods=["POST"])
 @admin_required
 def force_scan():
-    if scan_state.is_scanning:
-        return jsonify({"status": "already_scanning"})
-    threading.Thread(target=run_full_scan, daemon=True).start()
-    return jsonify({"status": "force_started"})
+    # Phase 0A: Check via DB for active scan
+    active, active_scan_id = db.is_scan_active()
+    if active:
+        return jsonify({
+            "error": "scan_already_active",
+            "scan_id": active_scan_id,
+            "status": "already_scanning",
+        }), 409
+
+    # Phase 1: Create ScanContext at ingress
+    from flask import session as flask_session
+    ctx = ScanContext.create(
+        trigger_source="force",
+        user_id=str(flask_session.get("user_id", "unknown")),
+        session_id=str(flask_session.get("session_id", "unknown")),
+        mode="force",
+    )
+    threading.Thread(target=run_full_scan, args=(ctx,), daemon=True).start()
+    return jsonify({
+        "status": "force_started",
+        "scan_id": ctx.scan_id,
+        "correlation_id": ctx.correlation_id,
+    })
 
 
 @api_bp.route("/api/status")
