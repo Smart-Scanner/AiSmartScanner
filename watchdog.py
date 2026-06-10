@@ -118,7 +118,7 @@ def _recover_stale_scans(db):
     try:
         # Query for stale running scans
         stale_scans = db.execute_db("""
-            SELECT scan_id, start_time, updated_at
+            SELECT scan_id, start_time
             FROM scan_runs
             WHERE status = 'running'
         """, fetch="all")
@@ -129,7 +129,7 @@ def _recover_stale_scans(db):
         now = datetime.now()
         for row in stale_scans:
             scan_id = row.get("scan_id", "")
-            updated_at = row.get("updated_at") or row.get("start_time")
+            updated_at = row.get("start_time")
             if not updated_at:
                 continue
 

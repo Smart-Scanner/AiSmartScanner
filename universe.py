@@ -137,6 +137,29 @@ def get_fast_scan_universe() -> list:
     if os.getenv("FULL_UNIVERSE", "0") == "1":
         log.info("FULL_UNIVERSE=1: loading all angel_tokens symbols")
         try:
+            import db
+            # Try loading the fully populated universe from the new catalog
+            catalog_rows = db.execute_db("SELECT symbol FROM universe_catalog WHERE is_active = TRUE", fetch="all")
+            if catalog_rows and len(catalog_rows) > 1000:
+                full_catalog = [r["symbol"] for r in catalog_rows if r.get("symbol")]
+                # Always append open portfolio positions and custom stocks
+                positions = db.execute_db("SELECT DISTINCT symbol FROM positions WHERE status='OPEN'", fetch="all")
+                if positions:
+                    extras = {r["symbol"] for r in positions if r.get("symbol")}
+                    full_catalog = list(dict.fromkeys(full_catalog + [s for s in extras if s not in set(full_catalog)]))
+                customs = db.get_custom_stocks()
+                if customs:
+                    extras = {s["symbol"] for s in customs if s.get("symbol")}
+                    full_catalog = list(dict.fromkeys(full_catalog + [s for s in extras if s not in set(full_catalog)]))
+                    
+                gate_limit = int(os.getenv("GATE_LIMIT", "574"))
+                if len(full_catalog) > gate_limit:
+                    log.info(f"Gate Enforced: Slicing catalog from {len(full_catalog)} down to {gate_limit}")
+                    full_catalog = full_catalog[:gate_limit]
+                    
+                log.info(f"Gate 2 Active: Returning {len(full_catalog)} symbols from universe_catalog")
+                return full_catalog
+            
             from stocks import STOCK_UNIVERSE
             full = list(STOCK_UNIVERSE)
             # Still add portfolio + custom on top
@@ -205,3 +228,82 @@ def _curated_count() -> int:
         return len(_HARDCODED_UNIVERSE)
     except Exception:
         return 0
+
+def get_universe_chunks(symbols: list) -> list[tuple[str, list[str]]]:
+    """
+    Groups symbols into chunks based on the universe_catalog.
+    If universe_catalog is empty, falls back to structural Nifty50/F&O heuristics.
+    NEVER uses alphabetical list splitting.
+    """
+    try:
+        import db
+        catalog_rows = db.execute_db("SELECT symbol, market_cap_bucket FROM universe_catalog WHERE is_active = 1", fetch="all")
+        if catalog_rows:
+            # We have an active catalog, use it!
+            bucket_map = {row["symbol"]: row.get("market_cap_bucket", "Unknown Cap") for row in catalog_rows if row.get("symbol")}
+            
+            blue_chip = []
+            large_cap = []
+            mid_cap = []
+            small_cap = []
+            micro_cap = []
+            unknown = []
+            
+            for s in symbols:
+                bucket = bucket_map.get(s, "Unknown Cap").upper()
+                if "BLUE" in bucket:
+                    blue_chip.append(s)
+                elif "LARGE" in bucket:
+                    large_cap.append(s)
+                elif "MID" in bucket:
+                    mid_cap.append(s)
+                elif "SMALL" in bucket:
+                    small_cap.append(s)
+                elif "MICRO" in bucket:
+                    micro_cap.append(s)
+                else:
+                    unknown.append(s)
+                    
+            chunks = []
+            if blue_chip: chunks.append(("Blue Chip", blue_chip))
+            if large_cap: chunks.append(("Large Cap", large_cap))
+            if mid_cap: chunks.append(("Mid Cap", mid_cap))
+            if small_cap: chunks.append(("Small Cap", small_cap))
+            if micro_cap: chunks.append(("Micro Cap", micro_cap))
+            if unknown: chunks.append(("Unknown Cap", unknown))
+            return chunks
+    except Exception as exc:
+        log.warning("Failed to group by universe_catalog: %s", exc)
+        
+    # FALLBACK: If catalog is empty or DB fails, we do NOT use alphabetical slicing.
+    # We use FNO_UNIVERSE heuristic. The first 50 of FNO_UNIVERSE are basically Nifty50.
+    # Next 100 are Large/Mid. The rest of the curated are Mid/Small.
+    fno_list = list(FNO_UNIVERSE)
+    nifty50_heuristic = set(fno_list[:50])
+    fno_rest_heuristic = set(fno_list[50:])
+    
+    blue_chip = []
+    large_mid_fno = []
+    rest_universe = []
+    
+    for s in symbols:
+        if s in nifty50_heuristic:
+            blue_chip.append(s)
+        elif s in fno_rest_heuristic:
+            large_mid_fno.append(s)
+        else:
+            rest_universe.append(s)
+            
+    # Subdivide the rest_universe purely by count just to prevent timeouts, 
+    # but label them accurately as 'Broader Market' rather than fake caps.
+    chunks = []
+    if blue_chip: chunks.append(("Blue Chip (Nifty 50 Proxy)", blue_chip))
+    if large_mid_fno: chunks.append(("Large/Mid Cap (F&O Proxy)", large_mid_fno))
+    
+    # Split the rest into chunks of 250 so we don't blow up Angel One
+    chunk_size = 250
+    for i in range(0, len(rest_universe), chunk_size):
+        chunk_slice = rest_universe[i:i+chunk_size]
+        chunks.append((f"Broader Market Part {i//chunk_size + 1}", chunk_slice))
+        
+    return chunks

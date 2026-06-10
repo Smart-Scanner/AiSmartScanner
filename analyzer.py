@@ -1039,17 +1039,61 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
             and risk_score <= 45
         )
 
-        high_conviction = (
-            score_100 >= HC_MIN_SCORE
-            and bullish_signals >= HC_MIN_SIGNALS_BULLISH
-            and HC_RSI_RANGE[0] <= rsi <= HC_RSI_RANGE[1]
-            and curr_delivery >= HC_DELIVERY_MIN
-            and HC_ATR_RANGE[0] <= atr_pct <= HC_ATR_RANGE[1]
-            and risk_score <= HC_RISK_MAX
-            and risk_reward >= HC_MIN_RISK_REWARD
-            and (not HC_REQUIRE_MACD_BULLISH or macd_is_bullish)
-            and vol_ratio >= HC_REQUIRE_VOLUME
-        ) or is_golden
+        hc_reasons = []
+        hc_rejection_reasons = []
+
+        if score_100 >= HC_MIN_SCORE:
+            hc_reasons.append(f"Score {score_100} >= {HC_MIN_SCORE}")
+        else:
+            hc_rejection_reasons.append(f"Score {score_100} < {HC_MIN_SCORE}")
+
+        if bullish_signals >= HC_MIN_SIGNALS_BULLISH:
+            hc_reasons.append(f"Bullish Signals {bullish_signals} >= {HC_MIN_SIGNALS_BULLISH}")
+        else:
+            hc_rejection_reasons.append(f"Bullish Signals {bullish_signals} < {HC_MIN_SIGNALS_BULLISH}")
+
+        if HC_RSI_RANGE[0] <= rsi <= HC_RSI_RANGE[1]:
+            hc_reasons.append(f"RSI {rsi:.1f} in range {HC_RSI_RANGE}")
+        else:
+            hc_rejection_reasons.append(f"RSI {rsi:.1f} not in range {HC_RSI_RANGE}")
+
+        if curr_delivery >= HC_DELIVERY_MIN:
+            hc_reasons.append(f"Delivery {curr_delivery:.1f}% >= {HC_DELIVERY_MIN}%")
+        else:
+            hc_rejection_reasons.append(f"Delivery {curr_delivery:.1f}% < {HC_DELIVERY_MIN}%")
+
+        if HC_ATR_RANGE[0] <= atr_pct <= HC_ATR_RANGE[1]:
+            hc_reasons.append(f"ATR {atr_pct:.1f}% in range {HC_ATR_RANGE}")
+        else:
+            hc_rejection_reasons.append(f"ATR {atr_pct:.1f}% not in range {HC_ATR_RANGE}")
+
+        if risk_score <= HC_RISK_MAX:
+            hc_reasons.append(f"Risk Score {risk_score} <= {HC_RISK_MAX}")
+        else:
+            hc_rejection_reasons.append(f"Risk Score {risk_score} > {HC_RISK_MAX}")
+
+        if risk_reward >= HC_MIN_RISK_REWARD:
+            hc_reasons.append(f"Risk Reward {risk_reward:.2f} >= {HC_MIN_RISK_REWARD}")
+        else:
+            hc_rejection_reasons.append(f"Risk Reward {risk_reward:.2f} < {HC_MIN_RISK_REWARD}")
+
+        if (not HC_REQUIRE_MACD_BULLISH or macd_is_bullish):
+            hc_reasons.append("MACD Bullish check passed")
+        else:
+            hc_rejection_reasons.append("MACD not bullish")
+
+        if vol_ratio >= HC_REQUIRE_VOLUME:
+            hc_reasons.append(f"Volume Ratio {vol_ratio:.1f}x >= {HC_REQUIRE_VOLUME}x")
+        else:
+            hc_rejection_reasons.append(f"Volume Ratio {vol_ratio:.1f}x < {HC_REQUIRE_VOLUME}x")
+
+        is_hc_base = len(hc_rejection_reasons) == 0
+
+        if is_golden:
+            hc_reasons.append("Is Golden Stock")
+            is_hc_base = True
+
+        high_conviction = is_hc_base
 
         bear_play = (
             regime == "bearish"
@@ -1140,6 +1184,8 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
             "chart_data": chart_data,
             # Flags
             "high_conviction": high_conviction,
+            "hc_reasons": hc_reasons,
+            "hc_rejection_reasons": hc_rejection_reasons,
             "is_golden": is_golden,
             "bear_play": bear_play,
             "is_breakout": is_breakout,
@@ -1162,6 +1208,37 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
                 "news_spike": round(news_spike_2, 2),
                 "macro": round(macro_score_5, 2),
                 "catalyst": round(catalyst_score_10, 2),
+                # Phase 5, Section 36: Detailed per-indicator score breakdown
+                "score_breakdown": {
+                    "rsi": round(rsi, 1),
+                    "macd_contribution": round(20 if (macd_line > macd_sig_val and macd_hist > macd_hist_prev) else (10 if macd_line > macd_sig_val else (5 if macd_hist > macd_hist_prev else -8)), 1),
+                    "ema_stack": round(15 if (e9 > e21 and e9_prev <= e21_prev) else (7 if e9 > e21 else 0), 1),
+                    "ema200_contribution": 8 if not below_ema200 else -12,
+                    "bb_contribution": round(15 if bb_pct < 0.15 else (10 if bb_pct < 0.35 else (-5 if bb_pct > 0.90 else 0)), 1),
+                    "volume_raw": round(smart_money_raw, 1),
+                    "atr_pct": round(atr_pct, 2),
+                    "stoch_k": round(stoch_k, 1),
+                    "momentum_composite": round(mom_composite, 2),
+                    "obv_slope": round(obv_slope, 2),
+                    "52w_pullback": round(dist_high, 1),
+                    "vwap_position": round(vwap_position, 2),
+                    "adx": round(adx, 1),
+                    "rs_vs_nifty": round(rs_vs_nifty, 2),
+                    "delivery_pct": round(curr_delivery, 1),
+                    "delivery_trend": round(delivery_trend, 1),
+                    "fib_score": fib["score"],
+                    "is_breakout": is_breakout,
+                    "vp_divergence": vp_divergence,
+                    "weekly_trend": weekly_trend,
+                    "regime": regime,
+                    "raw_tech_score": raw_tech_score,
+                    "smart_money_100": round(smart_money_100, 1),
+                    "fund_score": fund_score,
+                    "sector_rot_quadrant": rot_quadrant,
+                    "final_score_100": score_100,
+                    "max_available_weight": max_available_weight,
+                    "raw_sum": round(raw_sum, 2),
+                },
             },
             "_data_source": _data_source,
             "_source_reason": _source_reason,

@@ -227,6 +227,10 @@ def scan_status():
         db_time = round((time.time() - t0) * 1000)
         log.info("[STATUS PERF] cache_hit=false | db_time=%dms | query_count=2 | total_time=%dms", db_time, db_time)
 
+        # Phase 5, Section 28: Performance budget check
+        if db_time > 100:
+            log.warning("[PERFORMANCE] Status endpoint budget exceeded: %d ms (budget: 100ms)", db_time)
+
         log.info("[STATUS DEBUG] state=%s", state)
         log.info("[STATUS DEBUG] agg=%s type=%s", agg, type(agg))
 
@@ -343,6 +347,11 @@ def get_results():
     if not timings["cache_hit"]:
         print(f"[RESULTS PERF] load_results={timings['load_results']} ms | status={timings['status']} ms | universe={timings['universe']} ms | meta={timings['meta']} ms | slim={t_slim_ms} ms | sort={t_sort_ms} ms | serialize={t_serialize_ms} ms | total={total_ms} ms", flush=True)
         logging.getLogger("screener").info("[RESULTS PERF] load_results=%s ms | status=%s ms | universe=%s ms | meta=%s ms | slim=%s ms | sort=%s ms | serialize=%s ms | total=%s ms", timings['load_results'], timings['status'], timings['universe'], timings['meta'], t_slim_ms, t_sort_ms, t_serialize_ms, total_ms)
+        # Phase 5, Section 28: Dashboard performance budget check
+        if timings['load_results'] > 150:
+            log.warning("[PERFORMANCE] Dashboard load_results budget exceeded: %.1f ms (budget: 150ms)", timings['load_results'])
+        if total_ms > 500:
+            log.warning("[PERFORMANCE] Dashboard total response budget exceeded: %.1f ms (budget: 500ms)", total_ms)
 
     return resp
 
@@ -1255,6 +1264,45 @@ def score_history(symbol):
         })
     except Exception as exc:
         return jsonify({"symbol": symbol.upper(), "history": [], "delta": None, "error": str(exc)})
+
+@api_bp.route("/api/research-history/<symbol>")
+def api_research_history(symbol):
+    """Retrieve the full timeline of research snapshots for a symbol."""
+    try:
+        history = db.get_research_history(symbol.upper())
+        return jsonify({
+            "symbol": symbol.upper(),
+            "history": history,
+            "count": len(history)
+        })
+    except Exception as exc:
+        return jsonify({"symbol": symbol.upper(), "history": [], "error": str(exc)})
+
+@api_bp.route("/api/research-advisories", methods=["GET", "POST"])
+def api_research_advisories():
+    """Get active advisories or create a new one."""
+    if request.method == "POST":
+        data = request.json or {}
+        symbol = data.get("symbol")
+        adv_type = data.get("advisory_type")
+        adv_text = data.get("advisory_text")
+        priority = data.get("priority", "MEDIUM")
+        
+        if not symbol or not adv_type or not adv_text:
+            return jsonify({"error": "Missing required fields"}), 400
+            
+        try:
+            adv_id = db.create_research_advisory(symbol.upper(), adv_type, adv_text, priority)
+            return jsonify({"success": True, "advisory_id": adv_id})
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+    else:
+        symbol = request.args.get("symbol")
+        try:
+            advisories = db.get_research_advisories(symbol=symbol.upper() if symbol else None)
+            return jsonify({"advisories": advisories})
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
 
 
 @api_bp.route("/api/health/scan")

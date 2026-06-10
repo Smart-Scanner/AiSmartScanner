@@ -75,3 +75,64 @@ BP_DELIVERY_MIN = 45
 BP_WEEK1_MAX_LOSS = -2.0      # 1W return not worse than -2%
 BP_MACD_BULLISH = True         # MACD must be bullish
 BP_TARGET_PCT = 10.0           # realistic target in bear market
+
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 6, Section 39: Configuration Drift Detection
+# BASELINE_CONFIG captures the reference values for all
+# scanning thresholds, weights, and version identifiers.
+# ═══════════════════════════════════════════════════════════════
+
+BASELINE_CONFIG = {
+    # Versions
+    "SCAN_VERSION": "v3.0.0",
+    "SCORING_VERSION": "v3.0.0",
+    "RECOMMENDATION_VERSION": "v1.0.0",
+    "UNIVERSE_SELECTION_VERSION": "v1.0.0",
+    # Scan settings
+    "CACHE_TTL_HOURS": 6,
+    "DATA_LOOKBACK_DAYS": 365,
+    "BENCHMARK_LOOKBACK_DAYS": 60,
+    "MAX_RAW_SCORE": 380,
+    "TOP_N_RESULTS": 3000,
+    "DASHBOARD_MAX_RESULTS": 500,
+    # HC thresholds
+    "HC_MIN_SCORE": 55,
+    "HC_MIN_SIGNALS_BULLISH": 5,
+    "HC_RSI_RANGE": (40, 70),
+    "HC_DELIVERY_MIN": 40,
+    "HC_ATR_RANGE": (1.5, 5.5),
+    "HC_RISK_MAX": 40,
+    "HC_REQUIRE_MACD_BULLISH": False,
+    "HC_REQUIRE_VOLUME": 1.0,
+    "HC_MIN_RISK_REWARD": 2.2,
+    # Risk
+    "ATR_SL_MULTIPLIER": 2.0,
+    # Bear Play
+    "BP_RSI_MAX": 40,
+    "BP_VOLUME_MIN": 1.2,
+    "BP_DELIVERY_MIN": 45,
+    "BP_WEEK1_MAX_LOSS": -2.0,
+    "BP_MACD_BULLISH": True,
+    "BP_TARGET_PCT": 10.0,
+}
+
+
+def check_config_drift() -> dict:
+    """Phase 6, Section 39: Compare currently active config against BASELINE_CONFIG.
+
+    Returns a dictionary of changed variables:
+        {variable_name: {"baseline": old_val, "current": new_val}}
+
+    An empty dict means no drift detected.
+    """
+    import sys
+    current_module = sys.modules[__name__]
+    drift = {}
+    for key, baseline_val in BASELINE_CONFIG.items():
+        current_val = getattr(current_module, key, None)
+        if current_val is None:
+            drift[key] = {"baseline": baseline_val, "current": "MISSING"}
+        elif current_val != baseline_val:
+            drift[key] = {"baseline": baseline_val, "current": current_val}
+    return drift

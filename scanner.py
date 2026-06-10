@@ -327,6 +327,35 @@ def run_full_scan(context: ScanContext = None):
     except Exception:
         pass
 
+    # Phase 6, Section 39: Configuration drift check at scan ingress
+    try:
+        from config import check_config_drift
+        from events import CONFIG_DRIFT_DETECTED
+        _drift = check_config_drift()
+        if _drift:
+            log.warning(
+                "[%s] CONFIG DRIFT DETECTED — %d variable(s) changed: %s",
+                correlation_id[:12], len(_drift), list(_drift.keys())
+            )
+            # Persist drift details for audit trail
+            import json as _json
+            db.set_meta("config_drift", _json.dumps({
+                "scan_id": scan_id,
+                "drift": {k: {dk: str(dv) for dk, dv in v.items()} for k, v in _drift.items()},
+                "detected_at": datetime.now(IST).isoformat(),
+            }))
+            # Emit event via state transition audit trail
+            save_state_transition(
+                scan_id, "running", "running",
+                reason=f"config_drift: {list(_drift.keys())}",
+                actor=ACTOR_SYSTEM,
+                correlation_id=correlation_id,
+            )
+        else:
+            log.info("[%s] Config drift check passed — no changes from baseline", correlation_id[:12])
+    except Exception as exc:
+        log.debug("[%s] Config drift check failed (non-fatal): %s", correlation_id[:12], exc)
+
     # Build universe: curated active set + any custom stocks not already included
     curated_symbols = get_fast_scan_universe()
     custom = [s["symbol"] for s in db.get_custom_stocks()]
@@ -386,37 +415,76 @@ def run_full_scan(context: ScanContext = None):
                               reason="phase1_started", actor=ACTOR_SYSTEM,
                               correlation_id=correlation_id)
 
-        for i, sym in enumerate(all_symbols):
-            try:
-                df = live_feed.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
-                if df is not None and not df.empty and len(df) >= 50:
-                    r = fetch_and_analyze(sym, nifty_1m, regime, ext_df=df)
-                    if r:
-                        results.append(r)
-                        scored_set.add(sym)
-                else:
+        # Phase 6: Chunk Execution Architecture
+        import universe
+        chunks = universe.get_universe_chunks(all_symbols)
+        
+        global_i = 0
+        for chunk_name, chunk_symbols in chunks:
+            if not chunk_symbols:
+                continue
+                
+            chunk_run_id = db.start_chunk_run(scan_id, chunk_name, len(chunk_symbols))
+            chunk_processed = 0
+            chunk_failed = 0
+            
+            log.info("[%s] Starting chunk: %s (%d symbols)", correlation_id[:12], chunk_name, len(chunk_symbols))
+            
+            for sym in chunk_symbols:
+                try:
+                    df = live_feed.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
+                    if df is not None and not df.empty and len(df) >= 50:
+                        r = fetch_and_analyze(sym, nifty_1m, regime, ext_df=df)
+                        if r:
+                            results.append(r)
+                            scored_set.add(sym)
+                    else:
+                        failed_symbols.append(sym)
+                        chunk_failed += 1
+                except Exception:
                     failed_symbols.append(sym)
-            except Exception:
-                failed_symbols.append(sym)
-
-            scan_state.set_progress(i + 1)
-
-            # Phase 6: Check for cancellation
-            if get_scan_cancel_requested():
-                log.warning("[%s] Scan cancelled by user at %d/%d", correlation_id[:12], i + 1, total)
-                transition_scan_state(
-                    scan_id=scan_id, from_status="running", to_status="cancelled",
-                    reason="user_cancelled", actor=ACTOR_USER,
-                    correlation_id=correlation_id,
-                )
-                _reached_terminal = True
-                return
-
-            if (i + 1) % 50 == 0:
-                log.info("[%s] Phase 1: %d/%d done, %d scored", correlation_id[:12], i + 1, total, len(results))
+                    chunk_failed += 1
+                
+                chunk_processed += 1
+                global_i += 1
+                scan_state.set_progress(global_i)
+                
+                # Phase 6: Check for cancellation
+                if get_scan_cancel_requested():
+                    log.warning("[%s] Scan cancelled by user at %d/%d", correlation_id[:12], global_i, total)
+                    db.end_chunk_run(chunk_run_id, "CANCELLED", chunk_processed, "User cancelled scan")
+                    transition_scan_state(
+                        scan_id=scan_id, from_status="running", to_status="cancelled",
+                        reason="user_cancelled", actor=ACTOR_USER,
+                        correlation_id=correlation_id,
+                    )
+                    _reached_terminal = True
+                    return
+                
+                if global_i % 50 == 0:
+                    log.info("[%s] Phase 1: %d/%d done, %d scored", correlation_id[:12], global_i, total, len(results))
+            
+            # End chunk run
+            db.end_chunk_run(chunk_run_id, "COMPLETED", chunk_processed, f"{chunk_failed} failed")
+            
+            # Mandatory cooling delay between chunks
+            time.sleep(3)
 
         scan_state.update(phase="phase1_done")
         log.info("[%s] Phase 1 done: %d scored, %d failed", correlation_id[:12], len(results), len(failed_symbols))
+
+        # Phase 4, Section 37: Data quality gate — abort if too many symbols failed
+        _degraded_data = False
+        if total > 0:
+            _fail_pct = len(failed_symbols) / total
+            if _fail_pct > 0.05 and len(failed_symbols) > 5:
+                # Check if this will improve in Phase 2 (jugaad_data fallback)
+                # Only abort if we're missing critical mass (>5% AND more than 5 symbols)
+                log.warning(
+                    "[%s] Data quality check: %.1f%% symbols failed Phase 1 (%d/%d). "
+                    "Will attempt jugaad_data fallback before final quality decision.",
+                    correlation_id[:12], _fail_pct * 100, len(failed_symbols), total
+                )
 
         # ── PHASE 2: jugaad_data fallback (has delivery %) ──
         if failed_symbols:
@@ -459,6 +527,47 @@ def run_full_scan(context: ScanContext = None):
 
             log.info("[%s] Phase 2 done: +%d from jugaad_data", correlation_id[:12], jugaad_scored)
 
+        # Phase 4, Section 37: Final data quality gate (post-fallback)
+        _final_failed = total - len(results)
+        if total > 0 and _final_failed > 5:
+            _final_fail_pct = _final_failed / total
+            if _final_fail_pct > 0.05:
+                # Hard abort — too many symbols have no price data at all
+                _abort_reason = (
+                    f"data_quality_abort: {_final_failed}/{total} symbols "
+                    f"({_final_fail_pct:.1%}) failed both Angel One and yfinance"
+                )
+                log.error("[%s] %s", correlation_id[:12], _abort_reason)
+                transition_scan_state(
+                    scan_id=scan_id, from_status="running", to_status="failed",
+                    reason=_abort_reason, actor=ACTOR_SYSTEM,
+                    correlation_id=correlation_id,
+                    error_message=_abort_reason,
+                )
+                _reached_terminal = True
+                return
+
+        # Phase 4: Check if non-critical feeds degraded (GDELT, MarketAux)
+        # Intelligence warmup failures are soft — we continue but flag
+        try:
+            _warmup_meta = db.get_meta("intelligence_warmup_status", {})
+            if isinstance(_warmup_meta, dict) and _warmup_meta.get("gdelt_failed"):
+                _degraded_data = True
+                log.warning("[%s] Non-critical feed degraded: GDELT unavailable", correlation_id[:12])
+        except Exception:
+            pass
+
+        # Persist degraded_data flag to scan_runs
+        if _degraded_data:
+            try:
+                db.execute_db(
+                    "UPDATE scan_runs SET degraded_data=? WHERE scan_id=?",
+                    (True, scan_id)
+                )
+                log.warning("[%s] Scan flagged as degraded_data=True", correlation_id[:12])
+            except Exception as exc:
+                log.debug("[%s] Failed to set degraded_data: %s", correlation_id[:12], exc)
+
         # ── POST-SCAN MARKETAUX: ENQUEUE TO BACKGROUND WORKER (Phase 8) ──
         results.sort(key=lambda x: x.get("score", 0), reverse=True)
         top30_syms = [
@@ -485,6 +594,15 @@ def run_full_scan(context: ScanContext = None):
 
         # Final save — all results with sector strength applied
         db.save_results(results)
+        
+        # Phase 5: Snapshot Governance (Immutable Research Freeze)
+        for r in results:
+            if r.get("high_conviction") or r.get("score", 0) >= 65:
+                try:
+                    db.save_research_snapshot_v2(r.get("symbol"), r, scan_context)
+                except Exception as exc:
+                    log.warning("[%s] Failed to save research snapshot for %s: %s", correlation_id[:12], r.get("symbol"), exc)
+                    
         db.set_meta("last_scan", now_ist().strftime("%Y-%m-%d %H:%M IST"))
         db.set_meta("timestamp", now_ist().isoformat())
 

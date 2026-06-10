@@ -6,6 +6,7 @@ Real-time tick data for Smart Screener
 import os
 import json
 import time
+import random
 import logging
 import threading
 from pathlib import Path
@@ -53,6 +54,52 @@ MAX_WS_BATCH_SIZE = 50
 REST_GAP_SECONDS = 0.5
 _hist_lock = threading.Lock()
 _hist_last_call = 0.0
+
+# Phase 4: Dynamic throttling state — tracks recent Angel API 429 failures
+_angel_429_count = 0
+_angel_429_window_start = 0.0
+_ANGEL_429_WINDOW_SECS = 600  # 10 minute sliding window
+_ANGEL_429_LOCK = threading.Lock()
+
+
+def _record_429():
+    """Record a 429 rate-limit hit. Resets the window if >10 minutes old."""
+    global _angel_429_count, _angel_429_window_start
+    with _ANGEL_429_LOCK:
+        now = time.time()
+        if now - _angel_429_window_start > _ANGEL_429_WINDOW_SECS:
+            _angel_429_count = 0
+            _angel_429_window_start = now
+        _angel_429_count += 1
+    # Persist to scan_meta for observability
+    try:
+        import db
+        db.set_meta("angel_api_429_count", _angel_429_count)
+    except Exception:
+        pass
+
+
+def get_dynamic_rest_gap() -> float:
+    """Phase 4, Section 27: Return an adaptive API call gap.
+    Increases REST_GAP_SECONDS based on recent 429 count within the window.
+    0 recent 429s → base (0.5s)
+    1-3 → 1.0s
+    4-8 → 1.5s
+    9+  → 2.0s
+    """
+    with _ANGEL_429_LOCK:
+        now = time.time()
+        if now - _angel_429_window_start > _ANGEL_429_WINDOW_SECS:
+            return REST_GAP_SECONDS  # window expired, back to base
+        count = _angel_429_count
+    if count <= 0:
+        return REST_GAP_SECONDS
+    elif count <= 3:
+        return 1.0
+    elif count <= 8:
+        return 1.5
+    else:
+        return 2.0
 
 _IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -433,7 +480,9 @@ def _rest_gap():
     global _hist_last_call
     with _hist_lock:
         now = time.time()
-        wait = REST_GAP_SECONDS - (now - _hist_last_call)
+        # Phase 4: Use dynamic gap that adapts to recent 429 failures
+        gap = get_dynamic_rest_gap()
+        wait = gap - (now - _hist_last_call)
         if wait > 0:
             time.sleep(wait)
         _hist_last_call = time.time()
@@ -515,9 +564,14 @@ def fetch_historical(symbol: str, days: int = 365):
         }
         result = _smart_api.getCandleData(params)
         
-        # Retry once on rate limit
-        if result and result.get("errorcode") == "AB1019":
-            time.sleep(1.5)
+        # Phase 4, Section 27: Exponential backoff with jitter on rate limit (up to 3 retries)
+        for _retry_attempt in range(3):
+            if not result or result.get("errorcode") != "AB1019":
+                break
+            _record_429()
+            _backoff = (2 ** _retry_attempt) * 1.5 + random.uniform(0, 0.5)
+            log.warning("Angel API 429 (AB1019) for %s — retry %d/3 in %.1fs", clean, _retry_attempt + 1, _backoff)
+            time.sleep(_backoff)
             _rest_gap()
             result = _smart_api.getCandleData(params)
 

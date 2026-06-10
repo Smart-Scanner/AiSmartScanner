@@ -459,17 +459,27 @@ def _outcome_checker_loop():
                 pass
 
             closed_count = 0
+            
+            # Fetch prices and update Research Lifecycle Engine (Phase 6)
+            prices_for_lifecycle = {}
+            for trade in open_trades:
+                sym = trade["symbol"]
+                p_data = live_feed.get_live_price(sym)
+                if p_data:
+                    ltp = p_data.get("ltp") or p_data.get("price", 0)
+                    if ltp and ltp > 0:
+                        prices_for_lifecycle[sym] = ltp
+                        
+            # Execute Phase 6 Lifecycle engine
+            db.update_research_lifecycle_outcomes(prices_for_lifecycle)
+            
             for trade in open_trades:
                 sym = trade["symbol"]
                 trade_id = trade["id"]
 
                 # Use WebSocket cache (instant) instead of REST bulk fetch (0.5s/sym)
-                price_data = live_feed.get_live_price(sym)
-                if not price_data:
-                    continue
-
-                ltp = price_data.get("ltp") or price_data.get("price", 0)
-                if not ltp or ltp <= 0:
+                ltp = prices_for_lifecycle.get(sym)
+                if not ltp:
                     continue
 
                 # Update extremes

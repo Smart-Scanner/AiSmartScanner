@@ -193,6 +193,7 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     candidate_count INTEGER DEFAULT 0,
     duration_seconds REAL,
     error_message TEXT,
+    degraded_data BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -331,6 +332,7 @@ CREATE TABLE IF NOT EXISTS score_audit (
     provider_latency_ms INTEGER,
     data_staleness_hours REAL,
     scan_version TEXT,
+    score_breakdown JSONB,
     UNIQUE (symbol, scan_id)
 );
 
@@ -441,6 +443,21 @@ CREATE INDEX IF NOT EXISTS idx_paper_trades_model ON paper_trades(model_version)
 CREATE INDEX IF NOT EXISTS idx_rec_snap_date ON recommendation_snapshots(snapshot_date);
 CREATE INDEX IF NOT EXISTS idx_score_audit_symbol ON score_audit(symbol);
 CREATE INDEX IF NOT EXISTS idx_score_audit_time ON score_audit(scan_time DESC);
+
+-- Phase 6: State transition audit trail (hash-chained)
+CREATE TABLE IF NOT EXISTS scan_state_transitions (
+    id BIGSERIAL PRIMARY KEY,
+    scan_id TEXT NOT NULL,
+    old_state TEXT NOT NULL,
+    new_state TEXT NOT NULL,
+    reason TEXT,
+    actor TEXT DEFAULT 'system',
+    correlation_id TEXT,
+    hash_chain TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_sst_scan_id ON scan_state_transitions(scan_id);
+CREATE INDEX IF NOT EXISTS idx_sst_created ON scan_state_transitions(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scan_audit_time ON scan_audit(start_time DESC);
 
 -- Auth Indexes

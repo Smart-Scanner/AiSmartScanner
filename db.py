@@ -142,6 +142,7 @@ def _build_slim(r: dict) -> str:
             "target_2":     trade.get("target_2") or trade.get("target2"),
             "risk_reward":  trade.get("risk_reward"),
             "booking_plan": trade.get("booking_plan"),
+            "cmp":          trade.get("cmp"),
         }
         # Keep compact: drop None values
         slim["trade_summary"] = {k: v for k, v in trade_summary.items() if v is not None}
@@ -838,6 +839,7 @@ def init_db():
                     "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS recommendation_version TEXT;",
                     "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS config_snapshot JSONB;",
                     "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS parent_scan_id TEXT;",
+                    "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS degraded_data BOOLEAN DEFAULT FALSE;",
                 ]:
                     try:
                         cur.execute(col_def)
@@ -865,7 +867,85 @@ def init_db():
                     CREATE INDEX IF NOT EXISTS idx_sst_scan_id ON scan_state_transitions(scan_id);
                     CREATE INDEX IF NOT EXISTS idx_sst_created ON scan_state_transitions(created_at DESC);
                 """)
-                log.info("Governance schema additions verified (scan_state_transitions, context columns)")
+                
+                # Production Schema additions
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS universe_catalog (
+                        symbol TEXT PRIMARY KEY,
+                        company_name TEXT,
+                        market_cap REAL,
+                        market_cap_bucket TEXT,
+                        sector TEXT,
+                        industry TEXT,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        last_scanned_at TIMESTAMP
+                    );
+
+                    CREATE TABLE IF NOT EXISTS universe_chunk_runs (
+                        id BIGSERIAL PRIMARY KEY,
+                        scan_id TEXT NOT NULL,
+                        chunk_name TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        symbol_count INTEGER,
+                        symbols_processed INTEGER DEFAULT 0,
+                        error_message TEXT,
+                        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        completed_at TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_ucr_scan_id ON universe_chunk_runs(scan_id);
+
+                    CREATE TABLE IF NOT EXISTS research_snapshots_v2 (
+                        id BIGSERIAL PRIMARY KEY,
+                        version INTEGER NOT NULL DEFAULT 1,
+                        symbol TEXT NOT NULL,
+                        status TEXT DEFAULT 'ACTIVE',
+                        outcome_status TEXT DEFAULT 'PENDING',
+                        recommendation TEXT,
+                        entry_low REAL,
+                        entry_high REAL,
+                        stop_loss REAL,
+                        target_1 REAL,
+                        target_2 REAL,
+                        target_3 REAL,
+                        risk_reward REAL,
+                        confidence REAL,
+                        confidence_breakdown JSONB,
+                        research_thesis TEXT,
+                        cmp_at_generation REAL,
+                        score_at_generation REAL,
+                        raw_score_at_generation REAL,
+                        scan_id TEXT,
+                        correlation_id TEXT,
+                        scanner_version TEXT,
+                        scoring_version TEXT,
+                        recommendation_version TEXT,
+                        config_snapshot JSONB,
+                        snapshot_hash TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(symbol, version)
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_research_snapshot_scan_symbol ON research_snapshots_v2(scan_id, symbol);
+
+                    CREATE TABLE IF NOT EXISTS research_advisories (
+                        id BIGSERIAL PRIMARY KEY,
+                        symbol TEXT NOT NULL,
+                        advisory_type TEXT NOT NULL,
+                        advisory_text TEXT NOT NULL,
+                        priority TEXT DEFAULT 'MEDIUM',
+                        issued_by TEXT DEFAULT 'system',
+                        is_active BOOLEAN DEFAULT TRUE,
+                        valid_until TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_adv_symbol ON research_advisories(symbol);
+                """)
+                cur.execute("ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS symbol_count INTEGER;")
+                cur.execute("ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS symbols_processed INTEGER DEFAULT 0;")
+                cur.execute("ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS error_message TEXT;")
+                cur.execute("ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;")
+                log.info("Governance schema additions verified (scan_state_transitions, context columns, chunks, snapshots, advisories)")
 
                 log.info("PostgreSQL tables checked/created.")
             finally:
@@ -1307,11 +1387,91 @@ def _init_sqlite():
                 reason TEXT,
                 actor TEXT DEFAULT 'system',
                 correlation_id TEXT,
+                hash_chain TEXT,
                 created_at TEXT DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_sst_scan_id ON scan_state_transitions(scan_id);
             CREATE INDEX IF NOT EXISTS idx_sst_created ON scan_state_transitions(created_at DESC);
         """)
+
+        # Production Schema additions
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS universe_catalog (
+                symbol TEXT PRIMARY KEY,
+                company_name TEXT,
+                market_cap REAL,
+                market_cap_bucket TEXT,
+                sector TEXT,
+                industry TEXT,
+                is_active INTEGER DEFAULT 1,
+                last_scanned_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS universe_chunk_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id TEXT NOT NULL,
+                chunk_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                symbol_count INTEGER,
+                symbols_processed INTEGER DEFAULT 0,
+                error_message TEXT,
+                started_at TEXT DEFAULT (datetime('now')),
+                completed_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_ucr_scan_id ON universe_chunk_runs(scan_id);
+
+            CREATE TABLE IF NOT EXISTS research_snapshots_v2 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version INTEGER NOT NULL DEFAULT 1,
+                symbol TEXT NOT NULL,
+                status TEXT DEFAULT 'ACTIVE',
+                outcome_status TEXT DEFAULT 'PENDING',
+                recommendation TEXT,
+                entry_low REAL,
+                entry_high REAL,
+                stop_loss REAL,
+                target_1 REAL,
+                target_2 REAL,
+                target_3 REAL,
+                risk_reward REAL,
+                confidence REAL,
+                confidence_breakdown TEXT,
+                research_thesis TEXT,
+                cmp_at_generation REAL,
+                score_at_generation REAL,
+                raw_score_at_generation REAL,
+                scan_id TEXT,
+                correlation_id TEXT,
+                scanner_version TEXT,
+                scoring_version TEXT,
+                recommendation_version TEXT,
+                config_snapshot TEXT,
+                snapshot_hash TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(symbol, version)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_research_snapshot_scan_symbol ON research_snapshots_v2(scan_id, symbol);
+
+            CREATE TABLE IF NOT EXISTS research_advisories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                advisory_type TEXT NOT NULL,
+                advisory_text TEXT NOT NULL,
+                priority TEXT DEFAULT 'MEDIUM',
+                issued_by TEXT DEFAULT 'system',
+                is_active INTEGER DEFAULT 1,
+                valid_until TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_adv_symbol ON research_advisories(symbol);
+        """)
+        # Phase 6, Section 40: hash_chain column (idempotent for existing DBs)
+        try:
+            conn.execute("ALTER TABLE scan_state_transitions ADD COLUMN hash_chain TEXT;")
+        except Exception:
+            pass
 
         # Section 5: Context columns on scan_runs (SQLite ALTER is limited)
         for col_sql in [
@@ -1324,6 +1484,8 @@ def _init_sqlite():
             "ALTER TABLE scan_runs ADD COLUMN recommendation_version TEXT;",
             "ALTER TABLE scan_runs ADD COLUMN config_snapshot TEXT;",
             "ALTER TABLE scan_runs ADD COLUMN parent_scan_id TEXT;",
+            # Phase 4, Section 37: Data quality degradation flag
+            "ALTER TABLE scan_runs ADD COLUMN degraded_data BOOLEAN DEFAULT FALSE;",
         ]:
             try:
                 conn.execute(col_sql)
@@ -1408,13 +1570,35 @@ def save_state_transition(scan_id: str, old_state: str, new_state: str,
     """Insert an append-only state transition audit row.
     Section 4: Every state machine transition creates exactly one row.
     These rows are NEVER updated or deleted.
+
+    Phase 6, Section 40: Tamper-evident hash-chaining.
+    Each row stores SHA256(prev_hash + fields), enabling
+    detection of deleted, modified, or out-of-order rows.
     """
+    import hashlib
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
+        # Fetch the hash_chain of the most recent transition
+        prev_row = execute_db(
+            "SELECT hash_chain FROM scan_state_transitions ORDER BY id DESC LIMIT 1",
+            fetch="one"
+        )
+        prev_hash = prev_row.get("hash_chain", "") if prev_row else ""
+        prev_hash = prev_hash or ""
+
+        # Compute SHA256 of (prev_hash + current transition fields)
+        chain_input = "|".join([
+            prev_hash, scan_id, old_state, new_state,
+            reason or "", actor, correlation_id or "", now
+        ])
+        current_hash = hashlib.sha256(chain_input.encode("utf-8")).hexdigest()
+
         execute_db("""
             INSERT INTO scan_state_transitions
-            (scan_id, old_state, new_state, reason, actor, correlation_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (scan_id, old_state, new_state, reason or "", actor, correlation_id or ""))
+            (scan_id, old_state, new_state, reason, actor, correlation_id, hash_chain, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (scan_id, old_state, new_state, reason or "", actor,
+              correlation_id or "", current_hash, now))
     except Exception as exc:
         log.warning("State transition audit insert failed: %s", exc)
 
@@ -2091,22 +2275,34 @@ def save_results(results: list[dict], meta: dict = None):
                 all_news_symbols = []
                 news_rows = []
 
+                def _sf(v):
+                    if v is None: return None
+                    try:
+                        f = float(v)
+                        import math
+                        if math.isnan(f) or math.isinf(f): return None
+                        return f
+                    except (ValueError, TypeError):
+                        return None
+
                 for r in to_save:
                     sym = r["symbol"]
                     f = r.get("fundamentals", {})
 
                     # 1. scan_results (+ slim_data for Phase 1C)
+                    # We pass default=str to json.dumps to avoid TypeError on np types
+                    import json as _json
                     slim = _build_slim(r) if _DB_USE_SLIM else None
                     scan_results_rows.append((
-                        sym, json.dumps(r), r.get("score", 0),
+                        sym, _json.dumps(r, default=str), _sf(r.get("score")),
                         1 if r.get("high_conviction") else 0,
                         r.get("sector", ""), scan_date, now, slim
                     ))
 
                     # 2. score_history
                     score_history_rows.append((
-                        sym, r.get("score", 0), r.get("price", 0.0),
-                        r.get("rsi"), scan_date
+                        sym, _sf(r.get("score")), _sf(r.get("price")),
+                        _sf(r.get("rsi")), scan_date
                     ))
 
                     # 3. stocks
@@ -2132,14 +2328,14 @@ def save_results(results: list[dict], meta: dict = None):
                         news_rows.append((
                             sym, art.get("title", ""),
                             art.get("url", ""), art.get("source", "GDELT"),
-                            art.get("age_h", 12.0), art.get("score", 0.0), now
+                            _sf(art.get("age_h", 12.0)), _sf(art.get("score", 0.0)), now
                         ))
 
                     # 5. sentiment_scores
                     sentiment_rows.append((
-                        sym, scan_date, gdelt_data.get("sentiment", 0.0),
-                        gdelt_data.get("spike", 1.0), gdelt_data.get("freshness", 0.0),
-                        r.get("news_sentiment_score", 0.0), now
+                        sym, scan_date, _sf(gdelt_data.get("sentiment", 0.0)),
+                        _sf(gdelt_data.get("spike", 1.0)), _sf(gdelt_data.get("freshness", 0.0)),
+                        _sf(r.get("news_sentiment_score", 0.0)), now
                     ))
 
                     # 6. technical_indicators
@@ -2903,14 +3099,23 @@ def save_score_audit(results: list, scan_id: str, scan_version: str):
     for r in results:
         try:
             comp = r.get("_score_components", {})
+            # Phase 5, Section 36: Extract and serialize score_breakdown
+            _breakdown = comp.get("score_breakdown")
+            _breakdown_json = None
+            if _breakdown:
+                try:
+                    import json as _json
+                    _breakdown_json = _json.dumps(_breakdown, default=str)
+                except Exception:
+                    pass
             execute_db("""
                 INSERT INTO score_audit
                 (symbol, scan_id, scan_time, technical_score, earnings_momentum_score,
                  fundamental_score, smart_money_score, sector_rotation_score,
                  news_sentiment_score, news_spike_score, macro_score, catalyst_score,
                  final_score, data_source, source_reason, provider_latency_ms,
-                 data_staleness_hours, scan_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 data_staleness_hours, scan_version, score_breakdown)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 r.get("symbol", ""),
                 scan_id,
@@ -2930,6 +3135,7 @@ def save_score_audit(results: list, scan_id: str, scan_version: str):
                 r.get("_provider_latency_ms"),
                 r.get("_data_staleness_hours"),
                 scan_version,
+                _breakdown_json,
             ))
             inserted += 1
         except Exception as exc:
@@ -2961,7 +3167,24 @@ def save_scan_audit(scan_id: str, start_time: str, end_time: str,
         log.info("Phase 0: scan_audit saved (scan_id=%s, %d stocks, %dms)",
                  scan_id[:20], stocks_scanned, duration_ms)
     except Exception as exc:
-        log.warning("scan_audit insert failed: %s", exc)
+        log.error("Failed to insert scan audit log: %s", exc)
+
+
+def start_chunk_run(scan_id: str, chunk_name: str, symbol_count: int) -> int:
+    """Log the start of a chunk execution."""
+    return execute_db("""
+        INSERT INTO universe_chunk_runs (scan_id, chunk_name, status, symbol_count, started_at)
+        VALUES (?, ?, 'RUNNING', ?, CURRENT_TIMESTAMP)
+        RETURNING id
+    """, (scan_id, chunk_name, symbol_count), fetch="one").get("id")
+
+def end_chunk_run(chunk_run_id: int, status: str, symbols_processed: int, error_message: str = None):
+    """Log the completion or failure of a chunk execution."""
+    execute_db("""
+        UPDATE universe_chunk_runs
+        SET status = ?, symbols_processed = ?, error_message = ?, completed_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (status, symbols_processed, error_message, chunk_run_id))
 
 def get_stock(symbol: str) -> dict | None:
     """Get a single stock's scan data."""
@@ -3552,6 +3775,219 @@ def save_recommendation_snapshot(snapshot_date: str, ranked_stocks: list[dict],
 
     log.info("[PaperTrade] Saved snapshot: %d stocks for %s", min(len(ranked_stocks), _PAPER_TOP_N_SNAPSHOT), snapshot_date)
 
+def save_research_snapshot_v2(symbol: str, rec_data: dict, scan_context: 'ScanContext' = None):
+    """
+    Save or version an immutable research snapshot (Phase 5 & 6).
+    """
+    import hashlib
+    import json
+    
+    # Extract trade details
+    trade = rec_data.get("trade", {})
+    if not trade:
+        return
+        
+    entry_low = trade.get("entry_low", 0)
+    entry_high = trade.get("entry_high", 0)
+    stop_loss = trade.get("stop_loss", 0)
+    target_1 = trade.get("target_1") or trade.get("target1", 0)
+    target_2 = trade.get("target_2") or trade.get("target2", 0)
+    target_3 = trade.get("target_3") or trade.get("target3", 0)
+    risk_reward = trade.get("risk_reward", 0)
+    cmp_at_generation = trade.get("cmp", 0)
+    
+    recommendation = rec_data.get("scan_analysis", "")
+    if not recommendation:
+        recommendation = "Hold" if "Hold" in str(rec_data) else "Buy"
+        
+    confidence = rec_data.get("confidence", 0)
+    confidence_breakdown = rec_data.get("hc_reasons", [])
+    research_thesis = rec_data.get("ai_summary", "")
+    
+    score_at_generation = rec_data.get("score", 0)
+    raw_score_at_generation = rec_data.get("raw_score", 0) # Assumes raw_score exists, fallback to 0
+
+    scan_id = scan_context.scan_id if scan_context else "manual"
+    correlation_id = scan_context.correlation_id if scan_context else ""
+    scanner_version = scan_context.scanner_version if scan_context else ""
+    scoring_version = scan_context.scoring_version if scan_context else ""
+    recommendation_version = scan_context.recommendation_version if scan_context else ""
+    config_snapshot = json.dumps(scan_context.config_snapshot) if scan_context and scan_context.config_snapshot else "{}"
+    
+    # Hash of critical fields
+    hash_input = f"{symbol}|{entry_low}|{stop_loss}|{target_1}|{recommendation}|{scan_id}"
+    snapshot_hash = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
+    
+    # Fetch current active version
+    current_active = execute_db(
+        "SELECT version, recommendation, entry_low, stop_loss, target_1, snapshot_hash FROM research_snapshots_v2 WHERE symbol = ? AND status = 'ACTIVE' ORDER BY version DESC LIMIT 1",
+        (symbol,), fetch="one"
+    )
+    
+    next_version = 1
+    if current_active:
+        # Phase 6: Material Change Policy
+        # For now, we version if the recommendation or target/SL has changed.
+        old_rec = current_active.get("recommendation")
+        old_sl = current_active.get("stop_loss")
+        old_hash = current_active.get("snapshot_hash")
+        
+        # Simple policy: if hash is identical, skip. If material change, supersede and bump.
+        if old_hash == snapshot_hash:
+            return # No material change
+            
+        next_version = current_active.get("version", 0) + 1
+        
+        # Supersede old
+        execute_db(
+            "UPDATE research_snapshots_v2 SET status = 'SUPERSEDED' WHERE symbol = ? AND status = 'ACTIVE'",
+            (symbol,)
+        )
+        
+    execute_db("""
+        INSERT INTO research_snapshots_v2 (
+            symbol, version, recommendation, entry_low, entry_high,
+            stop_loss, target_1, target_2, target_3, risk_reward,
+            confidence, confidence_breakdown, research_thesis, cmp_at_generation,
+            score_at_generation, raw_score_at_generation,
+            scan_id, correlation_id, scanner_version, scoring_version,
+            recommendation_version, config_snapshot, snapshot_hash,
+            status, outcome_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'PENDING')
+    """, (
+        symbol, next_version, recommendation, entry_low, entry_high,
+        stop_loss, target_1, target_2, target_3, risk_reward,
+        confidence, json.dumps(confidence_breakdown), research_thesis, cmp_at_generation,
+        score_at_generation, raw_score_at_generation,
+        scan_id, correlation_id, scanner_version, scoring_version,
+        recommendation_version, config_snapshot, snapshot_hash
+    ))
+
+def get_research_history(symbol: str) -> list[dict]:
+    """
+    Retrieve the full timeline of research snapshots for a symbol.
+    """
+    rows = execute_db("""
+        SELECT version, status, outcome_status, recommendation,
+               entry_low, entry_high, stop_loss, target_1, target_2, target_3,
+               risk_reward, confidence, confidence_breakdown, research_thesis,
+               cmp_at_generation, created_at, snapshot_hash
+        FROM research_snapshots_v2
+        WHERE symbol = ?
+        ORDER BY version DESC
+    """, (symbol,), fetch="all")
+    
+    import json
+    history = []
+    for r in rows:
+        r_dict = dict(r)
+        if r_dict.get("confidence_breakdown"):
+            try:
+                r_dict["confidence_breakdown"] = json.loads(r_dict["confidence_breakdown"])
+            except:
+                pass
+        history.append(r_dict)
+    return history
+
+def create_research_advisory(symbol: str, advisory_type: str, advisory_text: str,
+                             priority: str, issued_by: str = "system",
+                             valid_until: str = None) -> int:
+    """Issue a new research advisory."""
+    return execute_db("""
+        INSERT INTO research_advisories (
+            symbol, advisory_type, advisory_text, priority, issued_by, valid_until
+        ) VALUES (?, ?, ?, ?, ?, ?) RETURNING id
+    """, (symbol, advisory_type, advisory_text, priority, issued_by, valid_until), fetch="one").get("id")
+
+def get_research_advisories(symbol: str = None, active_only: bool = True) -> list[dict]:
+    """Retrieve research advisories, optionally filtered by symbol and active status."""
+    query = "SELECT * FROM research_advisories WHERE 1=1"
+    params = []
+    
+    if symbol:
+        query += " AND symbol = ?"
+        params.append(symbol)
+        
+    if active_only:
+        query += " AND is_active = TRUE AND (valid_until IS NULL OR valid_until >= CURRENT_TIMESTAMP)"
+        
+    query += " ORDER BY created_at DESC"
+    
+    rows = execute_db(query, tuple(params), fetch="all")
+    return [dict(r) for r in rows]
+
+def update_research_lifecycle_outcomes(prices: dict):
+    """
+    Research Lifecycle Engine
+    Updates outcome_status in research_snapshots_v2 dynamically.
+    Transitions:
+    PENDING -> ACTIVE
+    ACTIVE -> TARGET1_HIT -> TARGET2_HIT -> TARGET3_HIT
+    * -> STOP_LOSS_HIT
+    * -> CLOSED (after 20 days)
+    """
+    try:
+        active_snaps = execute_db(
+            "SELECT id, symbol, entry_low, stop_loss, target_1, target_2, target_3, outcome_status, created_at FROM research_snapshots_v2 WHERE status = 'ACTIVE' AND outcome_status != 'CLOSED'",
+            fetch="all"
+        )
+        if not active_snaps:
+            return
+            
+        from datetime import datetime
+        now = datetime.now()
+        
+        for snap in active_snaps:
+            sym = snap["symbol"]
+            ltp = prices.get(sym)
+            if not ltp:
+                continue
+                
+            status = snap["outcome_status"]
+            new_status = status
+            
+            created_at = snap["created_at"]
+            if created_at:
+                try:
+                    dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                    days_held = (now - dt.replace(tzinfo=None)).days
+                    if days_held >= 20:
+                        new_status = "CLOSED"
+                except Exception:
+                    pass
+            
+            if new_status != "CLOSED":
+                if status == "PENDING" and ltp >= snap.get("entry_low", 0):
+                    new_status = "ACTIVE"
+                    
+                if snap.get("stop_loss") and ltp <= snap["stop_loss"]:
+                    new_status = "STOP_LOSS_HIT"
+                elif snap.get("target_3") and ltp >= snap["target_3"] and status in ("ACTIVE", "TARGET1_HIT", "TARGET2_HIT"):
+                    new_status = "TARGET3_HIT"
+                elif snap.get("target_2") and ltp >= snap["target_2"] and status in ("ACTIVE", "TARGET1_HIT"):
+                    new_status = "TARGET2_HIT"
+                elif snap.get("target_1") and ltp >= snap["target_1"] and status in ("PENDING", "ACTIVE"):
+                    new_status = "TARGET1_HIT"
+            
+            # Illegal transition check (e.g. TARGET1_HIT back to PENDING)
+            _valid_transitions = {
+                "PENDING": ["ACTIVE", "TARGET1_HIT", "STOP_LOSS_HIT", "CLOSED"],
+                "ACTIVE": ["TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT", "STOP_LOSS_HIT", "CLOSED"],
+                "TARGET1_HIT": ["TARGET2_HIT", "TARGET3_HIT", "STOP_LOSS_HIT", "CLOSED"],
+                "TARGET2_HIT": ["TARGET3_HIT", "STOP_LOSS_HIT", "CLOSED"],
+                "TARGET3_HIT": ["CLOSED", "STOP_LOSS_HIT"],
+                "STOP_LOSS_HIT": ["CLOSED"],
+                "CLOSED": []
+            }
+            
+            if new_status != status:
+                if new_status in _valid_transitions.get(status, []):
+                    execute_db("UPDATE research_snapshots_v2 SET outcome_status = ? WHERE id = ?", (new_status, snap["id"]))
+                    log.info("[LifecycleEngine] %s transitioned: %s -> %s (LTP: %s)", sym, status, new_status, ltp)
+                else:
+                    log.error("[LifecycleEngine] ILLEGAL TRANSITION PREVENTED for %s: %s -> %s", sym, status, new_status)
+    except Exception as exc:
+        log.warning("[LifecycleEngine] Error updating outcomes: %s", exc)
 
 def save_portfolio_daily(nifty_price: float = None):
     """Save daily equity curve point."""
