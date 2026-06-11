@@ -63,6 +63,21 @@ _marketaux_queue: _queue_mod.Queue = _queue_mod.Queue(maxsize=200)
 _marketaux_thread: threading.Thread | None = None
 _marketaux_overflow_count = 0
 
+# ===================================================================
+#  HEARTBEAT WORKER (Phase B)
+# ===================================================================
+def _scan_heartbeat_worker(scan_id: str, stop_event: threading.Event):
+    """Background daemon: emits heartbeat for active scan every 30s."""
+    log.info("[HEARTBEAT] Started for scan_id=%s", scan_id)
+    while not stop_event.is_set():
+        try:
+            db.update_scan_heartbeat(scan_id)
+        except Exception as exc:
+            log.warning("[HEARTBEAT] Update failed: %s", exc)
+        stop_event.wait(30)
+    log.info("[HEARTBEAT] Stopped for scan_id=%s", scan_id)
+
+
 
 def _marketaux_worker():
     """Background daemon: pulls symbols from queue, enriches with MarketAux.
@@ -379,9 +394,19 @@ def run_full_scan(context: ScanContext = None):
     db.clear_meta_cache()  # Phase 1: ensure fresh metadata during scan
     log.info("[%s] Scan: %d stocks... (scan_id=%s)", correlation_id[:12], total, scan_id[:20])
     start_time = time.monotonic()
+    
+    db.log_scan_event(scan_id, "SCAN_STARTED", f"Scanning {total} stocks")
+    db.log_scan_event(scan_id, "SCAN_LOCK_ACQUIRED", "Scan lock acquired")
 
     # Phase 0B: Track whether we reached a terminal state
     _reached_terminal = False
+    
+    # Phase B: Start Heartbeat
+    heartbeat_stop = threading.Event()
+    heartbeat_thread = threading.Thread(
+        target=_scan_heartbeat_worker, args=(scan_id, heartbeat_stop), daemon=True
+    )
+    heartbeat_thread.start()
 
     try:
         # ── PRE-SCAN INTELLIGENCE WARMUP ────────────────────────────
@@ -425,48 +450,86 @@ def run_full_scan(context: ScanContext = None):
                 continue
                 
             chunk_run_id = db.start_chunk_run(scan_id, chunk_name, len(chunk_symbols))
+            db.log_scan_event(scan_id, "CHUNK_STARTED", f"Chunk: {chunk_name} ({len(chunk_symbols)} symbols)")
             chunk_processed = 0
             chunk_failed = 0
             
             log.info("[%s] Starting chunk: %s (%d symbols)", correlation_id[:12], chunk_name, len(chunk_symbols))
             
-            for sym in chunk_symbols:
-                try:
-                    df = live_feed.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
-                    if df is not None and not df.empty and len(df) >= 50:
-                        r = fetch_and_analyze(sym, nifty_1m, regime, ext_df=df)
-                        if r:
-                            results.append(r)
-                            scored_set.add(sym)
-                    else:
+            chunk_results = []
+            
+            try:
+                for sym in chunk_symbols:
+                    # Phase C: Self-Awareness
+                    current_status = db.check_scan_status(scan_id)
+                    if current_status not in ("running",):
+                        log.error("[%s] SCANNER_ABORT_DETECTED: Status changed to %s", correlation_id[:12], current_status)
+                        db.log_scan_event(scan_id, "SCANNER_ABORT_DETECTED", f"Scan status changed to {current_status}")
+                        _reached_terminal = True
+                        return
+
+                    # Phase 6: Check for cancellation
+                    if get_scan_cancel_requested():
+                        log.warning("[%s] Scan cancelled by user at %d/%d", correlation_id[:12], global_i, total)
+                        db.log_scan_event(scan_id, "SCAN_CANCELLED", "User cancelled scan")
+                        transition_scan_state(
+                            scan_id=scan_id, from_status="running", to_status="cancelled",
+                            reason="user_cancelled", actor=ACTOR_USER,
+                            correlation_id=correlation_id,
+                        )
+                        _reached_terminal = True
+                        return
+
+                    sym_start_time = time.monotonic()
+                    try:
+                        df = live_feed.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
+                        api_duration = time.monotonic() - sym_start_time
+                        
+                        anal_start = time.monotonic()
+                        if df is not None and not df.empty and len(df) >= 50:
+                            r = fetch_and_analyze(sym, nifty_1m, regime, ext_df=df)
+                            anal_duration = time.monotonic() - anal_start
+                            if r:
+                                results.append(r)
+                                chunk_results.append(r)
+                                scored_set.add(sym)
+                                db.log_scan_event(scan_id, "SYMBOL_COMPLETED", f"Sym: {sym}, Chunk: {chunk_name}, API: {api_duration:.2f}s, Anal: {anal_duration:.2f}s")
+                        else:
+                            failed_symbols.append(sym)
+                            chunk_failed += 1
+                            db.log_scan_event(scan_id, "SYMBOL_FAILED", f"Sym: {sym}, Chunk: {chunk_name}, Reason: Empty df")
+                    except Exception as exc:
                         failed_symbols.append(sym)
                         chunk_failed += 1
-                except Exception:
-                    failed_symbols.append(sym)
-                    chunk_failed += 1
-                
-                chunk_processed += 1
-                global_i += 1
-                scan_state.set_progress(global_i)
-                
-                # Phase 6: Check for cancellation
-                if get_scan_cancel_requested():
-                    log.warning("[%s] Scan cancelled by user at %d/%d", correlation_id[:12], global_i, total)
-                    db.end_chunk_run(chunk_run_id, "CANCELLED", chunk_processed, "User cancelled scan")
-                    transition_scan_state(
-                        scan_id=scan_id, from_status="running", to_status="cancelled",
-                        reason="user_cancelled", actor=ACTOR_USER,
-                        correlation_id=correlation_id,
-                    )
-                    _reached_terminal = True
-                    return
-                
-                if global_i % 50 == 0:
-                    log.info("[%s] Phase 1: %d/%d done, %d scored", correlation_id[:12], global_i, total, len(results))
+                        db.log_scan_event(scan_id, "SYMBOL_FAILED", f"Sym: {sym}, Chunk: {chunk_name}, Error: {str(exc)}")
+                    
+                    chunk_processed += 1
+                    global_i += 1
+                    if chunk_processed % 10 == 0:
+                        db.update_chunk_progress(chunk_run_id, sym, chunk_processed)
+                    scan_state.set_progress(global_i)
+                    
+                    if global_i % 50 == 0:
+                        log.info("[%s] Phase 1: %d/%d done, %d scored", correlation_id[:12], global_i, total, len(results))
             
-            # End chunk run
-            db.end_chunk_run(chunk_run_id, "COMPLETED", chunk_processed, f"{chunk_failed} failed")
-            
+            finally:
+                # Phase D: Chunk Governance - Guaranteed Cleanup
+                if current_status not in ("running",):
+                    chunk_status = "ABORTED"
+                elif get_scan_cancel_requested():
+                    chunk_status = "CANCELLED"
+                elif chunk_failed > 0 and chunk_processed == 0:
+                    chunk_status = "FAILED"
+                else:
+                    chunk_status = "COMPLETED"
+                
+                db.end_chunk_run(chunk_run_id, chunk_status, chunk_processed, f"{chunk_failed} failed")
+                db.log_scan_event(scan_id, f"CHUNK_{chunk_status}", f"Chunk: {chunk_name}, Processed: {chunk_processed}")
+                
+                # Phase E: Recommendation Persistence (Chunk saves)
+                if chunk_results:
+                    db.save_results(chunk_results)
+                
             # Mandatory cooling delay between chunks
             time.sleep(3)
 
@@ -579,29 +642,39 @@ def run_full_scan(context: ScanContext = None):
             log.info("[%s] MarketAux: Enqueued %d top symbols for background enrichment", correlation_id[:12], len(top30_syms))
 
         # ── FINALIZE ──
+        db.log_scan_event(scan_id, "FINALIZE_STARTED", "")
         # Apply sector strength (modifies results in-place)
         try:
+            db.log_scan_event(scan_id, "SECTOR_STRENGTH_STARTED", "")
             heatmap = apply_sector_strength(results)
             db.set_meta("heatmap", heatmap)
+            db.log_scan_event(scan_id, "SECTOR_STRENGTH_COMPLETED", "")
         except Exception as exc:
             log.warning("[%s] Heatmap failed: %s", correlation_id[:12], exc)
 
         try:
+            db.log_scan_event(scan_id, "AI_SUMMARY_STARTED", "")
             summary = generate_ai_summary(results, regime)
             db.set_meta("summary", summary)
+            db.log_scan_event(scan_id, "AI_SUMMARY_COMPLETED", "")
         except Exception as exc:
             log.warning("[%s] Summary failed: %s", correlation_id[:12], exc)
 
         # Final save — all results with sector strength applied
+        db.log_scan_event(scan_id, "SAVE_RESULTS_STARTED", "")
         db.save_results(results)
+        db.log_scan_event(scan_id, "SAVE_RESULTS_COMPLETED", "")
         
         # Phase 5: Snapshot Governance (Immutable Research Freeze)
+        db.log_scan_event(scan_id, "SNAPSHOT_STARTED", "")
         for r in results:
             if r.get("high_conviction") or r.get("score", 0) >= 65:
                 try:
                     db.save_research_snapshot_v2(r.get("symbol"), r, scan_context)
                 except Exception as exc:
                     log.warning("[%s] Failed to save research snapshot for %s: %s", correlation_id[:12], r.get("symbol"), exc)
+        db.log_scan_event(scan_id, "SNAPSHOT_COMPLETED", "")
+        db.log_scan_event(scan_id, "FINALIZE_COMPLETED", "")
                     
         db.set_meta("last_scan", now_ist().strftime("%Y-%m-%d %H:%M IST"))
         db.set_meta("timestamp", now_ist().isoformat())
@@ -849,18 +922,16 @@ def run_full_scan(context: ScanContext = None):
             correlation_id=correlation_id,
         )
         _reached_terminal = True
+        db.log_scan_event(scan_id, "SCAN_COMPLETED", "")
 
-    except Exception as exc:
-        log.error("[%s] Scan failed: %s", correlation_id[:12], exc)
-        transition_scan_state(
-            scan_id=scan_id, from_status="running", to_status="failed",
-            reason=str(exc)[:500], actor=ACTOR_SYSTEM,
-            correlation_id=correlation_id,
-            error_message=str(exc)[:500],
-        )
-        _reached_terminal = True
-        return
+    except Exception as e:
+        log.error("[%s] Fatal scan error: %s", correlation_id[:12], e, exc_info=True)
+        db.log_scan_event(scan_id, "SCAN_FAILED", str(e))
     finally:
+        # Stop the heartbeat worker thread
+        if 'heartbeat_stop' in locals():
+            heartbeat_stop.set()
+
         # Phase 0B: GUARANTEED terminal state — if we haven't reached one yet,
         # force it now. This catches edge cases where exceptions bypass the
         # normal completion path.

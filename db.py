@@ -840,17 +840,22 @@ def init_db():
                     "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS config_snapshot JSONB;",
                     "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS parent_scan_id TEXT;",
                     "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS degraded_data BOOLEAN DEFAULT FALSE;",
+                    "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS last_heartbeat TIMESTAMP;",
+                    "ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS chunk_last_activity TIMESTAMP;",
+                    "ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS last_symbol TEXT;",
                 ]:
                     try:
                         cur.execute(col_def)
-                    except Exception:
-                        pass  # Column already exists
+                    except Exception as exc:
+                        log.error("[MIGRATION FAILED] PostgreSQL schema error: %s", exc, exc_info=True)
+                        raise
 
                 # Section 36: Score breakdown for explainability
                 try:
                     cur.execute("ALTER TABLE score_audit ADD COLUMN IF NOT EXISTS score_breakdown JSONB;")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.error("[MIGRATION FAILED] PostgreSQL score_audit error: %s", exc, exc_info=True)
+                    raise
 
                 # Section 4, 30: State transition audit log (append-only)
                 cur.execute("""
@@ -866,6 +871,16 @@ def init_db():
                     );
                     CREATE INDEX IF NOT EXISTS idx_sst_scan_id ON scan_state_transitions(scan_id);
                     CREATE INDEX IF NOT EXISTS idx_sst_created ON scan_state_transitions(created_at DESC);
+
+                    CREATE TABLE IF NOT EXISTS scan_event_audit (
+                        id BIGSERIAL PRIMARY KEY,
+                        scan_id TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        details TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_sea_scan_id ON scan_event_audit(scan_id);
+                    CREATE INDEX IF NOT EXISTS idx_sea_created ON scan_event_audit(created_at DESC);
                 """)
                 
                 # Production Schema additions
@@ -1392,6 +1407,16 @@ def _init_sqlite():
             );
             CREATE INDEX IF NOT EXISTS idx_sst_scan_id ON scan_state_transitions(scan_id);
             CREATE INDEX IF NOT EXISTS idx_sst_created ON scan_state_transitions(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS scan_event_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                details TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_sea_scan_id ON scan_event_audit(scan_id);
+            CREATE INDEX IF NOT EXISTS idx_sea_created ON scan_event_audit(created_at DESC);
         """)
 
         # Production Schema additions
@@ -1486,17 +1511,28 @@ def _init_sqlite():
             "ALTER TABLE scan_runs ADD COLUMN parent_scan_id TEXT;",
             # Phase 4, Section 37: Data quality degradation flag
             "ALTER TABLE scan_runs ADD COLUMN degraded_data BOOLEAN DEFAULT FALSE;",
+            "ALTER TABLE scan_runs ADD COLUMN last_heartbeat TEXT;",
+            "ALTER TABLE universe_chunk_runs ADD COLUMN chunk_last_activity TEXT;",
+            "ALTER TABLE universe_chunk_runs ADD COLUMN last_symbol TEXT;",
         ]:
             try:
                 conn.execute(col_sql)
-            except Exception:
-                pass  # Column already exists
+            except Exception as exc:
+                if "duplicate column name" in str(exc).lower():
+                    pass
+                else:
+                    log.error("[MIGRATION FAILED] SQLite schema error: %s", exc, exc_info=True)
+                    raise
 
         # Section 36: Score breakdown
         try:
             conn.execute("ALTER TABLE score_audit ADD COLUMN score_breakdown TEXT;")
-        except Exception:
-            pass
+        except Exception as exc:
+            if "duplicate column name" in str(exc).lower():
+                pass
+            else:
+                log.error("[MIGRATION FAILED] SQLite score_audit error: %s", exc, exc_info=True)
+                raise
 
         log.info("SQLite Database initialized: %s", DB_PATH)
 
@@ -1803,6 +1839,42 @@ def update_scan_progress(scan_id: str, **kwargs):
             f"UPDATE scan_runs SET {set_clause} WHERE scan_id=?",
             vals + [scan_id]
         )
+
+
+def update_scan_heartbeat(scan_id: str):
+    """Update last_heartbeat for scanner liveness tracking."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    execute_db("UPDATE scan_runs SET last_heartbeat=? WHERE scan_id=?", (now, scan_id))
+    execute_db("UPDATE current_scan_state SET updated_at=? WHERE id=1", (now,))
+
+
+def check_scan_status(scan_id: str) -> str:
+    """Check the true status of a specific scan_id from scan_runs."""
+    row = execute_db("SELECT status FROM scan_runs WHERE scan_id=?", (scan_id,), fetch="one")
+    return row["status"] if row else "unknown"
+
+
+def log_scan_event(scan_id: str, event_type: str, details: str = ""):
+    """Log an event to the append-only scan_event_audit table."""
+    try:
+        execute_db(
+            "INSERT INTO scan_event_audit (scan_id, event_type, details) VALUES (?, ?, ?)",
+            (scan_id, event_type, details)
+        )
+    except Exception as exc:
+        log.warning("Failed to log scan event %s: %s", event_type, exc)
+
+
+def cleanup_audit_events(days_to_keep: int = 7):
+    """Phase J Audit Growth: Cleanup audit events older than specified days."""
+    try:
+        if is_postgresql() and not pg_cooldown_active():
+            execute_db("DELETE FROM scan_event_audit WHERE created_at < NOW() - INTERVAL '%s days'", (days_to_keep,))
+        else:
+            execute_db("DELETE FROM scan_event_audit WHERE created_at < datetime('now', '-{} days')".format(days_to_keep))
+        log.info("Audit cleanup: Removed scan_event_audit records older than %d days", days_to_keep)
+    except Exception as exc:
+        log.warning("Failed to cleanup audit events: %s", exc)
 
 
 def get_scan_cancel_requested() -> bool:
@@ -3173,8 +3245,8 @@ def save_scan_audit(scan_id: str, start_time: str, end_time: str,
 def start_chunk_run(scan_id: str, chunk_name: str, symbol_count: int) -> int:
     """Log the start of a chunk execution."""
     return execute_db("""
-        INSERT INTO universe_chunk_runs (scan_id, chunk_name, status, symbol_count, started_at)
-        VALUES (?, ?, 'RUNNING', ?, CURRENT_TIMESTAMP)
+        INSERT INTO universe_chunk_runs (scan_id, chunk_name, status, symbol_count, started_at, chunk_last_activity)
+        VALUES (?, ?, 'RUNNING', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING id
     """, (scan_id, chunk_name, symbol_count), fetch="one").get("id")
 
@@ -3182,9 +3254,17 @@ def end_chunk_run(chunk_run_id: int, status: str, symbols_processed: int, error_
     """Log the completion or failure of a chunk execution."""
     execute_db("""
         UPDATE universe_chunk_runs
-        SET status = ?, symbols_processed = ?, error_message = ?, completed_at = CURRENT_TIMESTAMP
+        SET status = ?, symbols_processed = ?, error_message = ?, completed_at = CURRENT_TIMESTAMP, chunk_last_activity = CURRENT_TIMESTAMP
         WHERE id = ?
     """, (status, symbols_processed, error_message, chunk_run_id))
+
+def update_chunk_progress(chunk_run_id: int, symbol: str, symbols_processed: int):
+    """Update chunk progress and last_symbol per symbol to prevent zombie tracking."""
+    execute_db("""
+        UPDATE universe_chunk_runs
+        SET symbols_processed = ?, last_symbol = ?, chunk_last_activity = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (symbols_processed, symbol, chunk_run_id))
 
 def get_stock(symbol: str) -> dict | None:
     """Get a single stock's scan data."""

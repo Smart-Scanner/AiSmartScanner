@@ -1,0 +1,1374 @@
+{
+  "scan_runs": {
+    "scan_id": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "mode": {
+      "type": "text",
+      "nullable": "NO",
+      "default": "'manual'::text"
+    },
+    "status": {
+      "type": "text",
+      "nullable": "NO",
+      "default": "'running'::text"
+    },
+    "phase": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "start_time": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    },
+    "end_time": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": null
+    },
+    "processed_count": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "failed_count": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "deferred_count": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "candidate_count": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "duration_seconds": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "error_message": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "created_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "current_scan_state": {
+    "id": {
+      "type": "integer",
+      "nullable": "NO",
+      "default": "1"
+    },
+    "scan_id": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "mode": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "status": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "'idle'::text"
+    },
+    "phase": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "start_time": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": null
+    },
+    "processed_count": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "failed_count": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "candidate_count": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "cancel_requested": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "updated_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "symbol_state": {
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "last_price_update": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": null
+    },
+    "last_technical_update": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": null
+    },
+    "last_news_update": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": null
+    },
+    "last_sentiment_update": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": null
+    },
+    "last_financial_update": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": null
+    },
+    "last_deep_scan": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": null
+    },
+    "price_change_pct": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0.0"
+    },
+    "prev_score": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "needs_deep_scan": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "deep_scan_reason": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "updated_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "paper_trades": {
+    "id": {
+      "type": "integer",
+      "nullable": "NO",
+      "default": "nextval('paper_trades_id_seq'::regclass)"
+    },
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "sector": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "entry_date": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "entry_price": {
+      "type": "real",
+      "nullable": "NO",
+      "default": null
+    },
+    "target_price": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "stop_loss": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "virtual_capital": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "25000"
+    },
+    "quantity": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "score_at_entry": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "grade_at_entry": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "technical_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "fundamental_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "earnings_momentum_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "earnings_grade": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "smart_money_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "sector_rotation_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "catalyst_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "news_sentiment_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "risk_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "risk_reward": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "model_version": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "market_regime": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "nifty_entry": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "high_conviction": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "is_golden": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "signals_json": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "'[]'::text"
+    },
+    "earnings_signals_json": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "'[]'::text"
+    },
+    "exit_date": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "exit_price": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "exit_reason": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "nifty_exit": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "days_held": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "return_pct": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "alpha_pct": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "max_drawdown_pct": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "max_runup_pct": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "status": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "'OPEN'::text"
+    },
+    "position_size_pct": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "20.0"
+    },
+    "probability_bucket": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "expected_return_bucket": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "created_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "recommendation_snapshots": {
+    "id": {
+      "type": "integer",
+      "nullable": "NO",
+      "default": "nextval('recommendation_snapshots_id_seq'::regclass)"
+    },
+    "snapshot_date": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "rank": {
+      "type": "integer",
+      "nullable": "NO",
+      "default": null
+    },
+    "score": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "grade": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "technical_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "fundamental_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "earnings_momentum_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "earnings_grade": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "smart_money_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "risk_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "price": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "model_version": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "market_regime": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "created_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "paper_portfolio_daily": {
+    "date": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "portfolio_value": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "invested_value": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "open_positions": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "closed_today": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "total_closed": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "win_count": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "loss_count": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "total_return_pct": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "nifty_level": {
+      "type": "real",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "model_version": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "created_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "score_audit": {
+    "id": {
+      "type": "bigint",
+      "nullable": "NO",
+      "default": "nextval('score_audit_id_seq'::regclass)"
+    },
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "scan_id": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "scan_time": {
+      "type": "timestamp without time zone",
+      "nullable": "NO",
+      "default": "CURRENT_TIMESTAMP"
+    },
+    "technical_score": {
+      "type": "numeric",
+      "nullable": "YES",
+      "default": null
+    },
+    "earnings_momentum_score": {
+      "type": "numeric",
+      "nullable": "YES",
+      "default": null
+    },
+    "fundamental_score": {
+      "type": "numeric",
+      "nullable": "YES",
+      "default": null
+    },
+    "smart_money_score": {
+      "type": "numeric",
+      "nullable": "YES",
+      "default": null
+    },
+    "sector_rotation_score": {
+      "type": "numeric",
+      "nullable": "YES",
+      "default": null
+    },
+    "news_sentiment_score": {
+      "type": "numeric",
+      "nullable": "YES",
+      "default": null
+    },
+    "news_spike_score": {
+      "type": "numeric",
+      "nullable": "YES",
+      "default": null
+    },
+    "macro_score": {
+      "type": "numeric",
+      "nullable": "YES",
+      "default": null
+    },
+    "catalyst_score": {
+      "type": "numeric",
+      "nullable": "YES",
+      "default": null
+    },
+    "final_score": {
+      "type": "numeric",
+      "nullable": "NO",
+      "default": null
+    },
+    "data_source": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "source_reason": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "provider_latency_ms": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": null
+    },
+    "data_staleness_hours": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "scan_version": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    }
+  },
+  "scan_audit": {
+    "id": {
+      "type": "bigint",
+      "nullable": "NO",
+      "default": "nextval('scan_audit_id_seq'::regclass)"
+    },
+    "scan_id": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "start_time": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": null
+    },
+    "end_time": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": null
+    },
+    "duration_ms": {
+      "type": "bigint",
+      "nullable": "YES",
+      "default": null
+    },
+    "stocks_scanned": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": null
+    },
+    "stocks_succeeded": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": null
+    },
+    "stocks_failed": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": null
+    },
+    "data_source": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "scan_version": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "scan_mode": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "'manual'::text"
+    }
+  },
+  "scan_meta": {
+    "key": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "value": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "updated_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "score_history": {
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "score": {
+      "type": "integer",
+      "nullable": "NO",
+      "default": null
+    },
+    "price": {
+      "type": "real",
+      "nullable": "NO",
+      "default": null
+    },
+    "rsi": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "scan_date": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    }
+  },
+  "custom_stocks": {
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "exchange": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "'NSE'::text"
+    },
+    "added_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    },
+    "note": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    }
+  },
+  "scan_results": {
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "data": {
+      "type": "jsonb",
+      "nullable": "NO",
+      "default": null
+    },
+    "score": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "high_conviction": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": "0"
+    },
+    "sector": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "scan_date": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "updated_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    },
+    "slim_data": {
+      "type": "jsonb",
+      "nullable": "YES",
+      "default": null
+    }
+  },
+  "portfolios": {
+    "id": {
+      "type": "integer",
+      "nullable": "NO",
+      "default": "nextval('portfolios_id_seq'::regclass)"
+    },
+    "name": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "description": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "created_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    },
+    "updated_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "positions": {
+    "id": {
+      "type": "integer",
+      "nullable": "NO",
+      "default": "nextval('positions_id_seq'::regclass)"
+    },
+    "portfolio_id": {
+      "type": "integer",
+      "nullable": "NO",
+      "default": null
+    },
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "trade_type": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "'BUY'::text"
+    },
+    "quantity": {
+      "type": "integer",
+      "nullable": "NO",
+      "default": "1"
+    },
+    "buy_price": {
+      "type": "real",
+      "nullable": "NO",
+      "default": null
+    },
+    "buy_date": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "sell_price": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "sell_date": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "stop_loss": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "target": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "status": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "'OPEN'::text"
+    },
+    "notes": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "''::text"
+    },
+    "created_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    },
+    "updated_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    },
+    "scan_analysis": {
+      "type": "text",
+      "nullable": "YES",
+      "default": "'Hold (Position Active)'::text"
+    },
+    "last_scan_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": null
+    }
+  },
+  "stocks": {
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "name": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "sector": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "industry": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "updated_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "news_articles": {
+    "id": {
+      "type": "integer",
+      "nullable": "NO",
+      "default": "nextval('news_articles_id_seq'::regclass)"
+    },
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "title": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "url": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "source": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "age_hours": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "raw_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "scanned_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "sentiment_scores": {
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "scan_date": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "gdelt_sentiment": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "gdelt_spike": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "gdelt_freshness": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "final_sentiment_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "updated_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "technical_indicators": {
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "scan_date": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "rsi": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "adx": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "macd_signal": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "volume_ratio": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "atr_pct": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "stoch_k": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "stoch_d": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "pct_1w": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "pct_2w": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "pct_1m": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "bb_position": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "dist_from_high": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "rs_vs_nifty": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "vwap_position": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "is_breakout": {
+      "type": "boolean",
+      "nullable": "YES",
+      "default": null
+    },
+    "vp_divergence": {
+      "type": "boolean",
+      "nullable": "YES",
+      "default": null
+    },
+    "weekly_trend": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "below_ema200": {
+      "type": "boolean",
+      "nullable": "YES",
+      "default": null
+    },
+    "high_52w": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "low_52w": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "pullback_pct": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "updated_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "fundamentals": {
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "pe": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "pb": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "fwd_pe": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "roe": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "roa": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "revenue_growth": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "earnings_growth": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "debt_to_equity": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "promoter_pct": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "market_cap": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "free_cash_flow": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "total_revenue": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "capex": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "eps_fwd": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "eps_trail": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "fund_score": {
+      "type": "integer",
+      "nullable": "YES",
+      "default": null
+    },
+    "updated_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    },
+    "detailed_json": {
+      "type": "jsonb",
+      "nullable": "YES",
+      "default": null
+    }
+  },
+  "macro_events": {
+    "id": {
+      "type": "integer",
+      "nullable": "NO",
+      "default": "nextval('macro_events_id_seq'::regclass)"
+    },
+    "title": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "country": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "impact": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "actual": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "forecast": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "surprise_dir": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "event_date": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "event_time": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "scanned_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    }
+  },
+  "final_scores": {
+    "symbol": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "scan_date": {
+      "type": "text",
+      "nullable": "NO",
+      "default": null
+    },
+    "news_sentiment_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "news_spike_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "technical_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "fundamental_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "macro_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "marketaux_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "final_score": {
+      "type": "real",
+      "nullable": "YES",
+      "default": null
+    },
+    "grade": {
+      "type": "text",
+      "nullable": "YES",
+      "default": null
+    },
+    "high_conviction": {
+      "type": "boolean",
+      "nullable": "YES",
+      "default": null
+    },
+    "bear_play": {
+      "type": "boolean",
+      "nullable": "YES",
+      "default": null
+    },
+    "updated_at": {
+      "type": "timestamp without time zone",
+      "nullable": "YES",
+      "default": "CURRENT_TIMESTAMP"
+    },
+    "is_golden": {
+      "type": "boolean",
+      "nullable": "YES",
+      "default": "false"
+    }
+  }
+}

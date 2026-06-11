@@ -1,3 +1,4 @@
 Date,Scan ID,Release Version,Observation Day,HC Threshold Used,Universe,After RSI,After Delivery,After ATR,After Risk,After RR,After Volume,After Score,Final HC
 2026-06-08,scan_manual_1780912272_5903ae,R1.0,1,55,573,439,298,291,207,103,19,0,0
 2026-06-09,scan_manual_1780994993_a2c72f,R1.0,2,55,573,417,295,287,193,96,17,4,4
+2026-06-11,scan_auto_1781149742_1b50e6,R1.0,4,55,573,376,275,265,135,64,22,4,0

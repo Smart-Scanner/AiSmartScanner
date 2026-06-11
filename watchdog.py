@@ -21,7 +21,7 @@ log = logging.getLogger("watchdog")
 
 # ── Configuration ─────────────────────────────────────────────────────
 WATCHDOG_CHECK_INTERVAL_SEC = 60   # How often the watchdog loop runs
-SCAN_TIMEOUT_MIN = 30              # Scans running longer than this are stale
+SCAN_TIMEOUT_MIN = 5               # Scans running longer than this without heartbeat are stale
 HEARTBEAT_KEY = "watchdog_heartbeat_ts"
 
 # ── Module state ──────────────────────────────────────────────────────
@@ -116,9 +116,9 @@ def _recover_stale_scans(db):
     from events import ACTOR_WATCHDOG
 
     try:
-        # Query for stale running scans
+        # Query for stale running scans using last_heartbeat
         stale_scans = db.execute_db("""
-            SELECT scan_id, start_time
+            SELECT scan_id, start_time, last_heartbeat
             FROM scan_runs
             WHERE status = 'running'
         """, fetch="all")
@@ -129,7 +129,8 @@ def _recover_stale_scans(db):
         now = datetime.now()
         for row in stale_scans:
             scan_id = row.get("scan_id", "")
-            updated_at = row.get("start_time")
+            # Use last_heartbeat, fallback to start_time if not available yet
+            updated_at = row.get("last_heartbeat") or row.get("start_time")
             if not updated_at:
                 continue
 
@@ -141,9 +142,11 @@ def _recover_stale_scans(db):
 
             if age_min > SCAN_TIMEOUT_MIN:
                 log.warning(
-                    "[WATCHDOG] Stale scan detected: scan_id=%s, age=%.1f min. Recovering...",
+                    "[WATCHDOG_STALE_DETECTED] Stale scan detected: scan_id=%s, heartbeat_age=%.1f min. Recovering...",
                     scan_id, age_min
                 )
+                db.log_scan_event(scan_id, "WATCHDOG_STALE_DETECTED", f"No heartbeat received for {age_min:.1f} minutes")
+                db.log_scan_event(scan_id, "WATCHDOG_RECOVERY_STARTED", "Initiating watchdog recovery")
 
                 # Transition: running → failed (via watchdog recovery)
                 # Uses conditional UPDATE to prevent race with a worker that might
@@ -158,16 +161,20 @@ def _recover_stale_scans(db):
 
                 if recovered:
                     log.warning(
-                        "[WATCHDOG] Recovered stale scan: %s (was running for %.1f min)",
+                        "[WATCHDOG_RECOVERY_COMPLETED] Recovered stale scan: %s (heartbeat dead for %.1f min)",
                         scan_id, age_min
                     )
+                    db.log_scan_event(scan_id, "WATCHDOG_RECOVERY_COMPLETED", f"Transitioned to failed after {age_min:.1f}m without heartbeat")
                 else:
                     log.info(
                         "[WATCHDOG] Scan %s already transitioned (race OK)", scan_id
                     )
+                    db.log_scan_event(scan_id, "WATCHDOG_RECOVERY_FAILED", "Scan already transitioned")
+            else:
+                log.debug("[WATCHDOG_HEARTBEAT_OK] scan_id=%s, heartbeat_age=%.1f min", scan_id, age_min)
 
     except Exception as exc:
-        log.error("[WATCHDOG] Stale scan recovery failed: %s", exc)
+        log.error("[WATCHDOG_RECOVERY_FAILED] Stale scan recovery failed: %s", exc)
 
 
 def _emit_heartbeat(db):
