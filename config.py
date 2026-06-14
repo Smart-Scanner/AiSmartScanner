@@ -78,6 +78,35 @@ BP_TARGET_PCT = 10.0           # realistic target in bear market
 
 
 # ═══════════════════════════════════════════════════════════════
+# Phase 5.5: Universe Engine + Parallel Scan Configuration
+# ═══════════════════════════════════════════════════════════════
+USE_UNIVERSE_ENGINE = os.getenv("USE_UNIVERSE_ENGINE", "0") == "1"
+
+# Scan Engine
+AUTO_SCAN_ENABLED_DEFAULT = os.getenv("AUTO_SCAN_ENABLED_DEFAULT", "0") == "1"
+SCAN_BATCH_SIZE = int(os.getenv("SCAN_BATCH_SIZE", "50"))
+MAX_SCAN_WORKERS = min(int(os.getenv("MAX_SCAN_WORKERS", "2")), 2)  # hard cap at 2
+PROGRESSIVE_PUBLISH_INTERVAL = int(os.getenv("PROGRESSIVE_PUBLISH_INTERVAL", "25"))
+
+# Universe Eligibility Filters (Turnover = primary, Volume = secondary)
+UNIVERSE_MIN_MCAP_CR = float(os.getenv("UNIVERSE_MIN_MCAP_CR", "1000"))
+UNIVERSE_MIN_AVG_TURNOVER_CR = float(os.getenv("UNIVERSE_MIN_AVG_TURNOVER_CR", "5"))
+UNIVERSE_MIN_AVG_VOLUME = int(os.getenv("UNIVERSE_MIN_AVG_VOLUME", "100000"))
+UNIVERSE_MIN_PRICE = float(os.getenv("UNIVERSE_MIN_PRICE", "20"))
+UNIVERSE_MIN_DATA_COVERAGE = float(os.getenv("UNIVERSE_MIN_DATA_COVERAGE", "0.90"))
+UNIVERSE_MIN_LISTING_DAYS = int(os.getenv("UNIVERSE_MIN_LISTING_DAYS", "180"))  # IPO age filter
+
+# Master Sync & Universe Rebuild
+MASTER_SYNC_INTERVAL_DAYS = int(os.getenv("MASTER_SYNC_INTERVAL_DAYS", "14"))
+MASTER_SYNC_DAILY_BATCH_SIZE = int(os.getenv("MASTER_SYNC_DAILY_BATCH_SIZE", "500"))  # incremental sync per run
+UNIVERSE_REBUILD_HOUR = 8   # 8:30 AM IST daily
+UNIVERSE_REBUILD_MINUTE = 30
+
+# Performance Alerting
+SCAN_DURATION_ALERT_MINUTES = int(os.getenv("SCAN_DURATION_ALERT_MINUTES", "20"))
+
+
+# ═══════════════════════════════════════════════════════════════
 # Phase 6, Section 39: Configuration Drift Detection
 # BASELINE_CONFIG captures the reference values for all
 # scanning thresholds, weights, and version identifiers.
@@ -89,6 +118,7 @@ BASELINE_CONFIG = {
     "SCORING_VERSION": "v3.0.0",
     "RECOMMENDATION_VERSION": "v1.0.0",
     "UNIVERSE_SELECTION_VERSION": "v1.0.0",
+    "AUTO_SCAN_ENABLED_DEFAULT": False,
     # Scan settings
     "CACHE_TTL_HOURS": 6,
     "DATA_LOOKBACK_DAYS": 365,
@@ -115,6 +145,16 @@ BASELINE_CONFIG = {
     "BP_WEEK1_MAX_LOSS": -2.0,
     "BP_MACD_BULLISH": True,
     "BP_TARGET_PCT": 10.0,
+    # Phase 5.5: Universe Engine
+    "SCAN_BATCH_SIZE": 50,
+    "MAX_SCAN_WORKERS": 2,
+    "UNIVERSE_MIN_MCAP_CR": 1000,
+    "UNIVERSE_MIN_AVG_TURNOVER_CR": 5,
+    "UNIVERSE_MIN_AVG_VOLUME": 100000,
+    "UNIVERSE_MIN_PRICE": 20,
+    "SCAN_DURATION_ALERT_MINUTES": 20,
+    "UNIVERSE_MIN_LISTING_DAYS": 180,
+    "MASTER_SYNC_DAILY_BATCH_SIZE": 500,
 }
 
 

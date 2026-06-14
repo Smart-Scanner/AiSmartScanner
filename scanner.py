@@ -371,6 +371,14 @@ def run_full_scan(context: ScanContext = None):
     except Exception as exc:
         log.debug("[%s] Config drift check failed (non-fatal): %s", correlation_id[:12], exc)
 
+    # ── Phase 5.5: Universe Engine Feature Flag ────────────────────
+    from config import USE_UNIVERSE_ENGINE
+    if USE_UNIVERSE_ENGINE:
+        log.info("[%s] Phase 5.5: Universe Engine ACTIVE — routing to parallel scan", correlation_id[:12])
+        _run_parallel_scan(context)
+        return
+
+    # ── Legacy scan path (USE_UNIVERSE_ENGINE=0) ──────────────────
     # Build universe: curated active set + any custom stocks not already included
     curated_symbols = get_fast_scan_universe()
     custom = [s["symbol"] for s in db.get_custom_stocks()]
@@ -944,3 +952,392 @@ def run_full_scan(context: ScanContext = None):
                 error_message="scan_exited_without_terminal_state",
             )
         db.clear_meta_cache()  # Phase 1: ensure fresh metadata after scan
+
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 5.5: Parallel Scan Engine
+# ═══════════════════════════════════════════════════════════════
+
+import queue as _q
+
+def _run_parallel_scan(context: ScanContext):
+    """
+    Phase 5.5: Queue-based parallel scan with 2 persistent workers.
+
+    Architecture:
+      1. Build eligible universe (or resume from checkpoint)
+      2. Acquire scan lock (heartbeat-based)
+      3. Split into batches of SCAN_BATCH_SIZE
+      4. Create persistent workers that pull from batch queue
+      5. Progressive publish every PROGRESSIVE_PUBLISH_INTERVAL stocks
+      6. Update resume checkpoint after each batch
+      7. Finalize (sector strength, AI summary, evidence)
+      8. Release lock + cleanup resume state
+    """
+    from config import (
+        SCAN_BATCH_SIZE, MAX_SCAN_WORKERS, PROGRESSIVE_PUBLISH_INTERVAL,
+        DATA_LOOKBACK_DAYS, SCAN_DURATION_ALERT_MINUTES,
+    )
+    from universe_builder import build_eligible_universe
+
+    scan_id = context.scan_id
+    correlation_id = context.correlation_id
+
+    log.info("[%s] ═══ Phase 5.5: Parallel Scan Engine ═══", correlation_id[:12])
+
+    # ── 1. Build or resume universe ──────────────────────────────
+    resume = db.get_pending_resume()
+    start_batch = 0
+
+    if resume and resume.get("status") == "running":
+        universe_version = resume["universe_version"]
+        eligible_rows = db.get_eligible_universe(universe_version)
+        eligible = [r["symbol"] for r in eligible_rows] if eligible_rows else []
+        start_batch = resume.get("current_batch_index", 0)
+        log.info("[%s] RESUMING scan from batch %d, universe=%s (%d stocks)",
+                 correlation_id[:12], start_batch, universe_version, len(eligible))
+    else:
+        eligible, universe_version = build_eligible_universe()
+
+    MIN_UNIVERSE_SIZE = 500
+    if not eligible or len(eligible) < MIN_UNIVERSE_SIZE:
+        log.error("[%s] Universe too small (count=%d, min=%d). Scan blocked.", correlation_id[:12], len(eligible) if eligible else 0, MIN_UNIVERSE_SIZE)
+        return
+
+    total = len(eligible)
+    log.info("[%s] Universe: %d stocks, version=%s, batch_size=%d, workers=%d",
+             correlation_id[:12], total, universe_version, SCAN_BATCH_SIZE, MAX_SCAN_WORKERS)
+
+    # Persist the resolved universe for debugging
+    try:
+        save_active_universe(eligible)
+    except Exception:
+        pass
+
+    # ── 2. Acquire scan lock ─────────────────────────────────────
+    lock_acquired = scan_state.start(total, mode=context.trigger_source, context=context)
+    if lock_acquired is None:
+        log.warning("[%s] Scan rejected — another scan is already active", correlation_id[:12])
+        return
+
+    if not db.acquire_scan_lock_v2(scan_id, context.correlation_id):
+        log.warning("[%s] Scan lock held by another owner — aborting", correlation_id[:12])
+        return
+
+    db.clear_meta_cache()
+    log.info("[%s] Scan lock acquired, starting parallel scan against Universe %s", correlation_id[:12], universe_version)
+    
+    # Store universe_version in scan_runs
+    try:
+        db.execute_db("UPDATE scan_runs SET universe_version=? WHERE scan_id=?", (universe_version, scan_id))
+    except Exception as exc:
+        log.warning("[%s] Failed to store universe_version in scan_runs: %s", correlation_id[:12], exc)
+
+    start_time = time.monotonic()
+
+    db.log_scan_event(scan_id, "SCAN_STARTED",
+                      f"Parallel scan: {total} stocks, {universe_version}")
+
+    # Phase 0B: Track terminal state
+    _reached_terminal = False
+
+    # Phase B: Start heartbeat
+    heartbeat_stop = threading.Event()
+    heartbeat_thread = threading.Thread(
+        target=_scan_heartbeat_worker, args=(scan_id, heartbeat_stop), daemon=True
+    )
+    heartbeat_thread.start()
+
+    try:
+        # ── 3. Pre-scan intelligence warmup ──────────────────────
+        try:
+            from intelligence import warmup_all
+            warmup_all(set(eligible))
+        except Exception as exc:
+            log.warning("[%s] Intelligence warmup failed (continuing): %s",
+                        correlation_id[:12], exc)
+
+        reset_delivery_state()
+
+        nifty_1m, regime = get_nifty50_benchmark()
+        db.set_meta("nifty50_1m", nifty_1m)
+        db.set_meta("market_regime", regime)
+        log.info("[%s] Nifty 1M: %+.2f%% | Regime: %s",
+                 correlation_id[:12], nifty_1m, regime.upper())
+
+        # ── 4. Split into batches ────────────────────────────────
+        batches = [eligible[i:i + SCAN_BATCH_SIZE]
+                   for i in range(0, total, SCAN_BATCH_SIZE)]
+        total_batches = len(batches)
+
+        log.info("[%s] Created %d batches of %d stocks each",
+                 correlation_id[:12], total_batches, SCAN_BATCH_SIZE)
+
+        # Create batch records in DB
+        db.create_scan_batches(scan_id, batches)
+
+        # Save resume state
+        db.save_scan_resume_state(scan_id, universe_version, total_batches, start_batch)
+
+        # ── 5. Create batch queue + persistent workers ───────────
+        batch_queue = _q.Queue()
+        results_queue = _q.Queue()
+
+        # Load pending batches into queue
+        for idx in range(start_batch, total_batches):
+            batch_queue.put((idx, batches[idx]))
+
+        # Sentinel values to stop workers
+        for _ in range(MAX_SCAN_WORKERS):
+            batch_queue.put(None)
+
+        # Start persistent workers (Rule 7: created once, stay alive)
+        workers = []
+        for w_id in range(MAX_SCAN_WORKERS):
+            t = threading.Thread(
+                target=_persistent_scan_worker,
+                args=(f"worker-{w_id}", scan_id, batch_queue, results_queue,
+                      nifty_1m, regime, context, PROGRESSIVE_PUBLISH_INTERVAL),
+                daemon=True,
+                name=f"scan-worker-{w_id}",
+            )
+            t.start()
+            workers.append(t)
+            log.info("[%s] Started persistent worker-%d", correlation_id[:12], w_id)
+
+        # ── 6. Main thread: consume results, track progress ─────
+        all_results = []
+        completed_batches = start_batch
+        global_processed = 0
+        alert_fired = False
+
+        while completed_batches < total_batches:
+            try:
+                batch_result = results_queue.get(timeout=120)
+            except _q.Empty:
+                # Check if workers are still alive
+                alive = sum(1 for t in workers if t.is_alive())
+                if alive == 0:
+                    log.error("[%s] All workers dead — breaking", correlation_id[:12])
+                    break
+
+                # Check 2: Stale batch recovery — re-queue batches stuck RUNNING > 5 min
+                recovered = db.recover_stale_batches(scan_id, stale_threshold_seconds=300)
+                if recovered:
+                    for r_idx in recovered:
+                        if r_idx < len(batches):
+                            batch_queue.put((r_idx, batches[r_idx]))
+                            log.info("[%s] Re-queued recovered stale batch %d",
+                                     correlation_id[:12], r_idx)
+
+                log.warning("[%s] Waiting for batch results (workers alive: %d)",
+                            correlation_id[:12], alive)
+                continue
+
+            if batch_result is None:
+                continue
+
+            batch_idx, batch_results = batch_result
+            all_results.extend(batch_results)
+            completed_batches += 1
+            global_processed += len(batches[batch_idx])
+
+            # Mark batch complete
+            db.complete_batch(scan_id, batch_idx, len(batch_results))
+
+            # Update resume checkpoint
+            db.save_scan_resume_state(scan_id, universe_version,
+                                      total_batches, completed_batches)
+
+            # Update live progress
+            scan_state.set_progress(global_processed)
+            update_scan_progress(scan_id, processed_count=global_processed)
+
+            # Refresh lock heartbeat
+            db.refresh_scan_lock_heartbeat(scan_id)
+
+            elapsed = time.monotonic() - start_time
+            rate = global_processed / elapsed * 60 if elapsed > 0 else 0
+
+            log.info("[%s] Batch %d/%d complete: +%d results | %d/%d total | "
+                     "%.1f stocks/min | %.0fs elapsed",
+                     correlation_id[:12], completed_batches, total_batches,
+                     len(batch_results), global_processed, total, rate, elapsed)
+
+            # Performance alert (Rule 12)
+            if not alert_fired and elapsed > SCAN_DURATION_ALERT_MINUTES * 60:
+                log.warning("[SCAN_PERFORMANCE_ALERT] scan_id=%s exceeded %d min "
+                            "(%.0fs elapsed, %d/%d processed)",
+                            scan_id, SCAN_DURATION_ALERT_MINUTES, elapsed,
+                            global_processed, total)
+                db.log_scan_event(scan_id, "SCAN_PERFORMANCE_ALERT",
+                                  f"Exceeded {SCAN_DURATION_ALERT_MINUTES}min")
+                alert_fired = True
+
+        # ── 7. Wait for workers to finish ────────────────────────
+        for t in workers:
+            t.join(timeout=30)
+
+        elapsed = time.monotonic() - start_time
+        log.info("[%s] All workers finished: %d results in %.1fs",
+                 correlation_id[:12], len(all_results), elapsed)
+
+        # ── 8. Finalize ──────────────────────────────────────────
+        if all_results:
+            # Apply sector strength
+            try:
+                all_results = apply_sector_strength(all_results)
+            except Exception:
+                pass
+
+            # Generate AI summary
+            try:
+                generate_ai_summary(all_results, regime)
+            except Exception:
+                pass
+
+            # Final save (ensures all results are persisted)
+            db.save_results(all_results,
+                           meta={"last_scan": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"),
+                                 "scan_id": scan_id,
+                                 "universe_version": universe_version})
+
+            # Subscribe to live feed
+            live_feed.subscribe([r["symbol"] for r in all_results])
+
+        # Record performance metrics
+        db.set_meta("scan_duration_s", str(round(elapsed)))
+        db.set_meta("scan_stocks_per_min", str(round(len(all_results) / elapsed * 60) if elapsed > 0 else 0))
+        db.set_meta("scan_universe_version", universe_version)
+        db.set_meta("scan_worker_count", str(MAX_SCAN_WORKERS))
+        db.set_meta("scan_batch_size", str(SCAN_BATCH_SIZE))
+
+        # Check for FAILED_PERMANENTLY batches → COMPLETED_WITH_ERRORS
+        failed_batches = db.execute_db(
+            "SELECT COUNT(*) as cnt FROM scan_batches WHERE scan_id = ? AND status = 'FAILED_PERMANENTLY'",
+            (scan_id,), fetch="one"
+        )
+        failed_count = (failed_batches or {}).get("cnt", 0)
+
+        if failed_count > 0:
+            final_status = "completed_with_errors"
+            final_reason = f"parallel_scan_completed_with_{failed_count}_failed_batches"
+            log.warning("[%s] Scan completed with %d FAILED_PERMANENTLY batches",
+                        correlation_id[:12], failed_count)
+        else:
+            final_status = "completed"
+            final_reason = "parallel_scan_completed"
+
+        # Phase 0A: Mark terminal state
+        transition_scan_state(
+            scan_id=scan_id, from_status="running", to_status=final_status,
+            reason=final_reason, actor=ACTOR_SYSTEM,
+            correlation_id=correlation_id,
+        )
+        _reached_terminal = True
+        db.set_meta("scan_failed_batches", str(failed_count))
+        db.log_scan_event(scan_id, f"SCAN_{final_status.upper()}",
+                          f"Parallel: {len(all_results)} results, {elapsed:.0f}s, "
+                          f"{universe_version}, failed_batches={failed_count}")
+
+    except Exception as e:
+        log.error("[%s] Parallel scan fatal error: %s", correlation_id[:12], e, exc_info=True)
+        db.log_scan_event(scan_id, "SCAN_FAILED", str(e))
+    finally:
+        # Stop heartbeat
+        heartbeat_stop.set()
+
+        # Guaranteed terminal state
+        if not _reached_terminal:
+            log.warning("[%s] Finally: forcing FAILED state", correlation_id[:12])
+            transition_scan_state(
+                scan_id=scan_id, from_status="running", to_status="failed",
+                reason="finally_block_recovery", actor=ACTOR_SYSTEM,
+                correlation_id=correlation_id,
+                error_message="parallel_scan_exited_without_terminal_state",
+            )
+
+        # Cleanup
+        db.clear_scan_resume_state(scan_id)
+        db.release_scan_lock_v2(scan_id)
+        db.clear_meta_cache()
+
+        log.info("[%s] ═══ Parallel Scan Engine: DONE ═══", correlation_id[:12])
+
+
+def _persistent_scan_worker(worker_id: str, scan_id: str,
+                             batch_queue: _q.Queue, results_queue: _q.Queue,
+                             nifty_1m: float, regime: str,
+                             context: ScanContext,
+                             publish_interval: int = 25):
+    """
+    Phase 5.5, Rule 7: Persistent worker that pulls batches from queue.
+
+    - Created once, stays alive for entire scan lifecycle
+    - Pulls batch from queue, processes symbols, sends results back
+    - Progressive publish every `publish_interval` stocks within a batch
+    - Stops on None sentinel
+    """
+    correlation_id = context.correlation_id
+    log.info("[%s][%s] Worker started", correlation_id[:12], worker_id)
+
+    while True:
+        item = batch_queue.get()
+        if item is None:
+            log.info("[%s][%s] Received shutdown sentinel", correlation_id[:12], worker_id)
+            break
+
+        batch_idx, symbols = item
+        log.info("[%s][%s] Processing batch %d (%d symbols)",
+                 correlation_id[:12], worker_id, batch_idx, len(symbols))
+
+        # Claim batch in DB
+        db.claim_next_batch(scan_id, batch_idx, worker_id)
+
+        batch_results = []
+        batch_publish_buffer = []
+
+        for sym_idx, sym in enumerate(symbols):
+            # Cancel check
+            if get_scan_cancel_requested():
+                log.warning("[%s][%s] Cancel requested — stopping", correlation_id[:12], worker_id)
+                break
+
+            try:
+                df = live_feed.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
+                if df is not None and not df.empty and len(df) >= 50:
+                    r = fetch_and_analyze(sym, nifty_1m, regime, ext_df=df)
+                    if r:
+                        batch_results.append(r)
+                        batch_publish_buffer.append(r)
+            except Exception as exc:
+                log.debug("[%s][%s] Symbol %s failed: %s",
+                          correlation_id[:12], worker_id, sym, exc)
+
+            # Progressive publish every publish_interval stocks (Rule 8 intent)
+            if len(batch_publish_buffer) >= publish_interval:
+                try:
+                    db.save_results(batch_publish_buffer)
+                    log.info("[%s][%s] Progressive publish: %d results (batch %d, %d/%d)",
+                             correlation_id[:12], worker_id, len(batch_publish_buffer),
+                             batch_idx, sym_idx + 1, len(symbols))
+                except Exception as exc:
+                    log.warning("[%s][%s] Progressive publish failed: %s",
+                                correlation_id[:12], worker_id, exc)
+                batch_publish_buffer = []
+
+        # Publish remaining results in buffer
+        if batch_publish_buffer:
+            try:
+                db.save_results(batch_publish_buffer)
+            except Exception as exc:
+                log.warning("[%s][%s] Final batch publish failed: %s",
+                            correlation_id[:12], worker_id, exc)
+
+        log.info("[%s][%s] Batch %d complete: %d results from %d symbols",
+                 correlation_id[:12], worker_id, batch_idx, len(batch_results), len(symbols))
+
+        # Send results back to main thread
+        results_queue.put((batch_idx, batch_results))
+
+    log.info("[%s][%s] Worker exiting", correlation_id[:12], worker_id)

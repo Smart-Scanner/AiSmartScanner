@@ -110,6 +110,42 @@ log.info("Smart Screener v5 | Stock Screener + Portfolio Manager")
 db.init_db()
 auth_db.init_db()
 
+# Phase 5.5: Startup resume + universe rebuild check
+from config import USE_UNIVERSE_ENGINE, AUTO_SCAN_ENABLED_DEFAULT
+if USE_UNIVERSE_ENGINE:
+    log.info("[Phase 5.5] Universe Engine ACTIVE")
+    
+    # Background Boot Sequence (Master Sync -> Universe Build)
+    def _boot_universe_prep():
+        log.info("[BootPrep] Running Master Sync...")
+        try:
+            from master_sync import run_master_sync
+            run_master_sync()
+        except Exception as e:
+            log.error("[BootPrep] Master Sync error: %s", e)
+            
+        log.info("[BootPrep] Running Universe Build...")
+        try:
+            from universe_builder import build_eligible_universe
+            build_eligible_universe()
+        except Exception as e:
+            log.error("[BootPrep] Universe Build error: %s", e)
+            
+        log.info("[BootPrep] Universe Prep Complete.")
+        
+    threading.Thread(target=_boot_universe_prep, daemon=True, name="boot-prep").start()
+
+    # Check for incomplete scan from Railway restart
+    _resume = db.get_pending_resume()
+    if _resume and _resume.get("status") == "running":
+        log.info("[Phase 5.5] Found incomplete scan %s — scheduling resume",
+                 _resume.get("scan_id", "unknown"))
+        _resume_ctx = ScanContext.create(trigger_source="resume", user_id="system", mode="auto")
+        threading.Thread(target=run_full_scan, args=(_resume_ctx,), daemon=True,
+                         name="scan-resume").start()
+    else:
+        log.info("[Phase 5.5] No pending resume state")
+
 # Start Angel One WebSocket for live prices
 try:
     live_feed.start_websocket()
@@ -129,10 +165,16 @@ if has_valid_cache():
     from intelligence import warmup_all
     threading.Thread(target=lambda: warmup_all(set(cached_syms) if cached_syms else None), daemon=True, name="startup-warmup").start()
 else:
-    log.info("No valid cache. Starting first scan...")
-    # Phase 1: Create ScanContext for initial scan
-    _startup_ctx = ScanContext.create(trigger_source="auto", user_id="system", mode="auto")
-    threading.Thread(target=run_full_scan, args=(_startup_ctx,), daemon=True).start()
+    log.info("No valid cache. Checking auto_scan_enabled toggle before starting first scan...")
+    _enabled = db.get_meta("auto_scan_enabled")
+    _is_enabled = (_enabled == "1") if _enabled else AUTO_SCAN_ENABLED_DEFAULT
+    
+    if _is_enabled:
+        # Phase 1: Create ScanContext for initial scan
+        _startup_ctx = ScanContext.create(trigger_source="auto", user_id="system", mode="auto")
+        threading.Thread(target=run_full_scan, args=(_startup_ctx,), daemon=True).start()
+    else:
+        log.info("AUTO_SCAN_ENABLED is disabled. Waiting for manual scan start or toggle via Mission Control.")
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +192,7 @@ def _auto_scan_loop():
     """
     Event-driven auto-scan loop (Phase 4).
     Order: News refresh -> Fast scan -> Macro refresh -> Deep scan (if needed).
+    Phase 5.5: Also handles master sync + daily universe rebuild.
     """
     from scanner import refresh_news_pipeline, _shortlist_for_deep_scan
     from intelligence import warmup_all
@@ -168,6 +211,7 @@ def _auto_scan_loop():
     last_fast  = _get_ts("last_fast_scan_ts")
     last_deep  = _get_ts("last_deep_scan_ts")
     last_macro = _get_ts("last_macro_refresh_ts")
+    last_universe_rebuild = _get_ts("last_universe_rebuild_ts")
 
     while True:
         try:
@@ -179,6 +223,34 @@ def _auto_scan_loop():
                 log.debug("[AutoScan] Grace period active, sleeping")
                 time.sleep(30)
                 continue
+
+            # Phase 5.5: Master Sync (every 14 days)
+            if USE_UNIVERSE_ENGINE:
+                try:
+                    from master_sync import is_master_sync_due, run_master_sync
+                    if is_master_sync_due():
+                        log.info("[Phase 5.5] Master sync due — starting")
+                        run_master_sync()
+                except Exception as exc:
+                    log.warning("[Phase 5.5] Master sync failed: %s", exc)
+
+                # Phase 5.5: Daily universe rebuild at 8:30 AM IST
+                try:
+                    from datetime import timezone, timedelta as _td
+                    _IST = timezone(_td(hours=5, minutes=30))
+                    _now_ist = datetime.now(_IST)
+                    from config import UNIVERSE_REBUILD_HOUR, UNIVERSE_REBUILD_MINUTE
+                    if (_now_ist.hour == UNIVERSE_REBUILD_HOUR and
+                        _now_ist.minute >= UNIVERSE_REBUILD_MINUTE and
+                        _now_ist.minute < UNIVERSE_REBUILD_MINUTE + 5 and
+                        (now - last_universe_rebuild) > 3600):
+                        log.info("[Phase 5.5] Daily universe rebuild triggered")
+                        from universe_builder import build_eligible_universe
+                        build_eligible_universe()
+                        last_universe_rebuild = time.time()
+                        db.set_meta("last_universe_rebuild_ts", str(last_universe_rebuild))
+                except Exception as exc:
+                    log.warning("[Phase 5.5] Universe rebuild failed: %s", exc)
 
             market_open = live_feed.is_market_open()
 
@@ -199,21 +271,13 @@ def _auto_scan_loop():
 
             # 2. FAST SCAN — second in market hours
             needs_deep = False
+            _enabled = db.get_meta("auto_scan_enabled")
+            _is_enabled = (_enabled == "1") if _enabled else AUTO_SCAN_ENABLED_DEFAULT
+
             if market_open and (now - last_fast >= _FAST_INTERVAL) and not scan_state.is_scanning:
-                log.info("[AutoScan] Market open -- starting fast scan")
-                # Phase 1: Create ScanContext for auto-scan
-                _auto_ctx = ScanContext.create(
-                    trigger_source="auto", user_id="system", mode="auto",
-                )
-                run_full_scan(_auto_ctx)
-                last_fast = time.time()
-                db.set_meta("last_fast_scan_ts", str(last_fast))
-                db.set_meta("last_scan_ts", str(last_fast))
-                needs_deep = True
-            elif not market_open:
-                last = db.get_meta("last_scan")
-                if not last:
-                    log.info("[AutoScan] No data yet -- starting scan")
+                if _is_enabled:
+                    log.info("[AutoScan] Market open -- starting fast scan")
+                    # Phase 1: Create ScanContext for auto-scan
                     _auto_ctx = ScanContext.create(
                         trigger_source="auto", user_id="system", mode="auto",
                     )
@@ -221,6 +285,23 @@ def _auto_scan_loop():
                     last_fast = time.time()
                     db.set_meta("last_fast_scan_ts", str(last_fast))
                     db.set_meta("last_scan_ts", str(last_fast))
+                    needs_deep = True
+                else:
+                    log.info("[AutoScan] Fast scan scheduled but AUTO_SCAN_ENABLED is 0. Skipping.")
+            elif not market_open:
+                last = db.get_meta("last_scan")
+                if not last:
+                    if _is_enabled:
+                        log.info("[AutoScan] No data yet -- starting scan")
+                        _auto_ctx = ScanContext.create(
+                            trigger_source="auto", user_id="system", mode="auto",
+                        )
+                        run_full_scan(_auto_ctx)
+                        last_fast = time.time()
+                        db.set_meta("last_fast_scan_ts", str(last_fast))
+                        db.set_meta("last_scan_ts", str(last_fast))
+                    else:
+                        log.info("[AutoScan] Initial scan pending but AUTO_SCAN_ENABLED is 0. Skipping.")
 
             # 3. MACRO REFRESH — any time
             if now - last_macro >= _MACRO_INTERVAL:

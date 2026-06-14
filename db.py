@@ -963,6 +963,101 @@ def init_db():
                 cur.execute("ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;")
                 log.info("Governance schema additions verified (scan_state_transitions, context columns, chunks, snapshots, advisories)")
 
+                # ── Phase 5.5: Universe Engine Schema ──────────────────────
+                try:
+                    # Extend universe_catalog (Stock Master Registry)
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS avg_volume_20d REAL DEFAULT 0;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS avg_turnover_20d REAL DEFAULT 0;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS instrument_type TEXT DEFAULT 'EQ';")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS exchange TEXT DEFAULT 'NSE';")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+                    # Eligible Universe (versioned, filtered subset)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS eligible_universe (
+                            symbol TEXT PRIMARY KEY,
+                            market_cap_cr REAL,
+                            avg_volume_20d REAL,
+                            avg_turnover_20d REAL,
+                            price REAL,
+                            eligibility_reason TEXT DEFAULT 'FILTER_PASS',
+                            universe_version TEXT NOT NULL,
+                            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_eu_version ON eligible_universe(universe_version);
+                    """)
+
+                    # Scan Resume State (lightweight — batch_index only)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS scan_resume_state (
+                            scan_id TEXT PRIMARY KEY,
+                            universe_version TEXT NOT NULL,
+                            total_batches INTEGER NOT NULL,
+                            current_batch_index INTEGER DEFAULT 0,
+                            status TEXT DEFAULT 'running',
+                            last_heartbeat TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+
+                    # Scan Lock (heartbeat-based ownership)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS scan_lock (
+                            id INTEGER PRIMARY KEY DEFAULT 1,
+                            scan_id TEXT,
+                            owner_id TEXT,
+                            heartbeat TIMESTAMP,
+                            expires_at TIMESTAMP,
+                            acquired_at TIMESTAMP
+                        );
+                        INSERT INTO scan_lock (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+                    """)
+
+                    # Scan Batches (queue-based batch tracking)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS scan_batches (
+                            id BIGSERIAL PRIMARY KEY,
+                            scan_id TEXT NOT NULL,
+                            batch_index INTEGER NOT NULL,
+                            status TEXT DEFAULT 'PENDING',
+                            worker_id TEXT,
+                            symbol_count INTEGER DEFAULT 0,
+                            symbols_processed INTEGER DEFAULT 0,
+                            retry_count INTEGER DEFAULT 0,
+                            started_at TIMESTAMP,
+                            completed_at TIMESTAMP,
+                            UNIQUE(scan_id, batch_index)
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_sb_scan ON scan_batches(scan_id, status);
+                    """)
+
+                    # Universe Rebuild History (audit trail for universe drift)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS universe_rebuild_history (
+                            id BIGSERIAL PRIMARY KEY,
+                            universe_version TEXT NOT NULL,
+                            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            input_count INTEGER DEFAULT 0,
+                            eligible_count INTEGER DEFAULT 0,
+                            rejected_mcap INTEGER DEFAULT 0,
+                            rejected_turnover INTEGER DEFAULT 0,
+                            rejected_volume INTEGER DEFAULT 0,
+                            rejected_price INTEGER DEFAULT 0,
+                            rejected_etf INTEGER DEFAULT 0,
+                            rejected_sme INTEGER DEFAULT 0,
+                            rejected_suspended INTEGER DEFAULT 0,
+                            rejected_ipo_age INTEGER DEFAULT 0,
+                            force_included INTEGER DEFAULT 0,
+                            fallback_used BOOLEAN DEFAULT FALSE
+                        );
+                    """)
+
+                    log.info("Phase 5.5: Universe Engine schema verified")
+                except Exception as exc:
+                    log.warning("Phase 5.5: Schema migration failed (non-fatal): %s", exc)
+
                 log.info("PostgreSQL tables checked/created.")
             finally:
                 conn.close()
@@ -1508,6 +1603,7 @@ def _init_sqlite():
             "ALTER TABLE scan_runs ADD COLUMN scanner_version TEXT;",
             "ALTER TABLE scan_runs ADD COLUMN scoring_version TEXT;",
             "ALTER TABLE scan_runs ADD COLUMN recommendation_version TEXT;",
+            "ALTER TABLE scan_runs ADD COLUMN universe_version TEXT;",
             "ALTER TABLE scan_runs ADD COLUMN config_snapshot TEXT;",
             "ALTER TABLE scan_runs ADD COLUMN parent_scan_id TEXT;",
             # Phase 4, Section 37: Data quality degradation flag
@@ -1548,6 +1644,97 @@ def _init_sqlite():
                     pass
                 else:
                     log.error("[MIGRATION FAILED] SQLite snapshot schema error: %s", exc, exc_info=True)
+
+        # Phase 5.5: Universe Engine tables (SQLite)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS eligible_universe (
+                symbol TEXT PRIMARY KEY,
+                market_cap_cr REAL,
+                avg_volume_20d REAL,
+                avg_turnover_20d REAL,
+                price REAL,
+                eligibility_reason TEXT DEFAULT 'FILTER_PASS',
+                universe_version TEXT NOT NULL DEFAULT '',
+                generated_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS scan_resume_state (
+                scan_id TEXT PRIMARY KEY,
+                universe_version TEXT NOT NULL,
+                total_batches INTEGER NOT NULL,
+                current_batch_index INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'running',
+                last_heartbeat TEXT DEFAULT (datetime('now')),
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS scan_lock (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                scan_id TEXT,
+                owner_id TEXT,
+                heartbeat TEXT,
+                expires_at TEXT,
+                acquired_at TEXT
+            );
+            INSERT OR IGNORE INTO scan_lock (id) VALUES (1);
+
+            CREATE TABLE IF NOT EXISTS scan_batches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id TEXT NOT NULL,
+                batch_index INTEGER NOT NULL,
+                status TEXT DEFAULT 'PENDING',
+                worker_id TEXT,
+                symbol_count INTEGER DEFAULT 0,
+                symbols_processed INTEGER DEFAULT 0,
+                retry_count INTEGER DEFAULT 0,
+                started_at TEXT,
+                completed_at TEXT,
+                UNIQUE(scan_id, batch_index)
+            );
+        """)
+
+        # SQLite ALTERs for universe_catalog Phase 5.5 columns
+        for col_sql in [
+            "ALTER TABLE universe_catalog ADD COLUMN avg_volume_20d REAL DEFAULT 0;",
+            "ALTER TABLE universe_catalog ADD COLUMN avg_turnover_20d REAL DEFAULT 0;",
+            "ALTER TABLE universe_catalog ADD COLUMN instrument_type TEXT DEFAULT 'EQ';",
+            "ALTER TABLE universe_catalog ADD COLUMN exchange TEXT DEFAULT 'NSE';",
+            "ALTER TABLE universe_catalog ADD COLUMN price REAL DEFAULT 0;",
+            "ALTER TABLE universe_catalog ADD COLUMN last_synced_at TEXT;",
+            "ALTER TABLE universe_catalog ADD COLUMN first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP;",
+        ]:
+            try:
+                conn.execute(col_sql)
+            except Exception as exc:
+                if "duplicate column name" in str(exc).lower():
+                    pass
+
+        # Universe Rebuild History (SQLite)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS universe_rebuild_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                universe_version TEXT NOT NULL,
+                generated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                input_count INTEGER DEFAULT 0,
+                eligible_count INTEGER DEFAULT 0,
+                rejected_mcap INTEGER DEFAULT 0,
+                rejected_turnover INTEGER DEFAULT 0,
+                rejected_volume INTEGER DEFAULT 0,
+                rejected_price INTEGER DEFAULT 0,
+                rejected_etf INTEGER DEFAULT 0,
+                rejected_sme INTEGER DEFAULT 0,
+                rejected_suspended INTEGER DEFAULT 0,
+                rejected_ipo_age INTEGER DEFAULT 0,
+                force_included INTEGER DEFAULT 0,
+                fallback_used INTEGER DEFAULT 0
+            );
+        """)
+
+        # Retry count for scan_batches (for existing DBs that lack the column)
+        try:
+            conn.execute("ALTER TABLE scan_batches ADD COLUMN retry_count INTEGER DEFAULT 0;")
+        except Exception:
+            pass  # already exists
 
         log.info("SQLite Database initialized: %s", DB_PATH)
 
@@ -4453,3 +4640,402 @@ def get_equity_curve(days: int = 90) -> list[dict]:
         "SELECT * FROM paper_portfolio_daily ORDER BY date DESC LIMIT ?",
         (days,), fetch="all"
     ) or []
+
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 5.5: Universe Engine Helper Functions
+# ═══════════════════════════════════════════════════════════════
+
+# ── Eligible Universe ──────────────────────────────────────────
+
+def save_eligible_universe(symbols_data: list, version: str):
+    """Bulk upsert eligible universe for a given version.
+    symbols_data: list of dicts with keys: symbol, market_cap_cr, avg_volume_20d,
+                  avg_turnover_20d, price, eligibility_reason
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Clear old universe data first
+    execute_db("DELETE FROM eligible_universe WHERE 1=1")
+    for s in symbols_data:
+        execute_db(
+            """INSERT INTO eligible_universe
+               (symbol, market_cap_cr, avg_volume_20d, avg_turnover_20d,
+                price, eligibility_reason, universe_version, generated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (symbol) DO UPDATE SET
+                 market_cap_cr = EXCLUDED.market_cap_cr,
+                 avg_volume_20d = EXCLUDED.avg_volume_20d,
+                 avg_turnover_20d = EXCLUDED.avg_turnover_20d,
+                 price = EXCLUDED.price,
+                 eligibility_reason = EXCLUDED.eligibility_reason,
+                 universe_version = EXCLUDED.universe_version,
+                 generated_at = EXCLUDED.generated_at""",
+            (s["symbol"], s.get("market_cap_cr", 0), s.get("avg_volume_20d", 0),
+             s.get("avg_turnover_20d", 0), s.get("price", 0),
+             s.get("eligibility_reason", "FILTER_PASS"), version, now)
+        )
+    set_meta("universe_version", version)
+    set_meta("universe_stock_count", str(len(symbols_data)))
+    set_meta("universe_generated_at", now)
+    log.info("[Phase 5.5] Saved eligible universe: %d symbols, version=%s", len(symbols_data), version)
+
+
+def get_eligible_universe(version: str = None) -> list:
+    """Get eligible universe symbols. If version is None, gets latest."""
+    if version:
+        rows = execute_db(
+            "SELECT * FROM eligible_universe WHERE universe_version = ? ORDER BY symbol",
+            (version,), fetch="all"
+        )
+    else:
+        rows = execute_db(
+            "SELECT * FROM eligible_universe ORDER BY symbol",
+            fetch="all"
+        )
+    return rows or []
+
+
+def get_latest_universe_version() -> str:
+    """Return the latest universe version string."""
+    row = execute_db(
+        "SELECT universe_version FROM eligible_universe ORDER BY generated_at DESC LIMIT 1",
+        fetch="one"
+    )
+    if row:
+        return row.get("universe_version", "UNIVERSE_v000")
+    return "UNIVERSE_v000"
+
+
+# ── Universe Rebuild History ──────────────────────────────────
+
+def save_universe_rebuild_history(version: str, input_count: int,
+                                   eligible_count: int, rejected: dict,
+                                   force_included: int = 0,
+                                   fallback_used: bool = False):
+    """Persist a universe rebuild snapshot for Mission Control / drift debugging."""
+    execute_db(
+        """INSERT INTO universe_rebuild_history
+           (universe_version, input_count, eligible_count,
+            rejected_mcap, rejected_turnover, rejected_volume, rejected_price,
+            rejected_etf, rejected_sme, rejected_suspended, rejected_ipo_age,
+            force_included, fallback_used)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (version, input_count, eligible_count,
+         rejected.get("mcap", 0), rejected.get("turnover", 0),
+         rejected.get("volume", 0), rejected.get("price", 0),
+         rejected.get("etf", 0), rejected.get("sme", 0),
+         rejected.get("suspended", 0), rejected.get("ipo_age", 0),
+         force_included, fallback_used)
+    )
+    log.info("[Phase 5.5] Saved universe rebuild history: version=%s input=%d eligible=%d",
+             version, input_count, eligible_count)
+
+
+def get_universe_rebuild_history(limit: int = 20) -> list:
+    """Get recent universe rebuild history for Mission Control."""
+    return execute_db(
+        """SELECT * FROM universe_rebuild_history
+           ORDER BY generated_at DESC LIMIT ?""",
+        (limit,), fetch="all"
+    ) or []
+
+
+# ── Scan Lock (Rule 11: heartbeat-based ownership) ────────────
+
+def acquire_scan_lock_v2(scan_id: str, owner_id: str, ttl_seconds: int = 300) -> bool:
+    """Acquire the singleton scan lock. Returns True if acquired.
+    If existing lock is stale (heartbeat > ttl_seconds old), steal it.
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    from datetime import timedelta
+    expires = (datetime.now() + timedelta(seconds=ttl_seconds)).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Check current lock
+    lock = execute_db("SELECT * FROM scan_lock WHERE id = 1", fetch="one")
+    if lock and lock.get("scan_id"):
+        # Check if stale
+        hb = lock.get("heartbeat")
+        if hb:
+            try:
+                hb_dt = datetime.strptime(str(hb)[:19], "%Y-%m-%d %H:%M:%S")
+                age = (datetime.now() - hb_dt).total_seconds()
+                if age < ttl_seconds:
+                    log.warning("[ScanLock] Lock held by %s (age=%ds < ttl=%ds), cannot acquire",
+                               lock.get("owner_id"), int(age), ttl_seconds)
+                    return False
+                log.info("[ScanLock] Stale lock detected (age=%ds), stealing", int(age))
+            except Exception:
+                pass  # Can't parse, allow acquisition
+
+    # Acquire or steal
+    execute_db(
+        """UPDATE scan_lock SET scan_id = ?, owner_id = ?, heartbeat = ?,
+           expires_at = ?, acquired_at = ? WHERE id = 1""",
+        (scan_id, owner_id, now, expires, now)
+    )
+    log.info("[ScanLock] Acquired: scan_id=%s, owner=%s", scan_id, owner_id)
+    return True
+
+
+def release_scan_lock_v2(scan_id: str):
+    """Release the scan lock (only if owned by this scan_id)."""
+    execute_db(
+        "UPDATE scan_lock SET scan_id = NULL, owner_id = NULL, heartbeat = NULL, expires_at = NULL WHERE id = 1 AND scan_id = ?",
+        (scan_id,)
+    )
+    log.info("[ScanLock] Released: scan_id=%s", scan_id)
+
+
+def refresh_scan_lock_heartbeat(scan_id: str):
+    """Refresh the heartbeat timestamp to keep the lock alive."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    execute_db(
+        "UPDATE scan_lock SET heartbeat = ? WHERE id = 1 AND scan_id = ?",
+        (now, scan_id)
+    )
+
+
+def is_scan_lock_stale(threshold_seconds: int = 300) -> bool:
+    """Check if the current scan lock is stale (heartbeat too old)."""
+    lock = execute_db("SELECT * FROM scan_lock WHERE id = 1", fetch="one")
+    if not lock or not lock.get("scan_id"):
+        return True  # No lock held
+    hb = lock.get("heartbeat")
+    if not hb:
+        return True
+    try:
+        hb_dt = datetime.strptime(str(hb)[:19], "%Y-%m-%d %H:%M:%S")
+        age = (datetime.now() - hb_dt).total_seconds()
+        return age > threshold_seconds
+    except Exception:
+        return True
+
+
+# ── Scan Batches (Rule 5: Queue-based batch tracking) ─────────
+
+def create_scan_batches(scan_id: str, batches: list):
+    """Create batch records in DB for tracking.
+    batches: list of lists of symbol strings.
+    """
+    for idx, batch_symbols in enumerate(batches):
+        execute_db(
+            """INSERT INTO scan_batches (scan_id, batch_index, status, symbol_count)
+               VALUES (?, ?, 'PENDING', ?)
+               ON CONFLICT (scan_id, batch_index) DO NOTHING""",
+            (scan_id, idx, len(batch_symbols))
+        )
+    log.info("[Phase 5.5] Created %d batch records for scan %s", len(batches), scan_id)
+
+
+def claim_next_batch(scan_id: str, batch_index: int, worker_id: str):
+    """Mark a batch as claimed by a worker."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    execute_db(
+        """UPDATE scan_batches SET status = 'RUNNING', worker_id = ?, started_at = ?
+           WHERE scan_id = ? AND batch_index = ? AND status = 'PENDING'""",
+        (worker_id, now, scan_id, batch_index)
+    )
+
+
+def complete_batch(scan_id: str, batch_index: int, symbols_processed: int):
+    """Mark a batch as completed."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    execute_db(
+        """UPDATE scan_batches SET status = 'COMPLETED', symbols_processed = ?,
+           completed_at = ? WHERE scan_id = ? AND batch_index = ?""",
+        (symbols_processed, now, scan_id, batch_index)
+    )
+
+
+MAX_BATCH_RETRIES = 3  # Max times a batch can be recovered before permanent failure
+
+def recover_stale_batches(scan_id: str, stale_threshold_seconds: int = 300) -> list:
+    """Reset RUNNING batches whose started_at is older than stale_threshold_seconds
+    back to PENDING so they can be re-queued.
+
+    Returns list of batch_index values that were recovered.
+    Batches that have been retried MAX_BATCH_RETRIES times are marked
+    FAILED_PERMANENTLY and NOT re-queued (prevents infinite crash loops).
+    """
+    from datetime import timedelta
+    threshold_dt = (datetime.now() - timedelta(seconds=stale_threshold_seconds)
+                    ).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Find stale batches: RUNNING and started_at older than threshold
+    stale = execute_db(
+        """SELECT batch_index, retry_count FROM scan_batches
+           WHERE scan_id = ? AND status = 'RUNNING'
+             AND started_at IS NOT NULL AND started_at < ?""",
+        (scan_id, threshold_dt), fetch="all"
+    )
+    if not stale:
+        return []
+
+    recovered = []
+    permanently_failed = []
+
+    for row in stale:
+        idx = row.get("batch_index")
+        retries = (row.get("retry_count") or 0) + 1
+
+        if idx is None:
+            continue
+
+        if retries > MAX_BATCH_RETRIES:
+            # Exceeded max retries — mark permanently failed
+            execute_db(
+                """UPDATE scan_batches
+                   SET status = 'FAILED_PERMANENTLY', retry_count = ?
+                   WHERE scan_id = ? AND batch_index = ?""",
+                (retries, scan_id, idx)
+            )
+            permanently_failed.append(idx)
+            log.error("[Phase 5.5] Batch %d FAILED_PERMANENTLY after %d retries (scan %s)",
+                      idx, retries, scan_id)
+        else:
+            # Reset to PENDING with incremented retry_count
+            execute_db(
+                """UPDATE scan_batches
+                   SET status = 'PENDING', worker_id = NULL, started_at = NULL,
+                       retry_count = ?
+                   WHERE scan_id = ? AND batch_index = ? AND status = 'RUNNING'""",
+                (retries, scan_id, idx)
+            )
+            recovered.append(idx)
+
+    if recovered:
+        log.info("[Phase 5.5] Recovered %d stale batches for scan %s: %s",
+                 len(recovered), scan_id, recovered)
+    if permanently_failed:
+        log.warning("[Phase 5.5] %d batches FAILED_PERMANENTLY for scan %s: %s",
+                    len(permanently_failed), scan_id, permanently_failed)
+    return recovered
+
+
+def get_batch_progress(scan_id: str) -> dict:
+    """Get batch-level progress for a scan."""
+    if not scan_id:
+        return {}
+    rows = execute_db(
+        "SELECT * FROM scan_batches WHERE scan_id = ? ORDER BY batch_index",
+        (scan_id,), fetch="all"
+    )
+    if not rows:
+        return {}
+
+    total = len(rows)
+    completed = sum(1 for r in rows if r.get("status") == "COMPLETED")
+    total_symbols = sum(r.get("symbol_count", 0) for r in rows)
+    processed_symbols = sum(r.get("symbols_processed", 0) for r in rows)
+    remaining = total_symbols - processed_symbols
+
+    # Get universe version from resume state
+    resume = execute_db(
+        "SELECT universe_version FROM scan_resume_state WHERE scan_id = ?",
+        (scan_id,), fetch="one"
+    )
+    version = resume.get("universe_version", "") if resume else ""
+
+    return {
+        "universe_total": total_symbols,
+        "completed": processed_symbols,
+        "remaining": remaining,
+        "progress": round((processed_symbols / total_symbols) * 100, 1) if total_symbols > 0 else 0,
+        "current_batch": completed,
+        "total_batches": total,
+        "universe_version": version,
+    }
+
+
+# ── Scan Resume State (Rule 10: lightweight recovery) ─────────
+
+def save_scan_resume_state(scan_id: str, universe_version: str,
+                           total_batches: int, current_batch_index: int):
+    """Persist resume checkpoint. Only stores batch_index — no symbol JSON."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    execute_db(
+        """INSERT INTO scan_resume_state
+           (scan_id, universe_version, total_batches, current_batch_index, status, last_heartbeat)
+           VALUES (?, ?, ?, ?, 'running', ?)
+           ON CONFLICT (scan_id) DO UPDATE SET
+             current_batch_index = EXCLUDED.current_batch_index,
+             last_heartbeat = EXCLUDED.last_heartbeat""",
+        (scan_id, universe_version, total_batches, current_batch_index, now)
+    )
+
+
+def get_pending_resume() -> dict:
+    """Get the most recent incomplete scan resume state."""
+    row = execute_db(
+        "SELECT * FROM scan_resume_state WHERE status = 'running' ORDER BY created_at DESC LIMIT 1",
+        fetch="one"
+    )
+    return row
+
+
+def clear_scan_resume_state(scan_id: str):
+    """Mark scan as completed and clean up."""
+    execute_db(
+        "UPDATE scan_resume_state SET status = 'completed' WHERE scan_id = ?",
+        (scan_id,)
+    )
+
+
+# ── Universe Catalog Helpers ──────────────────────────────────
+
+def upsert_universe_catalog(symbols_data: list):
+    """Bulk upsert into universe_catalog (Stock Master Registry).
+    symbols_data: list of dicts with keys matching universe_catalog columns.
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for s in symbols_data:
+        execute_db(
+            """INSERT INTO universe_catalog
+               (symbol, company_name, market_cap, market_cap_bucket, sector, industry,
+                is_active, avg_volume_20d, avg_turnover_20d, instrument_type,
+                exchange, price, last_synced_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (symbol) DO UPDATE SET
+                 company_name = COALESCE(EXCLUDED.company_name, universe_catalog.company_name),
+                 market_cap = COALESCE(EXCLUDED.market_cap, universe_catalog.market_cap),
+                 market_cap_bucket = COALESCE(EXCLUDED.market_cap_bucket, universe_catalog.market_cap_bucket),
+                 sector = COALESCE(EXCLUDED.sector, universe_catalog.sector),
+                 industry = COALESCE(EXCLUDED.industry, universe_catalog.industry),
+                 is_active = EXCLUDED.is_active,
+                 avg_volume_20d = COALESCE(EXCLUDED.avg_volume_20d, universe_catalog.avg_volume_20d),
+                 avg_turnover_20d = COALESCE(EXCLUDED.avg_turnover_20d, universe_catalog.avg_turnover_20d),
+                 instrument_type = COALESCE(EXCLUDED.instrument_type, universe_catalog.instrument_type),
+                 exchange = COALESCE(EXCLUDED.exchange, universe_catalog.exchange),
+                 price = COALESCE(EXCLUDED.price, universe_catalog.price),
+                 last_synced_at = EXCLUDED.last_synced_at""",
+            (s.get("symbol"), s.get("company_name"), s.get("market_cap"),
+             s.get("market_cap_bucket"), s.get("sector"), s.get("industry"),
+             s.get("is_active", True), s.get("avg_volume_20d", 0),
+             s.get("avg_turnover_20d", 0), s.get("instrument_type", "EQ"),
+             s.get("exchange", "NSE"), s.get("price", 0), now)
+        )
+    log.info("[Phase 5.5] Upserted %d symbols into universe_catalog", len(symbols_data))
+
+
+def get_universe_catalog_eligible() -> list:
+    """Get all active stocks from universe_catalog for filtering."""
+    return execute_db(
+        """SELECT symbol, company_name, market_cap, market_cap_bucket, sector, industry,
+                  avg_volume_20d, avg_turnover_20d, instrument_type, exchange, price, is_active,
+                  last_synced_at, first_seen_at
+           FROM universe_catalog
+           WHERE is_active = TRUE
+           ORDER BY market_cap DESC NULLS LAST""",
+        fetch="all"
+    ) or []
+
+
+def update_universe_catalog_metrics(symbol: str, avg_volume: float,
+                                    avg_turnover: float, price: float):
+    """Update computed metrics for a single symbol."""
+    execute_db(
+        """UPDATE universe_catalog
+           SET avg_volume_20d = ?, avg_turnover_20d = ?, price = ?
+           WHERE symbol = ?""",
+        (avg_volume, avg_turnover, price, symbol)
+    )

@@ -193,6 +193,7 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     candidate_count INTEGER DEFAULT 0,
     duration_seconds REAL,
     error_message TEXT,
+    universe_version TEXT,
     degraded_data BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

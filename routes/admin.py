@@ -368,3 +368,76 @@ def mark_deep_scan(symbol):
     db.mark_deep_scan_needed(symbol.upper(), reason="admin_manual")
     log.info("Deep scan flagged for %s by admin: %s", symbol.upper(), session.get("email", "?"))
     return jsonify({"status": "flagged", "symbol": symbol.upper()})
+
+# ───────────────────────── Mission Control (Phase 5.5) ─────────────────────────
+
+@admin_bp.route("/api/mission-control/universe-status", methods=["GET"])
+@admin_required
+def mission_control_universe_status():
+    from flask import jsonify
+    import db
+    
+    # Fetch universe version and status from latest history
+    history = db.execute_db(
+        "SELECT * FROM universe_rebuild_history ORDER BY id DESC LIMIT 1",
+        fetch="one"
+    ) or {}
+    
+    # Fetch counts from catalog
+    catalog_total = db.execute_db("SELECT COUNT(*) as c FROM universe_catalog", fetch="one")
+    catalog_total = catalog_total["c"] if catalog_total else 0
+    catalog_synced = db.execute_db("SELECT COUNT(*) as c FROM universe_catalog WHERE last_synced_at IS NOT NULL", fetch="one")
+    catalog_synced = catalog_synced["c"] if catalog_synced else 0
+    catalog_pending = catalog_total - catalog_synced
+    
+    # Fetch auto_scan flag and universe_build_status
+    auto_scan_enabled = db.get_meta("auto_scan_enabled")
+    if auto_scan_enabled is None:
+        from config import AUTO_SCAN_ENABLED_DEFAULT
+        auto_scan_enabled = "1" if AUTO_SCAN_ENABLED_DEFAULT else "0"
+        
+    universe_build_status = db.get_meta("universe_build_status") or "UNKNOWN"
+        
+    eligible_count = history.get("eligible_count", 0)
+    health = "BROKEN"
+    if eligible_count > 500:
+        health = "HEALTHY"
+    elif eligible_count >= 100:
+        health = "WARNING"
+        
+    scan_ready = (auto_scan_enabled == "1" and universe_build_status == "READY" and eligible_count >= 500)
+        
+    return jsonify({
+        "catalog_total": catalog_total,
+        "catalog_synced": catalog_synced,
+        "catalog_pending": catalog_pending,
+        "universe_version": history.get("universe_version", "unknown"),
+        "eligible_count": eligible_count,
+        "rejected_breakdown": {
+            "mcap": history.get("rejected_mcap", 0),
+            "turnover": history.get("rejected_turnover", 0),
+            "volume": history.get("rejected_volume", 0),
+            "etf": history.get("rejected_etf", 0),
+            "sme": history.get("rejected_sme", 0)
+        },
+        "last_universe_build_at": history.get("generated_at"),
+        "last_master_sync_at": db.get_meta("last_master_sync_ts"),
+        "universe_health": health,
+        "universe_build_status": universe_build_status,
+        "auto_scan_enabled": auto_scan_enabled == "1",
+        "scan_ready": scan_ready
+    })
+
+@admin_bp.route("/api/mission-control/scanner-control", methods=["POST"])
+@admin_required
+def mission_control_scanner_control():
+    from flask import jsonify, request
+    import db
+    data = request.get_json() or {}
+    enable = data.get("enabled", False)
+    
+    db.set_meta("auto_scan_enabled", "1" if enable else "0")
+    log.info("Scanner toggled by admin: %s. auto_scan_enabled=%s", session.get("email", "?"), enable)
+    
+    return jsonify({"status": "success", "auto_scan_enabled": enable})
+
