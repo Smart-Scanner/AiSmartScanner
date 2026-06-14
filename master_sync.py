@@ -144,104 +144,120 @@ def run_master_sync():
         except Exception:
             pass
 
-        # Phase 2: Incremental metadata fetch for stale/new symbols only
-        stale_symbols = _get_stale_symbols(MASTER_SYNC_INTERVAL_DAYS,
-                                           MASTER_SYNC_DAILY_BATCH_SIZE)
-
-        if not stale_symbols:
-            log.info("[MasterSync] Phase 2: No stale symbols — skipping yfinance fetch")
-            duration = time.time() - start_time
-            db.set_meta("master_sync_status", "completed")
-            db.set_meta("master_sync_last_completed", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            db.set_meta("master_sync_synced_count", "0")
-            db.set_meta("master_sync_duration_s", str(round(duration)))
-            db.log_scan_event(scan_id, "MASTER_SYNC_COMPLETED",
-                              f"No stale symbols, duration={round(duration)}s")
-            return {"synced": 0, "failed": 0, "duration_s": round(duration)}
-
-        log.info("[MasterSync] Phase 2: Fetching metadata for %d stale symbols (max %d/run)",
-                 len(stale_symbols), MASTER_SYNC_DAILY_BATCH_SIZE)
-
+        # Phase 2: Resumable enrichment loop — process ALL pending symbols
+        # in batches of MASTER_SYNC_DAILY_BATCH_SIZE until none remain.
         synced = 0
         failed = 0
+        total_stale_processed = 0
+        batch_round = 0
         batch_size = 20  # yfinance batch size
 
-        for i in range(0, len(stale_symbols), batch_size):
-            batch = stale_symbols[i:i + batch_size]
-            symbols_data = []
+        while True:
+            stale_symbols = _get_stale_symbols(MASTER_SYNC_INTERVAL_DAYS,
+                                               MASTER_SYNC_DAILY_BATCH_SIZE)
 
-            for sym in batch:
-                try:
-                    meta = _fetch_symbol_metadata(sym)
-                    if meta:
-                        # Reset fail counter on success
-                        meta["sync_fail_count"] = 0
-                        symbols_data.append(meta)
-                        synced += 1
-                    else:
-                        # Increment consecutive fail counter
-                        prev_fails = _get_sync_fail_count(sym)
-                        new_fails = prev_fails + 1
+            if not stale_symbols:
+                if batch_round == 0:
+                    log.info("[MasterSync] Phase 2: No stale symbols — skipping yfinance fetch")
+                else:
+                    log.info("[MasterSync] Phase 2: All stale symbols processed after %d rounds", batch_round)
+                break
 
-                        if new_fails >= 3:
-                            # 3 consecutive failures → likely delisted, mark inactive
-                            log.warning("[MasterSync] %s failed %d consecutive syncs — marking INACTIVE (likely delisted)", sym, new_fails)
-                            symbols_data.append({
-                                "symbol": sym,
-                                "company_name": sym,
-                                "market_cap": 0,
-                                "market_cap_bucket": "Unknown Cap",
-                                "sector": "",
-                                "industry": "",
-                                "is_active": False,
-                                "instrument_type": "EQ",
-                                "exchange": "NSE",
-                                "sync_fail_count": new_fails,
-                            })
+            batch_round += 1
+            round_count = len(stale_symbols)
+            total_stale_processed += round_count
+            log.info("[MasterSync] PHASE2_BATCH_START round=%d stale_count=%d total_so_far=%d",
+                     batch_round, round_count, total_stale_processed)
+
+            for i in range(0, len(stale_symbols), batch_size):
+                batch = stale_symbols[i:i + batch_size]
+                symbols_data = []
+
+                for sym in batch:
+                    try:
+                        meta = _fetch_symbol_metadata(sym)
+                        if meta:
+                            # Reset fail counter on success
+                            meta["sync_fail_count"] = 0
+                            symbols_data.append(meta)
+                            synced += 1
                         else:
-                            # Still under threshold, keep active but record failure
-                            symbols_data.append({
-                                "symbol": sym,
-                                "company_name": sym,
-                                "market_cap": 0,
-                                "market_cap_bucket": "Unknown Cap",
-                                "sector": "",
-                                "industry": "",
-                                "is_active": True,
-                                "instrument_type": "EQ",
-                                "exchange": "NSE",
-                                "sync_fail_count": new_fails,
-                            })
-                        synced += 1
-                except Exception as exc:
-                    log.debug("[MasterSync] Metadata fetch failed for %s: %s", sym, exc)
-                    failed += 1
+                            # Increment consecutive fail counter
+                            prev_fails = _get_sync_fail_count(sym)
+                            new_fails = prev_fails + 1
 
-            # Save batch immediately (resume support)
-            if symbols_data:
-                db.upsert_universe_catalog(symbols_data)
+                            if new_fails >= 3:
+                                # 3 consecutive failures → likely delisted, mark inactive
+                                log.warning("[MasterSync] %s failed %d consecutive syncs — marking INACTIVE (likely delisted)", sym, new_fails)
+                                symbols_data.append({
+                                    "symbol": sym,
+                                    "company_name": sym,
+                                    "market_cap": 0,
+                                    "market_cap_bucket": "Unknown Cap",
+                                    "sector": "",
+                                    "industry": "",
+                                    "is_active": False,
+                                    "instrument_type": "EQ",
+                                    "exchange": "NSE",
+                                    "sync_fail_count": new_fails,
+                                })
+                            else:
+                                # Still under threshold, keep active but record failure
+                                symbols_data.append({
+                                    "symbol": sym,
+                                    "company_name": sym,
+                                    "market_cap": 0,
+                                    "market_cap_bucket": "Unknown Cap",
+                                    "sector": "",
+                                    "industry": "",
+                                    "is_active": True,
+                                    "instrument_type": "EQ",
+                                    "exchange": "NSE",
+                                    "sync_fail_count": new_fails,
+                                })
+                            synced += 1
+                    except Exception as exc:
+                        log.debug("[MasterSync] Metadata fetch failed for %s: %s", sym, exc)
+                        failed += 1
 
-            # Rate limiting for yfinance
-            time.sleep(1)
+                # Save batch immediately (resume support)
+                if symbols_data:
+                    db.upsert_universe_catalog(symbols_data)
 
-            # Progress logging
-            if (i + batch_size) % 100 == 0:
-                log.info("[MasterSync] Progress: %d/%d synced, %d failed",
-                         synced, len(stale_symbols), failed)
+                # Rate limiting for yfinance
+                time.sleep(1)
+
+                # Progress logging
+                if (i + batch_size) % 100 == 0:
+                    log.info("[MasterSync] Progress: %d/%d synced in round %d, %d failed total",
+                             synced, round_count, batch_round, failed)
+
+            # Log coverage after each round
+            try:
+                cov = db.execute_db(
+                    "SELECT COUNT(*) as c FROM universe_catalog WHERE market_cap > 0",
+                    fetch="one"
+                )
+                mcap_count = cov["c"] if cov else 0
+                log.info("[MasterSync] PHASE2_BATCH_COMPLETE round=%d synced=%d failed=%d mcap_populated=%d",
+                         batch_round, synced, failed, mcap_count)
+            except Exception:
+                log.info("[MasterSync] PHASE2_BATCH_COMPLETE round=%d synced=%d failed=%d",
+                         batch_round, synced, failed)
 
         duration = time.time() - start_time
-        log.info("[MASTER_SYNC_COMPLETED] %d synced, %d failed, %.1f seconds (incremental)",
-                 synced, failed, duration)
+        log.info("[MASTER_SYNC_COMPLETED] %d synced, %d failed, %d rounds, %.1f seconds",
+                 synced, failed, batch_round, duration)
 
         db.set_meta("master_sync_status", "completed")
         db.set_meta("master_sync_last_completed", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         db.set_meta("master_sync_synced_count", str(synced))
         db.set_meta("master_sync_failed_count", str(failed))
         db.set_meta("master_sync_duration_s", str(round(duration)))
-        db.set_meta("master_sync_stale_count", str(len(stale_symbols)))
+        db.set_meta("master_sync_stale_count", str(total_stale_processed))
         db.log_scan_event(scan_id, "MASTER_SYNC_COMPLETED",
-                          f"synced={synced} failed={failed} stale={len(stale_symbols)} "
-                          f"duration={round(duration)}s")
+                          f"synced={synced} failed={failed} rounds={batch_round} "
+                          f"stale={total_stale_processed} duration={round(duration)}s")
 
         return {"synced": synced, "failed": failed, "duration_s": round(duration)}
 

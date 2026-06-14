@@ -129,11 +129,27 @@ def get_fast_scan_universe() -> list:
     """
     Return the universe to use for fast scans.
 
+    Phase 5.5: If USE_UNIVERSE_ENGINE is active, prefer eligible_universe table.
     Default (FULL_UNIVERSE=0): curated ~573 stocks from get_active_universe().
     Override (FULL_UNIVERSE=1): all tokens from angel_tokens.json (2200+).
 
     Always appends open portfolio positions and custom stocks regardless of mode.
     """
+    # Phase 5.5: Eligible universe takes priority
+    from config import USE_UNIVERSE_ENGINE
+    if USE_UNIVERSE_ENGINE:
+        try:
+            import db
+            eligible = db.get_eligible_universe()
+            if eligible and len(eligible) >= 100:
+                symbols = [r["symbol"] for r in eligible]
+                log.info("Universe Engine: %d eligible stocks from eligible_universe", len(symbols))
+                return symbols
+            log.warning("Universe Engine: eligible_universe too small (%d), falling back",
+                        len(eligible) if eligible else 0)
+        except Exception as exc:
+            log.warning("Universe Engine fallback: %s", exc)
+
     if os.getenv("FULL_UNIVERSE", "0") == "1":
         log.info("FULL_UNIVERSE=1: loading all angel_tokens symbols")
         try:

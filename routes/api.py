@@ -246,7 +246,31 @@ def scan_status():
             "adv_count": adv_count,
             "dec_count": dec_count,
         }
-    return jsonify(cache_layer.get_or_compute(cache_layer.status_cache, "status", _compute))
+
+    result = cache_layer.get_or_compute(cache_layer.status_cache, "status", _compute)
+
+    # Phase 5.5: Inject batch-level progress when universe engine is active
+    from config import USE_UNIVERSE_ENGINE
+    if USE_UNIVERSE_ENGINE and result.get("scanning"):
+        try:
+            scan_id = db.get_meta("current_scan_id")
+            batch_progress = db.get_batch_progress(scan_id)
+            if batch_progress:
+                result = dict(result)  # make mutable copy
+                result.update({
+                    "universe_total": batch_progress.get("universe_total", 0),
+                    "completed": batch_progress.get("completed", 0),
+                    "remaining": batch_progress.get("remaining", 0),
+                    "batch_progress": batch_progress.get("progress", 0),
+                    "current_batch": batch_progress.get("current_batch", 0),
+                    "total_batches": batch_progress.get("total_batches", 0),
+                    "worker_count": 2,
+                    "universe_version": batch_progress.get("universe_version", ""),
+                })
+        except Exception:
+            pass
+
+    return jsonify(result)
 
 
 @api_bp.route("/api/search-list")

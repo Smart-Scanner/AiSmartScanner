@@ -70,6 +70,14 @@ def local_login():
             session["email"]   = user["email"]
             next_url = request.args.get("next") or url_for("pages.index")
             return redirect(next_url)
+        elif username == "testuser" and password == "admin123":
+            # Get or create local non-admin test user
+            user = auth_db.get_or_create_local_user("testuser@local.dev", name="Test User")
+            session.clear()
+            session["user_id"] = user["id"]
+            session["email"]   = user["email"]
+            next_url = request.args.get("next") or url_for("pages.index")
+            return redirect(next_url)
         error = "Invalid username or password."
 
     return render_template("local_login.html", error=error)

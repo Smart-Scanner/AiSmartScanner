@@ -867,3 +867,32 @@ def get_or_create_local_admin(email: str, name: str = "Local Admin") -> sqlite3.
     conn.commit()
     log.info("Created local dev admin user %s (id=%s)", email, cur.lastrowid)
     return conn.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
+
+def get_or_create_local_user(email: str, name: str = "Test User") -> sqlite3.Row:
+    email = email.lower()
+    conn = _get_conn()
+    now = _now()
+    row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+    from datetime import datetime, timezone, timedelta
+    future = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat(timespec="seconds")
+    if row:
+        conn.execute(
+            """UPDATE users
+                  SET is_admin=0, status='approved', name=?,
+                      last_login_at=?, sub_expires_at=?
+                WHERE id=?""",
+            (name, now, future, row["id"]),
+        )
+        conn.commit()
+        return conn.execute("SELECT * FROM users WHERE id=?", (row["id"],)).fetchone()
+
+    cur = conn.execute(
+        """INSERT INTO users
+           (email, name, status, is_admin, created_at, approved_at, approved_by, last_login_at, sub_expires_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (email, name, "approved", 0, now, now, "system:local-dev", now, future),
+    )
+    conn.commit()
+    log.info("Created local dev test user %s (id=%s)", email, cur.lastrowid)
+    return conn.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
+
