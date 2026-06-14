@@ -117,6 +117,19 @@ if USE_UNIVERSE_ENGINE:
     
     # Background Boot Sequence (Master Sync -> Universe Build)
     def _boot_universe_prep():
+        # One-time data repair: fix symbols corrupted by old Phase 1
+        # (last_synced_at was set but market_cap=0, meaning yfinance never ran)
+        try:
+            repaired = db.execute_db(
+                """UPDATE universe_catalog SET last_synced_at = NULL
+                   WHERE market_cap = 0 AND last_synced_at IS NOT NULL""",
+                fetch="rowcount"
+            )
+            if repaired and repaired > 0:
+                log.info("[BootPrep] Data repair: reset last_synced_at for %d unenriched symbols", repaired)
+        except Exception as e:
+            log.warning("[BootPrep] Data repair error (non-fatal): %s", e)
+
         log.info("[BootPrep] Running Master Sync...")
         try:
             from master_sync import run_master_sync

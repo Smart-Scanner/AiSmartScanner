@@ -109,25 +109,25 @@ def _build_eligible_universe_impl() -> tuple[list[str], str]:
             rejected["sme"] += 1
             continue
 
-        # Market Cap filter
+        # Market Cap filter — reject if no data OR below threshold
         mcap_cr = mcap / 1e7 if mcap > 10000 else mcap  # normalize if in absolute
-        if mcap_cr > 0 and mcap_cr < UNIVERSE_MIN_MCAP_CR:
+        if mcap_cr < UNIVERSE_MIN_MCAP_CR:
             rejected["mcap"] += 1
             continue
 
-        # PRIMARY: Turnover filter (₹ Cr per day)
+        # PRIMARY: Turnover filter (₹ Cr per day) — reject if no data OR below threshold
         turnover_cr = avg_turnover / 1e7 if avg_turnover > 10000 else avg_turnover
-        if turnover_cr > 0 and turnover_cr < UNIVERSE_MIN_AVG_TURNOVER_CR:
+        if turnover_cr < UNIVERSE_MIN_AVG_TURNOVER_CR:
             rejected["turnover"] += 1
             continue
 
-        # SECONDARY: Volume filter
-        if avg_volume > 0 and avg_volume < UNIVERSE_MIN_AVG_VOLUME:
+        # SECONDARY: Volume filter — reject if no data OR below threshold
+        if avg_volume < UNIVERSE_MIN_AVG_VOLUME:
             rejected["volume"] += 1
             continue
 
-        # Price filter
-        if price > 0 and price < UNIVERSE_MIN_PRICE:
+        # Price filter — reject if no data OR below threshold
+        if price < UNIVERSE_MIN_PRICE:
             rejected["price"] += 1
             continue
 
