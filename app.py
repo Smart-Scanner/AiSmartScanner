@@ -236,7 +236,7 @@ def _auto_scan_loop():
 
                 # Phase 5.5: Daily universe rebuild at 8:30 AM IST
                 try:
-                    from datetime import timezone, timedelta as _td
+                    from datetime import datetime, timezone, timedelta as _td
                     _IST = timezone(_td(hours=5, minutes=30))
                     _now_ist = datetime.now(_IST)
                     from config import UNIVERSE_REBUILD_HOUR, UNIVERSE_REBUILD_MINUTE

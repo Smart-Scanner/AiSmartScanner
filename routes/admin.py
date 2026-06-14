@@ -421,7 +421,7 @@ def mission_control_universe_status():
             "sme": history.get("rejected_sme", 0)
         },
         "last_universe_build_at": history.get("generated_at"),
-        "last_master_sync_at": db.get_meta("last_master_sync_ts"),
+        "last_master_sync_at": db.get_meta("master_sync_last_completed"),
         "universe_health": health,
         "universe_build_status": universe_build_status,
         "auto_scan_enabled": auto_scan_enabled == "1",

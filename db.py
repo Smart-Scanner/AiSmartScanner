@@ -1702,6 +1702,7 @@ def _init_sqlite():
             "ALTER TABLE universe_catalog ADD COLUMN price REAL DEFAULT 0;",
             "ALTER TABLE universe_catalog ADD COLUMN last_synced_at TEXT;",
             "ALTER TABLE universe_catalog ADD COLUMN first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP;",
+            "ALTER TABLE universe_catalog ADD COLUMN sync_fail_count INTEGER DEFAULT 0;",
         ]:
             try:
                 conn.execute(col_sql)
@@ -4983,38 +4984,44 @@ def clear_scan_resume_state(scan_id: str):
 
 # ── Universe Catalog Helpers ──────────────────────────────────
 
-def upsert_universe_catalog(symbols_data: list):
+def upsert_universe_catalog(symbols_data: list, set_synced_at: bool = True):
     """Bulk upsert into universe_catalog (Stock Master Registry).
     symbols_data: list of dicts with keys matching universe_catalog columns.
+    set_synced_at: If True, updates last_synced_at to now. Phase 1 (skeleton insert)
+                   should pass False so Phase 2 (yfinance) still picks them up.
     """
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for s in symbols_data:
+        sync_fail_count = s.get("sync_fail_count")
+        synced_at_value = now if set_synced_at else None
         execute_db(
             """INSERT INTO universe_catalog
                (symbol, company_name, market_cap, market_cap_bucket, sector, industry,
                 is_active, avg_volume_20d, avg_turnover_20d, instrument_type,
-                exchange, price, last_synced_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                exchange, price, last_synced_at, sync_fail_count)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT (symbol) DO UPDATE SET
                  company_name = COALESCE(EXCLUDED.company_name, universe_catalog.company_name),
-                 market_cap = COALESCE(EXCLUDED.market_cap, universe_catalog.market_cap),
+                 market_cap = CASE WHEN EXCLUDED.market_cap > 0 THEN EXCLUDED.market_cap ELSE universe_catalog.market_cap END,
                  market_cap_bucket = COALESCE(EXCLUDED.market_cap_bucket, universe_catalog.market_cap_bucket),
-                 sector = COALESCE(EXCLUDED.sector, universe_catalog.sector),
-                 industry = COALESCE(EXCLUDED.industry, universe_catalog.industry),
+                 sector = CASE WHEN EXCLUDED.sector != '' THEN EXCLUDED.sector ELSE universe_catalog.sector END,
+                 industry = CASE WHEN EXCLUDED.industry != '' THEN EXCLUDED.industry ELSE universe_catalog.industry END,
                  is_active = EXCLUDED.is_active,
-                 avg_volume_20d = COALESCE(EXCLUDED.avg_volume_20d, universe_catalog.avg_volume_20d),
-                 avg_turnover_20d = COALESCE(EXCLUDED.avg_turnover_20d, universe_catalog.avg_turnover_20d),
+                 avg_volume_20d = CASE WHEN EXCLUDED.avg_volume_20d > 0 THEN EXCLUDED.avg_volume_20d ELSE universe_catalog.avg_volume_20d END,
+                 avg_turnover_20d = CASE WHEN EXCLUDED.avg_turnover_20d > 0 THEN EXCLUDED.avg_turnover_20d ELSE universe_catalog.avg_turnover_20d END,
                  instrument_type = COALESCE(EXCLUDED.instrument_type, universe_catalog.instrument_type),
                  exchange = COALESCE(EXCLUDED.exchange, universe_catalog.exchange),
-                 price = COALESCE(EXCLUDED.price, universe_catalog.price),
-                 last_synced_at = EXCLUDED.last_synced_at""",
+                 price = CASE WHEN EXCLUDED.price > 0 THEN EXCLUDED.price ELSE universe_catalog.price END,
+                 sync_fail_count = COALESCE(EXCLUDED.sync_fail_count, universe_catalog.sync_fail_count),
+                 last_synced_at = CASE WHEN EXCLUDED.last_synced_at IS NOT NULL THEN EXCLUDED.last_synced_at ELSE universe_catalog.last_synced_at END""",
             (s.get("symbol"), s.get("company_name"), s.get("market_cap"),
              s.get("market_cap_bucket"), s.get("sector"), s.get("industry"),
              s.get("is_active", True), s.get("avg_volume_20d", 0),
              s.get("avg_turnover_20d", 0), s.get("instrument_type", "EQ"),
-             s.get("exchange", "NSE"), s.get("price", 0), now)
+             s.get("exchange", "NSE"), s.get("price", 0), synced_at_value,
+             sync_fail_count if sync_fail_count is not None else 0)
         )
-    log.info("[Phase 5.5] Upserted %d symbols into universe_catalog", len(symbols_data))
+    log.info("[Phase 5.5] Upserted %d symbols into universe_catalog (synced_at=%s)", len(symbols_data), set_synced_at)
 
 
 def get_universe_catalog_eligible() -> list:

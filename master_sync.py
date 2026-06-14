@@ -59,9 +59,31 @@ def run_master_sync():
     import db
     from config import MASTER_SYNC_DAILY_BATCH_SIZE, MASTER_SYNC_INTERVAL_DAYS
 
+    # ── Reentrant lock: prevent concurrent master sync runs ──
+    current_status = db.get_meta("master_sync_status")
+    if current_status == "running":
+        # Stale lock recovery: if running for > 30 min, treat as crashed
+        started_at = db.get_meta("master_sync_started_at")
+        if started_at:
+            try:
+                started_dt = datetime.strptime(str(started_at)[:19], "%Y-%m-%d %H:%M:%S")
+                age_min = (datetime.now() - started_dt).total_seconds() / 60
+                if age_min < 30:
+                    log.warning("[MasterSync] Another master sync is already running (%.0f min) — skipping", age_min)
+                    return {"synced": 0, "failed": 0, "skipped": True}
+                else:
+                    log.warning("[MasterSync] Stale lock detected (%.0f min old) — overriding", age_min)
+                    db.set_meta("master_sync_status", "stale_override")
+            except Exception:
+                pass
+        else:
+            log.warning("[MasterSync] Another master sync is already running — skipping")
+            return {"synced": 0, "failed": 0, "skipped": True}
+
     scan_id = f"master_sync_{int(time.time())}"
     log.info("[MASTER_SYNC_STARTED] scan_id=%s (incremental mode)", scan_id)
     db.set_meta("master_sync_status", "running")
+    db.set_meta("master_sync_started_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     db.set_meta("master_sync_scan_id", scan_id)
     db.log_scan_event(scan_id, "MASTER_SYNC_STARTED", "incremental")
 
@@ -93,11 +115,11 @@ def run_master_sync():
             })
             # Save in batches of 100 to avoid memory pressure
             if len(phase1_data) >= 100:
-                db.upsert_universe_catalog(phase1_data)
+                db.upsert_universe_catalog(phase1_data, set_synced_at=False)
                 phase1_data = []
 
         if phase1_data:
-            db.upsert_universe_catalog(phase1_data)
+            db.upsert_universe_catalog(phase1_data, set_synced_at=False)
 
         log.info("[MasterSync] Phase 1 done: %d symbols in catalog", len(all_symbols))
 
@@ -152,21 +174,44 @@ def run_master_sync():
                 try:
                     meta = _fetch_symbol_metadata(sym)
                     if meta:
+                        # Reset fail counter on success
+                        meta["sync_fail_count"] = 0
                         symbols_data.append(meta)
                         synced += 1
                     else:
-                        # Still update last_synced_at to avoid re-fetching failed symbols every run
-                        symbols_data.append({
-                            "symbol": sym,
-                            "company_name": sym,
-                            "market_cap": 0,
-                            "market_cap_bucket": "Unknown Cap",
-                            "sector": "",
-                            "industry": "",
-                            "is_active": True,
-                            "instrument_type": "EQ",
-                            "exchange": "NSE",
-                        })
+                        # Increment consecutive fail counter
+                        prev_fails = _get_sync_fail_count(sym)
+                        new_fails = prev_fails + 1
+
+                        if new_fails >= 3:
+                            # 3 consecutive failures → likely delisted, mark inactive
+                            log.warning("[MasterSync] %s failed %d consecutive syncs — marking INACTIVE (likely delisted)", sym, new_fails)
+                            symbols_data.append({
+                                "symbol": sym,
+                                "company_name": sym,
+                                "market_cap": 0,
+                                "market_cap_bucket": "Unknown Cap",
+                                "sector": "",
+                                "industry": "",
+                                "is_active": False,
+                                "instrument_type": "EQ",
+                                "exchange": "NSE",
+                                "sync_fail_count": new_fails,
+                            })
+                        else:
+                            # Still under threshold, keep active but record failure
+                            symbols_data.append({
+                                "symbol": sym,
+                                "company_name": sym,
+                                "market_cap": 0,
+                                "market_cap_bucket": "Unknown Cap",
+                                "sector": "",
+                                "industry": "",
+                                "is_active": True,
+                                "instrument_type": "EQ",
+                                "exchange": "NSE",
+                                "sync_fail_count": new_fails,
+                            })
                         synced += 1
                 except Exception as exc:
                     log.debug("[MasterSync] Metadata fetch failed for %s: %s", sym, exc)
@@ -242,6 +287,18 @@ def _get_stale_symbols(interval_days: int, max_batch: int) -> list:
 
     result.extend(r.get("symbol") for r in oldest if r.get("symbol"))
     return result
+
+
+def _get_sync_fail_count(symbol: str) -> int:
+    """Get the current consecutive sync failure count for a symbol."""
+    import db
+    row = db.execute_db(
+        "SELECT sync_fail_count FROM universe_catalog WHERE symbol=?",
+        (symbol,), fetch="one"
+    )
+    if row and row.get("sync_fail_count") is not None:
+        return int(row["sync_fail_count"])
+    return 0
 
 
 def _load_nse_symbols() -> list[str]:
