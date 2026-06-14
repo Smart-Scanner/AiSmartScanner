@@ -1,0 +1,94 @@
+{
+  "phase": "4C.3.2",
+  "tests": {
+    "test_a": {
+      "notification_created": true,
+      "notification_type": "STOP_UPDATED",
+      "notification_has_icon": true,
+      "timeline_updated": true,
+      "new_stop_value": 95
+    },
+    "test_b": {
+      "notification_created": true,
+      "notification_type": "TARGET_UPDATED",
+      "old_targets_preserved": true,
+      "old_targets": [
+        110,
+        120,
+        130
+      ],
+      "new_targets": [
+        115,
+        125,
+        135
+      ]
+    },
+    "test_c": {
+      "execution_created": true,
+      "execution_type": "scale_in",
+      "execution_quantity": 50,
+      "exposure_increased": true,
+      "long_before": 10000,
+      "long_after": 15000
+    },
+    "test_d": {
+      "execution_created": true,
+      "quantity_before": 150,
+      "quantity_after": 120,
+      "quantity_reduced": true,
+      "exit_quantity": 30
+    },
+    "test_e": {
+      "position_closed": true,
+      "removed_from_open": true,
+      "closed_quantity": 0
+    },
+    "test_f": {
+      "risk_exists": true,
+      "total_risk_pct": 0,
+      "risk_budget_used": 0,
+      "risk_reduced": true
+    },
+    "test_g": {
+      "performance_exists": true,
+      "total_trades": 1,
+      "realized_pnl": 2760,
+      "has_closed_trade": true
+    },
+    "test_h": {
+      "scale_in_exists": true,
+      "scale_in_count": 1,
+      "scale_in_quantity": 50
+    },
+    "test_i": {
+      "partial_exit_exists": true,
+      "partial_exit_count": 1,
+      "partial_exit_quantity": 30
+    },
+    "test_j": {
+      "full_exit_exists": true,
+      "full_exit_count": 1,
+      "all_execution_types": [
+        "entry",
+        "full_exit",
+        "partial_exit",
+        "scale_in"
+      ],
+      "total_executions": 4
+    }
+  },
+  "verdicts": {
+    "A": true,
+    "B": true,
+    "C": true,
+    "D": true,
+    "E": true,
+    "F": true,
+    "G": true,
+    "H": true,
+    "I": true,
+    "J": true
+  },
+  "all_passed": true,
+  "pass_rate": "10/10"
+}

@@ -11,6 +11,9 @@ pyotp>=2.9.0
 websocket-client
 logzero
 
+# ── Zerodha Kite Connect ──────────────────────────────
+kiteconnect
+
 # ── Data ──────────────────────────────────────────────
 yfinance>=0.2.40
 pandas>=2.2.0

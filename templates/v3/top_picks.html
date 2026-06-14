@@ -337,9 +337,9 @@ function getRankReasons(s) {
     return reasons.length ? reasons : ['Highest composite score across all research factors'];
 }
 
-// ── Watchlist Helpers ─────────────────────────────────────
+// ── Watchlist Helpers (via MarketOS Repository) ──────────
 function getWatchlist() {
-    try { return JSON.parse(localStorage.getItem('v3_watchlist') || '[]'); } catch { return []; }
+    try { return JSON.parse(MarketOS.SystemRepository.getPreference('v3_watchlist', null) || '[]'); } catch { return []; }
 }
 function isInWatchlist(sym) { return getWatchlist().some(w => w.symbol === sym); }
 function toggleWatchlist(sym, score, e) {
@@ -348,7 +348,7 @@ function toggleWatchlist(sym, score, e) {
     const idx = wl.findIndex(w => w.symbol === sym);
     if (idx >= 0) { wl.splice(idx, 1); }
     else { wl.push({ symbol: sym, addedAt: new Date().toISOString(), addedScore: score, notes: '' }); }
-    localStorage.setItem('v3_watchlist', JSON.stringify(wl));
+    MarketOS.SystemRepository.setPreference('v3_watchlist', JSON.stringify(wl));
     renderResults();
 }
 

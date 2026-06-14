@@ -117,6 +117,28 @@ def breakouts_page():
     return render_template("v3/breakouts.html", user=user, is_admin=bool(user["is_admin"]))
 
 
+@pages_bp.route("/discovery")
+@subscribed_required
+def discovery_center():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("discovery_center.html", user=user, is_admin=bool(user["is_admin"]))
+
+
+@pages_bp.route("/research")
+@subscribed_required
+def research_center():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("research_center.html", user=user, is_admin=bool(user["is_admin"]))
+
+
+@pages_bp.route("/mission-control")
+@subscribed_required
+def mission_control():
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template("mission_control.html", user=user, is_admin=bool(user["is_admin"]))
+
+
+
 @pages_bp.route("/market")
 @subscribed_required
 def market_intel():
@@ -285,17 +307,32 @@ def submit_payment():
     return redirect(url_for("pages.subscribe", msg="payment-submitted"))
 
 
+@pages_bp.route("/symbol/<symbol>")
+@subscribed_required
+def symbol_workspace(symbol):
+    """MarketOS Symbol Workspace — the canonical route for symbol analysis."""
+    user = auth_db.get_user_by_id(session["user_id"])
+    return render_template(
+        "symbol_workspace.html",
+        symbol=symbol.upper(),
+        user=user,
+        is_admin=bool(user["is_admin"]),
+        active_page="symbol_workspace",
+    )
+
+
 @pages_bp.route("/stock/<symbol>")
 @subscribed_required
 def stock_detail(symbol):
-    return render_template("stock_detail.html", symbol=symbol.upper())
+    """Backward-compatible redirect to the canonical Symbol Workspace route."""
+    return redirect(url_for("pages.symbol_workspace", symbol=symbol.upper()), code=301)
 
 
 @pages_bp.route("/portfolio")
 @pages_bp.route("/portfolio/<int:pid>")
 @subscribed_required
 def portfolio_page(pid=None):
-    return render_template("portfolio.html", portfolio_id=pid)
+    return render_template("portfolio_center.html", portfolio_id=pid)
 
 
 @pages_bp.route("/subscribe")

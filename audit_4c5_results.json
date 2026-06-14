@@ -1,0 +1,98 @@
+{
+  "phase": "4C.5",
+  "tests": {
+    "test_1": {
+      "exists": true,
+      "disabled": false,
+      "has_onclick": true,
+      "content_visible": true,
+      "subtitle_text": "Review Mode \u2014 Post-trade reflection, thesis comparison, and lessons learned",
+      "monitor_hidden": true,
+      "manage_hidden": true,
+      "analyze_hidden": true
+    },
+    "test_2": {
+      "has_thesis_header": true,
+      "has_entry_range": true,
+      "has_stop_loss": true,
+      "has_targets": true,
+      "has_confidence": true,
+      "has_reality_header": true,
+      "has_entry_price": true,
+      "has_realized_pnl": true
+    },
+    "test_3": {
+      "saved": true,
+      "well": "Good entry timing on breakout",
+      "wrong": "Could have sized up",
+      "lesson": "Trust the thesis more",
+      "action": "Increase position size on A+ setups",
+      "status": "in_progress",
+      "version": 1,
+      "has_source_refs": true,
+      "has_snapshot_ref": true
+    },
+    "test_4": {
+      "status": "completed",
+      "version": 2
+    },
+    "test_5": {
+      "total_versions": 3,
+      "latest_version": 3,
+      "latest_lesson": "Updated lesson v3",
+      "v1_preserved": true,
+      "v2_preserved": true
+    },
+    "test_6": {
+      "snapshot_ref": "aff8bfc2-e4ab-40d1-b67e-7da6bff0f28e",
+      "matches_original": true
+    },
+    "test_7": {
+      "item_count": 13,
+      "has_items": true,
+      "types": [
+        "rev-tl-icon event",
+        "rev-tl-icon event",
+        "rev-tl-icon event",
+        "rev-tl-icon event",
+        "rev-tl-icon event"
+      ]
+    },
+    "test_8": {
+      "persisted": true,
+      "status": "completed",
+      "version": 3,
+      "lesson": "Updated lesson v3"
+    },
+    "test_9": {
+      "total_review_events": 6,
+      "has_completed": true,
+      "event_types": [
+        "REVIEW_COMPLETED",
+        "REVIEW_COMPLETED",
+        "REVIEW_COMPLETED",
+        "REVIEW_COMPLETED",
+        "REVIEW_CREATED",
+        "REVIEW_CREATED"
+      ]
+    },
+    "test_10": {
+      "blocked": true,
+      "error": "Transition from 'completed' to 'in_progress' is not allowed"
+    }
+  },
+  "verdicts": {
+    "1": true,
+    "2": true,
+    "3": true,
+    "4": true,
+    "5": true,
+    "6": true,
+    "7": true,
+    "8": true,
+    "9": true,
+    "10": true
+  },
+  "all_passed": true,
+  "pass_rate": "10/10"
+}

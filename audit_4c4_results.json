@@ -1,0 +1,107 @@
+{
+  "phase": "4C.4",
+  "tests": {
+    "test_a": {
+      "has_r_multiples": true,
+      "r_count": 6,
+      "avg_r_multiple": 0.08,
+      "r_values": [
+        2,
+        1.5,
+        -2,
+        -1.5,
+        -1.5,
+        2
+      ]
+    },
+    "test_b": {
+      "max_wins": 2,
+      "max_losses": 3,
+      "cur_type": "win",
+      "cur_count": 1,
+      "frozen": true
+    },
+    "test_c": {
+      "curve_len": 6,
+      "equities": [
+        102000,
+        103500,
+        101500,
+        100000,
+        98500,
+        100500
+      ],
+      "dd_pct": 4.83,
+      "dd_amt": 5000,
+      "curve_frozen": true,
+      "point_frozen": true
+    },
+    "test_d": {
+      "best_complete": true,
+      "worst_complete": true,
+      "best_frozen": true,
+      "worst_frozen": true,
+      "best_pnl": 2000,
+      "worst_pnl": -2000,
+      "sector_empty": true,
+      "sector_frozen": true
+    },
+    "test_e": {
+      "exists": true,
+      "disabled": false,
+      "has_onclick": true,
+      "content_visible": true,
+      "subtitle_text": "Analyze Mode \u2014 Performance analytics, trade statistics, and strategy attribution",
+      "monitor_hidden": true,
+      "manage_hidden": true
+    },
+    "test_f": {
+      "canvas_exists": true,
+      "has_chart": true,
+      "chart_exists": true,
+      "data_points": 6
+    },
+    "test_g": {
+      "canvas_exists": true,
+      "chart_exists": true,
+      "labels": [
+        "Swing",
+        "Momentum"
+      ]
+    },
+    "test_h": {
+      "table_visible": true,
+      "row_count": 6,
+      "r_cells": [
+        "+2.00R",
+        "-1.50R",
+        "-1.50R",
+        "-2.00R",
+        "+1.50R",
+        "+2.00R"
+      ],
+      "has_r_column": true
+    },
+    "test_i": {
+      "empty_visible": true,
+      "data_hidden": true,
+      "empty_text": "No closed trades yet.\n            Close trades from Manage Mode to unlock performance analytics.",
+      "js_errors": [],
+      "display": "block",
+      "inner_display": "block"
+    }
+  },
+  "verdicts": {
+    "A": true,
+    "B": true,
+    "C": true,
+    "D": true,
+    "E": true,
+    "F": true,
+    "G": true,
+    "H": true,
+    "I": true
+  },
+  "all_passed": true,
+  "pass_rate": "9/9"
+}

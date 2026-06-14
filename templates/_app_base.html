@@ -4,314 +4,476 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}AI Smart Scanner{% endblock %} | Research Platform</title>
-    <meta name="description" content="Institutional-Grade NSE Swing Research Platform with Outcome Intelligence">
+    <title>{% block title %}MarketOS{% endblock %} | Trading Operating System</title>
+    <script src="{{ url_for('static', filename='js/marketos-core.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/broker-adapters/zerodha-adapter.js') }}"></script>
+    <meta name="description" content="MarketOS — Institutional-Grade Trading Operating System for Discovery, Research, Portfolio Management, and Analytics">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/v3.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     {% block head %}{% endblock %}
     <script>
-        // P0-3.5: Unified theme authority — single 'theme' key
-        // Migration: v3_theme → theme (one-time, preserves user preference)
+        // Theme authority — single 'theme' key, dark-first
         (function () {
-            var legacy = localStorage.getItem('v3_theme');
+            var legacy = MarketOS.SystemRepository.getPreference('v3_theme', null);
             if (legacy) {
-                if (!localStorage.getItem('theme')) {
-                    localStorage.setItem('theme', legacy);
-                }
-                localStorage.removeItem('v3_theme');
+                if (!MarketOS.SystemRepository.getPreference('theme', null)) MarketOS.SystemRepository.setPreference('theme', legacy);
+                MarketOS.SystemRepository.setPreference('v3_theme', null);
             }
-            var t = localStorage.getItem('theme') || 'dark';
+            var t = MarketOS.SystemRepository.getPreference('theme', null) || 'dark';
             document.documentElement.setAttribute('data-theme', t);
         })();
     </script>
+    <script>
+        // Phase 5.1.9: Global Translation Helper
+        window._t = function(key, defaultVal) {
+            return MarketOS.Terminology.translate(key, defaultVal);
+        };
+    </script>
+    <style>
+        /* Phase 5.1.9: Glossary Tooltip Styles */
+        .mos-glossary-trigger {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 16px; height: 16px; border-radius: 50%;
+            background: var(--surface-2, rgba(255,255,255,0.06));
+            color: var(--text-muted); font-size: 10px; font-weight: 700;
+            cursor: help; margin-left: 4px; position: relative;
+            border: 1px solid var(--border, rgba(255,255,255,0.08));
+            transition: all 0.2s ease;
+        }
+        .mos-glossary-trigger:hover {
+            background: var(--accent, #6366f1); color: #fff;
+            border-color: var(--accent, #6366f1);
+        }
+        .mos-glossary-popup {
+            display: none; position: absolute; bottom: calc(100% + 8px); left: 50%;
+            transform: translateX(-50%); background: var(--surface-3, #1e1e2e);
+            border: 1px solid var(--border, rgba(255,255,255,0.1));
+            border-radius: 8px; padding: 8px 12px; font-size: 12px;
+            color: var(--text-secondary); white-space: nowrap;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4); z-index: 9999;
+            pointer-events: none;
+        }
+        .mos-glossary-trigger:hover .mos-glossary-popup { display: block; }
+        .mos-glossary-popup::after {
+            content: ''; position: absolute; top: 100%; left: 50%;
+            transform: translateX(-50%); border: 5px solid transparent;
+            border-top-color: var(--border, rgba(255,255,255,0.1));
+        }
+    </style>
 </head>
 
 <body>
-    <div class="v3-app">
+    <div class="mos-app">
 
         <!-- ═══ SIDEBAR ═══════════════════════════════════════════════ -->
-        <aside class="v3-sidebar" id="v3Sidebar">
-            <div class="v3-sidebar-header">
-                <div class="v3-sidebar-logo">AS</div>
-                <div class="v3-sidebar-brand">
-                    <h1>AI Smart Scanner</h1>
-                    <p>Research Platform</p>
+        <aside class="mos-sidebar" id="mosSidebar">
+            <div class="mos-sidebar-header">
+                <div class="mos-sidebar-logo">M</div>
+                <div class="mos-sidebar-brand">
+                    <h1>MarketOS</h1>
+                    <p>Trading OS</p>
                 </div>
             </div>
 
-            <nav class="v3-sidebar-nav">
-                <!-- OVERVIEW -->
-                <div class="v3-nav-section">
-                    <div class="v3-nav-label">Overview</div>
-                    <a href="/" class="v3-nav-item {% if active_page == 'dashboard' %}active{% endif %}"
-                        id="nav-dashboard">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="3" y="3" width="7" height="7" rx="1" />
-                            <rect x="14" y="3" width="7" height="7" rx="1" />
-                            <rect x="3" y="14" width="7" height="7" rx="1" />
-                            <rect x="14" y="14" width="7" height="7" rx="1" />
+            <nav class="mos-sidebar-nav" id="mosSidebarNav">
+                <!-- HOME -->
+                <div class="mos-nav-section">
+                    <a href="/mission-control" class="mos-nav-item {% if active_page == 'mission_control' %}active{% endif %}" id="nav-home">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                            <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
                         </svg>
-                        <span>Dashboard</span>
+                        <span>Mission Control</span>
                     </a>
                 </div>
 
-                <!-- RESEARCH -->
-                <div class="v3-nav-section">
-                    <div class="v3-nav-label">Research</div>
-                    <a href="/top-picks" class="v3-nav-item {% if active_page == 'top_picks' %}active{% endif %}"
-                        id="nav-top-picks">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path
-                                d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                <!-- MARKETS -->
+                <div class="mos-nav-section">
+                    <div class="mos-nav-label">Markets</div>
+                    <a href="/market" class="mos-nav-item {% if active_page == 'market_intel' %}active{% endif %}" id="nav-market">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
+                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                        </svg>
+                        <span>Market Overview</span>
+                    </a>
+                </div>
+
+                <!-- DISCOVERY -->
+                <div class="mos-nav-section">
+                    <div class="mos-nav-label">Discovery</div>
+                    <a href="/discovery" class="mos-nav-item {% if active_page == 'discovery' %}active{% endif %}" id="nav-discovery">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                            <line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
+                        </svg>
+                        <span>Discovery Center</span>
+                    </a>
+                    <a href="/top-picks" class="mos-nav-item {% if active_page == 'top_picks' %}active{% endif %}" id="nav-top-picks">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                         </svg>
                         <span>Top Picks</span>
                     </a>
-                    <a href="/golden" class="v3-nav-item {% if active_page == 'golden' %}active{% endif %}"
-                        id="nav-golden">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10" />
-                            <path d="M12 6v6l4 2" />
+                    <a href="/golden" class="mos-nav-item {% if active_page == 'golden' %}active{% endif %}" id="nav-golden">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" />
                         </svg>
                         <span>Golden Stocks</span>
-                        <span class="v3-nav-badge" id="goldenCount">—</span>
+                        <span class="mos-nav-badge" id="goldenCount">—</span>
                     </a>
-                    <a href="/hc" class="v3-nav-item {% if active_page == 'high_conviction' %}active{% endif %}"
-                        id="nav-hc">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <a href="/hc" class="mos-nav-item {% if active_page == 'high_conviction' %}active{% endif %}" id="nav-hc">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
                         </svg>
                         <span>High Conviction</span>
-                        <span class="v3-nav-badge" id="hcCount">—</span>
+                        <span class="mos-nav-badge" id="hcCount">—</span>
                     </a>
-                    <a href="/breakouts" class="v3-nav-item {% if active_page == 'breakouts' %}active{% endif %}"
-                        id="nav-breakouts">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
-                            <polyline points="16 7 22 7 22 13" />
+                    <a href="/breakouts" class="mos-nav-item {% if active_page == 'breakouts' %}active{% endif %}" id="nav-breakouts">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" />
                         </svg>
                         <span>Breakouts</span>
                     </a>
                 </div>
 
-                <!-- INTELLIGENCE -->
-                <div class="v3-nav-section">
-                    <div class="v3-nav-label">Intelligence</div>
-                    <a href="/market" class="v3-nav-item {% if active_page == 'market_intel' %}active{% endif %}"
-                        id="nav-market">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10" />
-                            <line x1="2" y1="12" x2="22" y2="12" />
-                            <path
-                                d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                <!-- WATCHLISTS -->
+                <div class="mos-nav-section">
+                    <div class="mos-nav-label">Watchlists</div>
+                    <a href="/watchlist" class="mos-nav-item {% if active_page == 'watchlist' %}active{% endif %}" id="nav-watchlist">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
                         </svg>
-                        <span>Market Overview</span>
-                    </a>
-                    <a href="/market#sector"
-                        class="v3-nav-item {% if active_page == 'sector_rotation' %}active{% endif %}" id="nav-sector">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
-                            <path d="M22 12A10 10 0 0 0 12 2v10z" />
-                        </svg>
-                        <span>Sector Rotation</span>
-                    </a>
-                    <a href="/market#earnings" class="v3-nav-item {% if active_page == 'earnings' %}active{% endif %}"
-                        id="nav-earnings">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="12" y1="1" x2="12" y2="23" />
-                            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                        </svg>
-                        <span>Earnings Momentum</span>
-                    </a>
-                    <a href="/market#smart-money"
-                        class="v3-nav-item {% if active_page == 'smart_money' %}active{% endif %}" id="nav-smart-money">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                            <circle cx="9" cy="7" r="4" />
-                            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                        </svg>
-                        <span>Smart Money</span>
+                        <span>My Watchlists</span>
                     </a>
                 </div>
 
-                <!-- PERFORMANCE -->
-                <div class="v3-nav-section">
-                    <div class="v3-nav-label">Performance</div>
-                    <a href="/paper-trades-view"
-                        class="v3-nav-item {% if active_page == 'paper_trades' %}active{% endif %}"
-                        id="nav-paper-trades">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <!-- RESEARCH -->
+                <div class="mos-nav-section">
+                    <div class="mos-nav-label">Research</div>
+                    <a href="#" class="mos-nav-item mos-nav-future" id="nav-research-terminal">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
+                        </svg>
+                        <span>Research Terminal</span>
+                    </a>
+                </div>
+
+                <!-- PORTFOLIO & RISK -->
+                <div class="mos-nav-section">
+                    <div class="mos-nav-label">Portfolio & Risk</div>
+                    <a href="/portfolio" class="mos-nav-item {% if active_page == 'portfolio' %}active{% endif %}" id="nav-portfolio">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="7" width="20" height="14" rx="2" ry="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+                        </svg>
+                        <span>Portfolio Center</span>
+                    </a>
+                    <a href="/paper-trades-view" class="mos-nav-item {% if active_page == 'paper_trades' %}active{% endif %}" id="nav-paper-trades">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                            <polyline points="14 2 14 8 20 8" />
-                            <line x1="16" y1="13" x2="8" y2="13" />
-                            <line x1="16" y1="17" x2="8" y2="17" />
+                            <polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" />
                         </svg>
                         <span>Paper Trades</span>
                     </a>
-                    <a href="/outcome" class="v3-nav-item {% if active_page == 'outcome' %}active{% endif %}"
-                        id="nav-outcome">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M3 3v18h18" />
-                            <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" />
+                </div>
+
+                <!-- EXECUTION -->
+                <div class="mos-nav-section">
+                    <div class="mos-nav-label">Execution</div>
+                    <a href="#" class="mos-nav-item mos-nav-future" id="nav-orders">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                            <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
                         </svg>
-                        <span>Outcome Intelligence</span>
+                        <span>Orders</span>
                     </a>
                 </div>
 
-                <!-- TOOLS -->
-                <div class="v3-nav-section">
-                    <div class="v3-nav-label">Tools</div>
-                    <a href="/portfolio" class="v3-nav-item {% if active_page == 'portfolio' %}active{% endif %}"
-                        id="nav-portfolio">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
-                            <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+                <!-- ANALYTICS -->
+                <div class="mos-nav-section">
+                    <div class="mos-nav-label">Analytics</div>
+                    <a href="/outcome" class="mos-nav-item {% if active_page == 'outcome' %}active{% endif %}" id="nav-outcome">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 3v18h18" /><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" />
                         </svg>
-                        <span>Portfolio</span>
+                        <span>Performance</span>
                     </a>
-                    <a href="/watchlist" class="v3-nav-item {% if active_page == 'watchlist' %}active{% endif %}"
-                        id="nav-watchlist">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-                        </svg>
-                        <span>Watchlist</span>
-                    </a>
-                    <a href="#" class="v3-nav-item v3-nav-future" id="nav-reports">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <a href="#" class="mos-nav-item mos-nav-future" id="nav-journal">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
                             <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
                         </svg>
-                        <span>Reports</span>
+                        <span>Trade Journal</span>
                     </a>
-                    <a href="/settings" class="v3-nav-item {% if active_page == 'settings' %}active{% endif %}"
-                        id="nav-settings">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                </div>
+
+                <!-- ALERTS -->
+                <div class="mos-nav-section">
+                    <div class="mos-nav-label">Alerts</div>
+                    <a href="#" class="mos-nav-item mos-nav-future" id="nav-alerts">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                        </svg>
+                        <span>Alert Rules</span>
+                    </a>
+                </div>
+
+                <!-- GOVERNANCE -->
+                <div class="mos-nav-section">
+                    <div class="mos-nav-label">Governance</div>
+                    <a href="#" class="mos-nav-item mos-nav-future" id="nav-governance">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                        </svg>
+                        <span>Audit Trail</span>
+                    </a>
+                </div>
+
+                <!-- AUTOMATION -->
+                <div class="mos-nav-section">
+                    <div class="mos-nav-label">Automation</div>
+                    <a href="#" class="mos-nav-item mos-nav-future" id="nav-automation">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
+                        </svg>
+                        <span>Automation</span>
+                    </a>
+                </div>
+
+                <!-- BROKER HUB -->
+                <div class="mos-nav-section">
+                    <div class="mos-nav-label">Integrations</div>
+                    <a href="#" class="mos-nav-item mos-nav-future" id="nav-broker-hub">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                        </svg>
+                        <span>Broker Hub</span>
+                    </a>
+                </div>
+
+                <!-- SETTINGS -->
+                <div class="mos-nav-section">
+                    <a href="/settings" class="mos-nav-item {% if active_page == 'settings' %}active{% endif %}" id="nav-settings">
+                        <svg class="mos-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="3" />
-                            <path
-                                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
                         </svg>
                         <span>Settings</span>
                     </a>
                 </div>
-
-                <!-- FUTURE -->
-                <div class="v3-nav-section">
-                    <div class="v3-nav-label">Future</div>
-                    <a href="#" class="v3-nav-item v3-nav-future" id="nav-portfolio-intel">
-                        <svg class="v3-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path
-                                d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                        </svg>
-                        <span>Portfolio Intelligence</span>
-                    </a>
-                </div>
             </nav>
 
-            <div class="v3-sidebar-footer">
-                <button class="v3-sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar" id="sidebarToggle">
+            <div class="mos-sidebar-footer">
+                <button class="mos-sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar" id="sidebarToggle">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="3" y="3" width="18" height="18" rx="2" />
-                        <line x1="9" y1="3" x2="9" y2="21" />
+                        <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
                     </svg>
                 </button>
-                <div class="v3-user-info">
-                    <div class="v3-user-name">{{ user.name if user else 'User' }}</div>
-                    <div class="v3-user-role">{{ 'Admin' if is_admin else 'Trader' }}</div>
+                <div class="mos-user-info">
+                    <div class="mos-user-name">{{ user.name if user else 'User' }}</div>
+                    <div class="mos-user-role">{{ 'Admin' if is_admin else 'Trader' }}</div>
                 </div>
-                <a href="{{ url_for('auth.logout') }}" class="v3-logout-btn" title="Sign out" id="btnLogout">
+                <a href="{{ url_for('auth.logout') }}" class="mos-logout-btn" title="Sign out" id="btnLogout">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                        <polyline points="16 17 21 12 16 7" />
-                        <line x1="21" y1="12" x2="9" y2="12" />
+                        <polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
                     </svg>
                 </a>
             </div>
         </aside>
 
         <!-- ═══ MAIN AREA ═════════════════════════════════════════════ -->
-        <div class="v3-main-area">
+        <div class="mos-main-area">
 
             <!-- ── Command Center Header ──────────────────────────── -->
-            <header class="v3-header" id="v3Header">
-                <div class="v3-header-status">
-                    <div class="v3-status-pill live" id="marketStatusPill">
-                        <span class="v3-status-dot"></span>
+            <header class="mos-header" id="mosHeader">
+                <div class="mos-header-status">
+                    <div class="mos-status-pill live" id="marketStatusPill">
+                        <span class="mos-status-dot"></span>
                         <span id="marketStatusText">LOADING</span>
                     </div>
                 </div>
 
-                <div class="v3-header-meta" id="headerMeta">
-                    <div class="v3-header-meta-item">
-                        <span class="v3-header-meta-label">Scan</span>
-                        <span class="v3-header-meta-value" id="headerLastScan">—</span>
+                <div class="mos-header-meta" id="headerMeta">
+                    <div class="mos-header-meta-item">
+                        <span class="mos-header-meta-label">Scan</span>
+                        <span class="mos-header-meta-value" id="headerLastScan">—</span>
                     </div>
-                    <div class="v3-header-meta-item">
-                        <span class="v3-header-meta-label">Regime</span>
-                        <span class="v3-regime-badge sideways" id="headerRegime">—</span>
+                    <div class="mos-header-meta-item">
+                        <span class="mos-header-meta-label">Regime</span>
+                        <span class="mos-regime-badge sideways" id="headerRegime">—</span>
                     </div>
-                    <div class="v3-header-meta-item">
-                        <span class="v3-header-meta-label">Breadth</span>
-                        <span class="v3-header-meta-value" id="headerBreadth">—</span>
+                    <div class="mos-header-meta-item">
+                        <span class="mos-header-meta-label">Breadth</span>
+                        <span class="mos-header-meta-value" id="headerBreadth">—</span>
                     </div>
-                    <div class="v3-header-meta-item">
-                        <span class="v3-header-meta-label">Leading</span>
-                        <span class="v3-header-meta-value" id="headerLeadingSector">—</span>
+                    <div class="mos-header-meta-item">
+                        <span class="mos-header-meta-label">Leading</span>
+                        <span class="mos-header-meta-value" id="headerLeadingSector">—</span>
                     </div>
                 </div>
 
-                <div class="v3-search-container">
-                    <svg class="v3-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="11" cy="11" r="8" />
-                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                <!-- Command Palette Trigger -->
+                <div class="mos-search-container" id="cmdTrigger" onclick="openCommandPalette()">
+                    <svg class="mos-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
                     </svg>
-                    <input type="text" class="v3-search-input" placeholder="Search symbol..." id="globalSearch"
-                        autocomplete="off">
-                    <div class="v3-search-kbd"><kbd>Ctrl</kbd><kbd>K</kbd></div>
-                    <div class="v3-search-dropdown" id="searchDropdown"></div>
+                    <div class="mos-search-placeholder">Search symbols, commands...</div>
+                    <div class="mos-search-kbd"><kbd>Ctrl</kbd><kbd>K</kbd></div>
                 </div>
 
-                <div class="v3-header-actions">
-                    <button class="v3-action-btn" onclick="toggleDashTheme()" id="btnTheme"
-                        title="Toggle light/dark mode">
-                        <svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <circle cx="12" cy="12" r="4" />
-                            <path
-                                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+                <div class="mos-header-actions">
+                    <!-- Notification Bell -->
+                    <button class="mos-action-btn" onclick="toggleNotifications()" id="btnNotifications" title="Notifications">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
                         </svg>
-                        <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
+                        <span class="mos-notif-dot" id="notifDot" style="display:none"></span>
+                    </button>
+                    <button class="mos-action-btn" onclick="toggleDashTheme()" id="btnTheme" title="Toggle theme">
+                        <svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="4" />
+                            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+                        </svg>
+                        <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
                         </svg>
                     </button>
-                    <button class="v3-action-btn" onclick="triggerScan()" id="btnScan" title="Run Scan">
+                    <button class="mos-action-btn" onclick="triggerScan()" id="btnScan" title="Run Scan">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="23 4 23 10 17 10" />
-                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                            <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                         </svg>
                         Scan
                     </button>
-                    <button class="v3-action-btn" onclick="refreshData()" id="btnRefresh" title="Refresh Data">
+                    <button class="mos-action-btn" onclick="refreshData()" id="btnRefresh" title="Refresh Data">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="1 4 1 10 7 10" />
-                            <polyline points="23 20 23 14 17 14" />
+                            <polyline points="1 4 1 10 7 10" /><polyline points="23 20 23 14 17 14" />
                             <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" />
                         </svg>
                     </button>
-                    <button class="v3-action-btn" onclick="exportPicks()" id="btnExport" title="Export CSV">
+                    <!-- AI Copilot Toggle -->
+                    <button class="mos-action-btn mos-copilot-toggle" onclick="toggleCopilot()" id="btnCopilot" title="AI Copilot">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <polyline points="7 10 12 15 17 10" />
-                            <line x1="12" y1="15" x2="12" y2="3" />
+                            <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.57-3.25 3.93" />
+                            <path d="M8.56 5.57A4 4 0 0 1 12 2" />
+                            <path d="M17 10H7c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2v-6c0-1.1-.9-2-2-2z" />
+                            <line x1="10" y1="14" x2="10" y2="16" /><line x1="14" y1="14" x2="14" y2="16" />
                         </svg>
                     </button>
                 </div>
             </header>
 
             <!-- ── Page Content ───────────────────────────────────── -->
-            <main class="v3-content" id="v3Content">
+            <main class="mos-content" id="mosContent">
                 {% block content %}{% endblock %}
             </main>
+        </div>
+
+        <!-- ═══ AI COPILOT PANEL ═══════════════════════════════════════ -->
+        <aside class="mos-copilot-panel" id="mosCopilotPanel">
+            <div class="mos-copilot-header">
+                <div class="mos-copilot-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.57-3.25 3.93" />
+                        <path d="M17 10H7c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2v-6c0-1.1-.9-2-2-2z" />
+                    </svg>
+                    AI Copilot
+                </div>
+                <span class="mos-coming-soon-tag">Coming Soon</span>
+                <button class="mos-copilot-close" onclick="toggleCopilot()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="mos-copilot-body">
+                <div class="mos-copilot-placeholder">
+                    <div class="mos-copilot-placeholder-icon">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.57-3.25 3.93" />
+                            <path d="M17 10H7c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2v-6c0-1.1-.9-2-2-2z" />
+                            <line x1="10" y1="14" x2="10" y2="16" /><line x1="14" y1="14" x2="14" y2="16" />
+                        </svg>
+                    </div>
+                    <h3>AI Trading Assistant</h3>
+                    <p>Summarize theses, explain scores, compare symbols, analyze portfolio risk, and discover recurring trading mistakes.</p>
+                    <div class="mos-copilot-examples">
+                        <div class="mos-copilot-example">"Why is RELIANCE HC?"</div>
+                        <div class="mos-copilot-example">"Compare INFY vs TCS"</div>
+                        <div class="mos-copilot-example">"Summarize my portfolio risk"</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ═══ NOTIFICATION DRAWER ════════════════════════════════════ -->
+        <div class="mos-notif-overlay" id="notifOverlay" onclick="toggleNotifications()"></div>
+        <aside class="mos-notif-drawer" id="notifDrawer">
+            <div class="mos-notif-drawer-header">
+                <h3>Notifications</h3>
+                <button class="mos-notif-close" onclick="toggleNotifications()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="mos-notif-body" id="notifBody">
+                <div class="mos-notif-empty">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                    </svg>
+                    <p>No new notifications</p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ═══ COMMAND PALETTE ═════════════════════════════════════════ -->
+        <div class="mos-cmd-overlay" id="cmdOverlay" onclick="closeCommandPalette()"></div>
+        <div class="mos-cmd-palette" id="cmdPalette">
+            <div class="mos-cmd-input-wrap">
+                <svg class="mos-cmd-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input type="text" class="mos-cmd-input" id="cmdInput" placeholder="Search symbols, jump to pages, run commands..." autocomplete="off">
+                <kbd class="mos-cmd-esc">ESC</kbd>
+            </div>
+            <div class="mos-cmd-results" id="cmdResults">
+                <div class="mos-cmd-group">
+                    <div class="mos-cmd-group-label">Quick Actions</div>
+                    <div class="mos-cmd-item" data-action="navigate" data-target="/" onclick="cmdNavigate('/')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
+                        <span>Go to Mission Control</span>
+                        <kbd>Home</kbd>
+                    </div>
+                    <div class="mos-cmd-item" data-action="navigate" data-target="/top-picks" onclick="cmdNavigate('/top-picks')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+                        <span>Open Top Picks</span>
+                    </div>
+                    <div class="mos-cmd-item" data-action="navigate" data-target="/hc" onclick="cmdNavigate('/hc')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                        <span>Show High Conviction</span>
+                    </div>
+                    <div class="mos-cmd-item" data-action="navigate" data-target="/portfolio" onclick="cmdNavigate('/portfolio')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /></svg>
+                        <span>Open Portfolio</span>
+                    </div>
+                    <div class="mos-cmd-item" data-action="scan" onclick="cmdRunScan()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+                        <span>Run Market Scan</span>
+                    </div>
+                </div>
+                <div class="mos-cmd-group" id="cmdSymbolResults" style="display:none">
+                    <div class="mos-cmd-group-label">Symbols</div>
+                </div>
+            </div>
+            <div class="mos-cmd-footer">
+                <span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
+                <span><kbd>Enter</kbd> Select</span>
+                <span><kbd>Esc</kbd> Close</span>
+            </div>
         </div>
 
         <!-- ═══ STOCK DRAWER ══════════════════════════════════════════ -->
@@ -320,28 +482,20 @@
             <div class="v3-drawer-header">
                 <div style="flex:1">
                     <div style="display:flex;align-items:center;gap:10px">
-                        <div style="font-size:22px;font-weight:900;letter-spacing:-0.5px" id="drawerSymbol">&#8212;
-                        </div>
-                        <button class="drawer-star-btn" id="drawerStarBtn" onclick="toggleDrawerWatchlist()"
-                            title="Add to Watchlist">&#9734;</button>
+                        <div style="font-size:22px;font-weight:900;letter-spacing:-0.5px" id="drawerSymbol">&#8212;</div>
+                        <button class="drawer-star-btn" id="drawerStarBtn" onclick="toggleDrawerWatchlist()" title="Add to Watchlist">&#9734;</button>
                     </div>
                     <div style="font-size:12px;color:var(--text-muted);margin-top:2px" id="drawerSector">&#8212;</div>
                     <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
-                        <span
-                            style="font-size:18px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text-primary)"
-                            id="drawerPrice">&#8212;</span>
-                        <span style="font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace"
-                            id="drawerChange"></span>
+                        <span style="font-size:18px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text-primary)" id="drawerPrice">&#8212;</span>
+                        <span style="font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace" id="drawerChange"></span>
                     </div>
                 </div>
                 <div style="display:flex;align-items:flex-start;gap:8px">
                     <div class="drawer-export-wrap">
                         <button class="drawer-export-btn" onclick="toggleExportMenu()" title="Export Research">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                <polyline points="7 10 12 15 17 10" />
-                                <line x1="12" y1="15" x2="12" y2="3" />
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
                             </svg>
                         </button>
                         <div class="drawer-export-menu" id="exportMenu">
@@ -350,15 +504,12 @@
                         </div>
                     </div>
                     <button class="v3-drawer-close" onclick="closeDrawer()">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                         </svg>
                     </button>
                 </div>
             </div>
-            <!-- Conviction meter + badges row -->
             <div id="drawerMeta" class="drawer-meta-row"></div>
             <div class="v3-drawer-body" id="drawerBody">
                 <!-- Drawer content loaded dynamically -->
@@ -366,45 +517,27 @@
         </div>
 
         <!-- ═══ MOBILE BOTTOM NAV ═════════════════════════════════════ -->
-        <nav class="v3-mobile-nav">
-            <div class="v3-mobile-nav-inner">
-                <a href="/" class="v3-mobile-nav-item {% if active_page == 'dashboard' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="3" y="3" width="7" height="7" rx="1" />
-                        <rect x="14" y="3" width="7" height="7" rx="1" />
-                        <rect x="3" y="14" width="7" height="7" rx="1" />
-                        <rect x="14" y="14" width="7" height="7" rx="1" />
-                    </svg>
-                    Overview
+        <nav class="mos-mobile-nav">
+            <div class="mos-mobile-nav-inner">
+                <a href="/" class="mos-mobile-nav-item {% if active_page == 'dashboard' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
+                    Home
                 </a>
-                <a href="/top-picks" class="v3-mobile-nav-item {% if active_page == 'top_picks' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path
-                            d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                    </svg>
-                    Picks
+                <a href="/top-picks" class="mos-mobile-nav-item {% if active_page == 'top_picks' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+                    Discover
                 </a>
-                <a href="/paper-trades-view"
-                    class="v3-mobile-nav-item {% if active_page == 'paper_trades' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                    </svg>
-                    Trades
+                <a href="/portfolio" class="mos-mobile-nav-item {% if active_page == 'portfolio' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /></svg>
+                    Portfolio
                 </a>
-                <a href="/outcome" class="v3-mobile-nav-item {% if active_page == 'outcome' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 3v18h18" />
-                        <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" />
-                    </svg>
+                <a href="/outcome" class="mos-mobile-nav-item {% if active_page == 'outcome' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18" /><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" /></svg>
                     Analytics
                 </a>
-                <a href="/settings" class="v3-mobile-nav-item {% if active_page == 'settings' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                        <circle cx="12" cy="7" r="4" />
-                    </svg>
-                    Profile
+                <a href="#" class="mos-mobile-nav-item" onclick="openCommandPalette(); return false;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+                    Search
                 </a>
             </div>
         </nav>
@@ -414,72 +547,129 @@
     <script>
         // ── Sidebar Toggle ──────────────────────────────────────────────
         function toggleSidebar() {
-            document.getElementById('v3Sidebar').classList.toggle('collapsed');
-            localStorage.setItem('v3_sidebar_collapsed', document.getElementById('v3Sidebar').classList.contains('collapsed'));
+            document.getElementById('mosSidebar').classList.toggle('collapsed');
+            MarketOS.SystemRepository.setPreference('mos_sidebar_collapsed', document.getElementById('mosSidebar').classList.contains('collapsed'));
         }
-        if (localStorage.getItem('v3_sidebar_collapsed') === 'true') {
-            document.getElementById('v3Sidebar').classList.add('collapsed');
+        if (MarketOS.SystemRepository.getPreference('mos_sidebar_collapsed', null) === 'true') {
+            document.getElementById('mosSidebar').classList.add('collapsed');
         }
 
-        // ── Theme Toggle (P0-3.5: unified 'theme' key) ─────────────────
+        // ── Theme Toggle ────────────────────────────────────────────────
         function toggleDashTheme() {
             var cur = document.documentElement.getAttribute('data-theme') || 'dark';
             var next = cur === 'dark' ? 'light' : 'dark';
             document.documentElement.setAttribute('data-theme', next);
-            localStorage.setItem('theme', next);
+            MarketOS.SystemRepository.setPreference('theme', next);
         }
 
-        // ── Global Search ───────────────────────────────────────────────
-        const searchInput = document.getElementById('globalSearch');
-        const searchDropdown = document.getElementById('searchDropdown');
+        // ── AI Copilot Panel ────────────────────────────────────────────
+        function toggleCopilot() {
+            const panel = document.getElementById('mosCopilotPanel');
+            panel.classList.toggle('open');
+            MarketOS.SystemRepository.setPreference('mos_copilot_open', panel.classList.contains('open'));
+        }
+        // Restore copilot state
+        if (MarketOS.SystemRepository.getPreference('mos_copilot_open', null) === 'true') {
+            document.getElementById('mosCopilotPanel').classList.add('open');
+        }
+
+        // ── Notification Drawer ─────────────────────────────────────────
+        function toggleNotifications() {
+            const drawer = document.getElementById('notifDrawer');
+            const overlay = document.getElementById('notifOverlay');
+            drawer.classList.toggle('open');
+            overlay.classList.toggle('open');
+        }
+
+        // ── Command Palette ─────────────────────────────────────────────
         let allStocks = [];
-        let searchHighlightIdx = -1;
+        let cmdHighlightIdx = 0;
+
+        function openCommandPalette() {
+            document.getElementById('cmdOverlay').classList.add('open');
+            document.getElementById('cmdPalette').classList.add('open');
+            const input = document.getElementById('cmdInput');
+            input.value = '';
+            input.focus();
+            document.getElementById('cmdSymbolResults').style.display = 'none';
+            cmdHighlightIdx = 0;
+            updateCmdHighlight();
+        }
+
+        function closeCommandPalette() {
+            document.getElementById('cmdOverlay').classList.remove('open');
+            document.getElementById('cmdPalette').classList.remove('open');
+        }
+
+        function cmdNavigate(path) {
+            closeCommandPalette();
+            window.location.href = path;
+        }
+
+        function cmdRunScan() {
+            closeCommandPalette();
+            triggerScan();
+        }
+
+        function updateCmdHighlight() {
+            const items = document.querySelectorAll('.mos-cmd-item:not([style*="display:none"])');
+            items.forEach((item, i) => item.classList.toggle('highlighted', i === cmdHighlightIdx));
+        }
 
         document.addEventListener('keydown', e => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
                 e.preventDefault();
-                searchInput.focus();
-                searchInput.select();
+                openCommandPalette();
             }
             if (e.key === 'Escape') {
-                searchDropdown.classList.remove('open');
-                searchInput.blur();
+                closeCommandPalette();
             }
         });
 
-        searchInput.addEventListener('input', () => {
-            const q = searchInput.value.trim().toUpperCase();
-            if (q.length < 1) { searchDropdown.classList.remove('open'); return; }
+        document.getElementById('cmdInput').addEventListener('input', function () {
+            const q = this.value.trim().toUpperCase();
+            const symGroup = document.getElementById('cmdSymbolResults');
+
+            if (q.length < 1) {
+                symGroup.style.display = 'none';
+                cmdHighlightIdx = 0;
+                updateCmdHighlight();
+                return;
+            }
+
             const matches = allStocks.filter(s =>
                 s.symbol.includes(q) || (s.sector || '').toUpperCase().includes(q)
-            ).slice(0, 8);
-            if (!matches.length) { searchDropdown.classList.remove('open'); return; }
-            searchHighlightIdx = 0;
-            searchDropdown.innerHTML = matches.map((s, i) => `
-        <div class="v3-search-result ${i === 0 ? 'highlighted' : ''}" data-symbol="${s.symbol}" onclick="openDrawerForSymbol('${s.symbol}')">
-            <div>
-                <div class="v3-search-result-symbol">${s.symbol}</div>
-                <div class="v3-search-result-sector">${s.sector || ''}</div>
-            </div>
-            <div class="v3-search-result-score" style="color:${s.score >= 75 ? 'var(--success)' : s.score >= 55 ? 'var(--warning)' : 'var(--danger)'}">${s.score || '—'}</div>
-        </div>
-    `).join('');
-            searchDropdown.classList.add('open');
+            ).slice(0, 6);
+
+            if (matches.length) {
+                symGroup.style.display = 'block';
+                symGroup.innerHTML = '<div class="mos-cmd-group-label">Symbols</div>' +
+                    matches.map(s => `
+                        <div class="mos-cmd-item" onclick="cmdNavigate('/symbol/${s.symbol}')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" /></svg>
+                            <span>${s.symbol} <small style="color:var(--text-muted)">${s.sector || ''}</small></span>
+                            <span class="mos-cmd-score" style="color:${s.score >= 75 ? 'var(--success)' : s.score >= 55 ? 'var(--warning)' : 'var(--text-muted)'}">${s.score || '—'}</span>
+                        </div>
+                    `).join('');
+            } else {
+                symGroup.style.display = 'none';
+            }
+
+            cmdHighlightIdx = 0;
+            updateCmdHighlight();
         });
 
-        searchInput.addEventListener('keydown', e => {
-            const results = searchDropdown.querySelectorAll('.v3-search-result');
-            if (!results.length) return;
-            if (e.key === 'ArrowDown') { e.preventDefault(); searchHighlightIdx = Math.min(searchHighlightIdx + 1, results.length - 1); }
-            if (e.key === 'ArrowUp') { e.preventDefault(); searchHighlightIdx = Math.max(searchHighlightIdx - 1, 0); }
-            results.forEach((r, i) => r.classList.toggle('highlighted', i === searchHighlightIdx));
-            if (e.key === 'Enter' && results[searchHighlightIdx]) {
+        document.getElementById('cmdInput').addEventListener('keydown', function (e) {
+            const items = document.querySelectorAll('#cmdPalette .mos-cmd-item');
+            if (!items.length) return;
+            if (e.key === 'ArrowDown') { e.preventDefault(); cmdHighlightIdx = Math.min(cmdHighlightIdx + 1, items.length - 1); }
+            if (e.key === 'ArrowUp') { e.preventDefault(); cmdHighlightIdx = Math.max(cmdHighlightIdx - 1, 0); }
+            updateCmdHighlight();
+            if (e.key === 'Enter' && items[cmdHighlightIdx]) {
                 e.preventDefault();
-                openDrawerForSymbol(results[searchHighlightIdx].dataset.symbol);
+                items[cmdHighlightIdx].click();
             }
         });
-
-        searchInput.addEventListener('blur', () => setTimeout(() => searchDropdown.classList.remove('open'), 200));
 
         // ── Drawer ──────────────────────────────────────────────────────
         let _drawerData = null;
@@ -526,13 +716,10 @@
             document.getElementById('drawerChange').textContent = '';
             document.getElementById('drawerMeta').innerHTML = '';
             document.getElementById('drawerBody').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading analysis...</div>';
-            searchDropdown.classList.remove('open');
-            searchInput.value = '';
             overlay.classList.add('open');
             drawer.classList.add('open');
 
-            // Update watchlist star
-            const wl = JSON.parse(localStorage.getItem('v3_watchlist') || '[]');
+            const wl = JSON.parse(MarketOS.SystemRepository.getPreference('v3_watchlist', null) || '[]');
             const inWL = wl.some(w => w.symbol === symbol);
             const starBtn = document.getElementById('drawerStarBtn');
             starBtn.textContent = inWL ? '\u2605' : '\u2606';
@@ -552,7 +739,6 @@
                 chgEl.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(1) + '% 1W';
                 chgEl.style.color = chg >= 0 ? 'var(--success)' : 'var(--danger)';
 
-                // Meta row: score + confidence + conviction
                 const conf = calcDrawerConf(data);
                 const cl = conf >= 80 ? 'high' : conf >= 50 ? 'medium' : 'low';
                 const clLabel = conf >= 80 ? 'HIGH' : conf >= 50 ? 'MED' : 'LOW';
@@ -586,11 +772,11 @@
             if (!_drawerData) return;
             const sym = _drawerData.symbol || document.getElementById('drawerSymbol').textContent;
             const s = _drawerData.scan || _drawerData;
-            let wl = JSON.parse(localStorage.getItem('v3_watchlist') || '[]');
+            let wl = JSON.parse(MarketOS.SystemRepository.getPreference('v3_watchlist', null) || '[]');
             const idx = wl.findIndex(w => w.symbol === sym);
             if (idx >= 0) { wl.splice(idx, 1); }
             else { wl.push({ symbol: sym, addedAt: new Date().toISOString(), addedScore: s.score || 0, notes: '' }); }
-            localStorage.setItem('v3_watchlist', JSON.stringify(wl));
+            MarketOS.SystemRepository.setPreference('v3_watchlist', JSON.stringify(wl));
             const btn = document.getElementById('drawerStarBtn');
             const inWL = idx < 0;
             btn.textContent = inWL ? '\u2605' : '\u2606';
@@ -621,7 +807,7 @@
             const sym = _drawerData.symbol || s.symbol;
             const conf = calcDrawerConf(_drawerData);
             const h = calcHealth(_drawerData);
-            const md = `# ${sym} \u2014 Research Snapshot\n\nScore: ${s.score || 0} | Confidence: ${conf}% ${conf >= 80 ? 'HIGH' : conf >= 50 ? 'MED' : 'LOW'} | Health: ${h.emoji} ${h.label}\n\n## Investment Thesis\n\n${buildThesisText(s, _drawerData, conf, h)}\n\n## Targets\n\nEntry: \u20B9${(_drawerData.price || 0).toFixed(2)} | Stop: \u20B9${(s.stop_loss || 0).toFixed(2)} | Target: \u20B9${(s.target_price || 0).toFixed(2)} | R:R: ${(s.risk_reward || 0) > 0 ? '1:' + (s.risk_reward || 0).toFixed(1) : '--'}\n\n## Signals\n\n${(s.signals || []).map(sg => '- ' + (Array.isArray(sg) ? sg[0] : sg)).join('\n')}\n\n---\n*Generated by AI Smart Scanner on ${new Date().toLocaleDateString()}*\n`;
+            const md = `# ${sym} \u2014 Research Snapshot\n\nScore: ${s.score || 0} | Confidence: ${conf}% ${conf >= 80 ? 'HIGH' : conf >= 50 ? 'MED' : 'LOW'} | Health: ${h.emoji} ${h.label}\n\n## Investment Thesis\n\n${buildThesisText(s, _drawerData, conf, h)}\n\n## Targets\n\nEntry: \u20B9${(_drawerData.price || 0).toFixed(2)} | Stop: \u20B9${(s.stop_loss || 0).toFixed(2)} | Target: \u20B9${(s.target_price || 0).toFixed(2)} | R:R: ${(s.risk_reward || 0) > 0 ? '1:' + (s.risk_reward || 0).toFixed(1) : '--'}\n\n## Signals\n\n${(s.signals || []).map(sg => '- ' + (Array.isArray(sg) ? sg[0] : sg)).join('\n')}\n\n---\n*Generated by MarketOS on ${new Date().toLocaleDateString()}*\n`;
             const blob = new Blob([md], { type: 'text/markdown' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
@@ -655,200 +841,20 @@
             return `This stock ranks highly due to:\n${reasons.slice(0, 4).map(r => '\u2022 ' + r).join('\n')}\n\nKey Risk:\n${risks.slice(0, 3).join('. ')}.\n\nExpected Holding:\n10\u201320 trading days (swing trade)`;
         }
 
-        function renderDrawerContent(data) {
-            const body = document.getElementById('drawerBody');
-            const s = data.scan || data;
-            const score = s.score || data.score || 0;
-            const conf = calcDrawerConf(data);
-            const health = calcHealth(data);
-            const signals = (s.signals || []).map(sg => Array.isArray(sg) ? sg : [String(sg), '', 'neutral']);
-
-            const bullSignals = signals.filter(sg => sg[2] === 'bullish' || (!sg[2] && !String(sg[0]).toLowerCase().includes('risk'))).slice(0, 5);
-            const bearSignals = signals.filter(sg => sg[2] === 'bearish' || String(sg[0]).toLowerCase().includes('risk')).slice(0, 3);
-
-            // Group signals by category
-            const techSigs = signals.filter(sg => /ema|macd|rsi|stoch|bb|adx|atr|vwap|ichimoku|supertrend|cci|williams|keltner|fibonacci|golden cross|pullback|momentum|trend|breakout/i.test(sg[0]));
-            const fundSigs = signals.filter(sg => /fundament|earnings|revenue|debt|pe|growth|pat/i.test(sg[0]));
-            const momSigs = signals.filter(sg => /smart money|delivery|volume|obv|accumulation|cmf|mfi|surge/i.test(sg[0]));
-            const riskSigs = signals.filter(sg => sg[2] === 'bearish' || /risk|bear|weak|below|overbought|downtrend|choppy|headwind/i.test(sg[0]));
-
-            // Score breakdowns (normalized to 100)
-            const scores = [
-                { label: 'Technical', val: Math.round(Math.min(100, ((s.technical_score || 0) / 30) * 100)), color: 'var(--accent-blue)' },
-                { label: 'Earnings', val: Math.round(Math.min(100, ((s.earnings_momentum_score || 0) / 15) * 100)), color: '#a78bfa' },
-                { label: 'Smart Money', val: Math.round(s.smart_money_100 || Math.min(100, ((s.smart_money_score || 0) / 10) * 100)), color: 'var(--accent-cyan)' },
-                { label: 'Fundamental', val: Math.round(Math.min(100, ((s.fundamental_score || 0) / 10) * 100)), color: 'var(--success)' },
-                { label: 'Sector', val: Math.round(Math.min(100, ((s.sector_rotation_score || 0) / 10) * 100)), color: 'var(--warning)' },
-                { label: 'Risk', val: Math.round(100 - (s.risk_score || 50)), color: 'var(--danger)' },
-            ];
-
-            body.innerHTML = `
-        <div class="v3-tabs" id="drawerTabs">
-            <button class="v3-tab active" onclick="switchDrawerTab('summary',this)">Summary</button>
-            <button class="v3-tab" onclick="switchDrawerTab('scoring',this)">Scoring</button>
-            <button class="v3-tab" onclick="switchDrawerTab('targets',this)">Targets</button>
-            <button class="v3-tab" onclick="switchDrawerTab('signals',this)">Signals</button>
-            <button class="v3-tab" onclick="switchDrawerTab('chart',this)">Chart</button>
-            <button class="v3-tab" onclick="switchDrawerTab('timeline',this)">Timeline</button>
-        </div>
-        <div id="drawerTabContent">
-            <!-- SUMMARY -->
-            <div class="v3-tab-panel active" id="tab-summary">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px;background:rgba(${health.color === 'var(--success)' ? '16,185,129' : health.color === 'var(--warning)' ? '245,158,11' : health.color === 'var(--danger)' ? '239,68,68' : '249,115,22'},0.08);border-radius:10px;border:1px solid rgba(${health.color === 'var(--success)' ? '16,185,129' : health.color === 'var(--warning)' ? '245,158,11' : health.color === 'var(--danger)' ? '239,68,68' : '249,115,22'},0.2)">
-                    <span style="font-size:24px">${health.emoji}</span>
-                    <div>
-                        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted)">Research Health</div>
-                        <div style="font-size:16px;font-weight:800;color:${health.color}">${health.label}</div>
-                    </div>
-                </div>
-
-                <h4 style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--accent-cyan);margin-bottom:10px">Investment Thesis</h4>
-                <div style="font-size:13px;color:var(--text-secondary);line-height:1.7;margin-bottom:20px;white-space:pre-line">${buildThesisText(s, data, conf, health)}</div>
-
-                <h4 style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--warning);margin-bottom:8px">Invalidation</h4>
-                <p style="font-size:13px;color:var(--text-secondary)">If price breaks below \u20B9${s.stop_loss ? s.stop_loss.toFixed(2) : (data.stop_loss || 0).toFixed(2)} (stop loss), thesis is invalid.</p>
-            </div>
-
-            <!-- SCORING -->
-            <div class="v3-tab-panel" id="tab-scoring">
-                <canvas id="radarChart" height="220"></canvas>
-                <div style="margin-top:16px">
-                    ${scores.map(sc => `
-                        <div style="margin-bottom:10px">
-                            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                                <span style="font-size:12px;color:var(--text-secondary)">${sc.label}</span>
-                                <span style="font-size:12px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text-primary)">${sc.val}</span>
-                            </div>
-                            <div style="height:6px;background:var(--border-subtle);border-radius:3px;overflow:hidden">
-                                <div style="height:100%;width:${sc.val}%;background:${sc.color};border-radius:3px;transition:width 0.5s"></div>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-
-            <!-- TARGETS -->
-            <div class="v3-tab-panel" id="tab-targets">
-                <div class="drawer-price-ladder">
-                    <div class="ladder-row target"><span class="ladder-label">Target</span><span class="ladder-price">\u20B9${(s.target_price || data.target_price || 0).toFixed(2)}</span><span class="ladder-pct" style="color:var(--success)">+${(s.target_pct || 0).toFixed(1)}%</span></div>
-                    <div class="ladder-bar" style="background:var(--success);opacity:0.2;height:40px"></div>
-                    <div class="ladder-row entry"><span class="ladder-label">Entry</span><span class="ladder-price">\u20B9${(data.price || s.price || 0).toFixed(2)}</span><span class="ladder-pct" style="color:var(--text-muted)">current</span></div>
-                    <div class="ladder-bar" style="background:var(--danger);opacity:0.2;height:24px"></div>
-                    <div class="ladder-row stop"><span class="ladder-label">Stop Loss</span><span class="ladder-price">\u20B9${(s.stop_loss || data.stop_loss || 0).toFixed(2)}</span><span class="ladder-pct" style="color:var(--danger)">${(s.stop_loss_pct || 0).toFixed(1)}%</span></div>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px">
-                    <div class="v3-kpi-card"><div class="v3-kpi-label">Risk : Reward</div><div class="v3-kpi-value" style="font-size:18px">${s.risk_reward ? '1:' + s.risk_reward.toFixed(1) : '\u2014'}</div></div>
-                    <div class="v3-kpi-card"><div class="v3-kpi-label">Risk Score</div><div class="v3-kpi-value" style="font-size:18px;color:${(s.risk_score || 50) > 50 ? 'var(--danger)' : 'var(--success)'}">${s.risk_score || '\u2014'}</div></div>
-                </div>
-                ${s.trade ? `
-                <div style="margin-top:16px;padding:12px;background:var(--bg-secondary);border-radius:10px;border:1px solid var(--border-subtle)">
-                    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted);margin-bottom:8px">Booking Plan</div>
-                    <div style="font-size:12px;color:var(--text-secondary)">${s.trade.booking_plan || '\u2014'}</div>
-                </div>` : ''}
-            </div>
-
-            <!-- SIGNALS -->
-            <div class="v3-tab-panel" id="tab-signals">
-                ${renderSignalGroup('Technical', techSigs, 'var(--accent-blue)')}
-                ${renderSignalGroup('Smart Money', momSigs, 'var(--accent-cyan)')}
-                ${renderSignalGroup('Fundamental', fundSigs, 'var(--success)')}
-                ${renderSignalGroup('Risk', riskSigs, 'var(--danger)')}
-                ${!techSigs.length && !momSigs.length && !fundSigs.length && !riskSigs.length ?
-                    '<div style="padding:30px;text-align:center;color:var(--text-muted)">No signals from current scan</div>' : ''}
-            </div>
-
-            <!-- CHART -->
-            <div class="v3-tab-panel" id="tab-chart">
-                <canvas id="drawerLineChart" height="280"></canvas>
-            </div>
-
-            <!-- TIMELINE -->
-            <div class="v3-tab-panel" id="tab-timeline">
-                <div id="timelineContent">
-                    <div style="padding:20px;text-align:center;color:var(--text-muted)">Loading timeline...</div>
-                </div>
-            </div>
-        </div>
-    `;
-
-            // Render radar
-            const radarCanvas = document.getElementById('radarChart');
-            if (radarCanvas && typeof Chart !== 'undefined') {
-                new Chart(radarCanvas, {
-                    type: 'radar',
-                    data: {
-                        labels: scores.map(sc => sc.label),
-                        datasets: [{ data: scores.map(sc => sc.val), borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,0.12)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#3B82F6' }]
-                    },
-                    options: {
-                        responsive: true, maintainAspectRatio: true,
-                        scales: { r: { min: 0, max: 100, ticks: { display: false, stepSize: 25 }, grid: { color: '#2A364B' }, pointLabels: { color: '#CBD5E1', font: { size: 11, weight: 600 } }, angleLines: { color: '#2A364B' } } },
-                        plugins: { legend: { display: false } }
-                    }
-                });
+        // renderDrawerContent, loadTimeline, showTimelineFallback, switchDrawerTab, renderDrawerChart
+        // are defined in the child templates or loaded dynamically
+        if (typeof renderDrawerContent === 'undefined') {
+            function renderDrawerContent(data) {
+                document.getElementById('drawerBody').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Detailed view available on Discovery pages.</div>';
             }
-
-            // Load timeline with fallback
-            loadTimeline(data);
-        }
-
-        function renderSignalGroup(title, sigs, color) {
-            if (!sigs.length) return '';
-            return `<div style="margin-bottom:16px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:${color};margin-bottom:8px">${title}</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px">
-            ${sigs.map(sg => `<span class="v3-signal-pill" style="border-color:${color}">${sg[0]}</span>`).join('')}
-        </div>
-    </div>`;
-        }
-
-        function loadTimeline(data) {
-            const container = document.getElementById('timelineContent');
-            if (!container) return;
-            const sym = data.symbol || (data.scan || {}).symbol;
-            const s = data.scan || data;
-
-            // Try history endpoint
-            fetch(`/api/stock/history/${sym}`).then(r => r.json()).then(hist => {
-                if (hist.history && hist.history.length > 1) {
-                    container.innerHTML = hist.history.slice(0, 10).map((h, i) => `
-                <div style="display:flex;gap:12px;padding:10px 0;${i < hist.history.length - 1 ? 'border-bottom:1px solid var(--border-subtle)' : ''}" >
-                    <div style="width:8px;height:8px;border-radius:50%;background:var(--accent-blue);margin-top:4px;flex-shrink:0"></div>
-                    <div>
-                        <div style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace">${h.date || h.scanned_at || ''}</div>
-                        <div style="font-size:13px;color:var(--text-primary);font-weight:600;margin-top:2px">Score ${h.score || 0} ${h.prev_score ? `(${h.score > h.prev_score ? '+' : ''}${h.score - h.prev_score})` : ''}</div>
-                    </div>
-                </div>
-            `).join('');
-                } else {
-                    showTimelineFallback(container, s, data);
-                }
-            }).catch(() => showTimelineFallback(container, s, data));
-        }
-
-        function showTimelineFallback(container, s, data) {
-            container.innerHTML = `
-        <div style="padding:16px;background:var(--bg-secondary);border-radius:10px;border:1px solid var(--border-subtle)">
-            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted);margin-bottom:12px">Current Snapshot</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-                <div><span style="font-size:11px;color:var(--text-muted)">Latest Score</span><div style="font-size:18px;font-weight:800;color:var(--text-primary)">${s.score || 0}</div></div>
-                <div><span style="font-size:11px;color:var(--text-muted)">Model</span><div style="font-size:14px;font-weight:700;color:var(--text-primary)">${s.model_version || 'R2.1'}</div></div>
-                <div><span style="font-size:11px;color:var(--text-muted)">Grade</span><div style="font-size:14px;font-weight:700;color:var(--text-primary)">${s.grade || '\u2014'}</div></div>
-                <div><span style="font-size:11px;color:var(--text-muted)">Weekly Trend</span><div style="font-size:14px;font-weight:700;color:var(--text-primary)">${(s.weekly_trend || 'flat').toUpperCase()}</div></div>
-            </div>
-        </div>
-        <div style="margin-top:16px;padding:16px;text-align:center;color:var(--text-muted);font-size:12px">
-            Score history will appear after multiple scan cycles.
-        </div>`;
         }
 
         function switchDrawerTab(tab, btn) {
             document.querySelectorAll('#drawerTabs .v3-tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('#drawerTabContent .v3-tab-panel').forEach(p => p.classList.remove('active'));
             if (btn) btn.classList.add('active');
-            document.getElementById('tab-' + tab).classList.add('active');
-
-            // Lazy-load chart
+            const panel = document.getElementById('tab-' + tab);
+            if (panel) panel.classList.add('active');
             if (tab === 'chart' && _drawerData && !_drawerChart) {
                 renderDrawerChart(_drawerData);
             }
@@ -858,31 +864,20 @@
             const canvas = document.getElementById('drawerLineChart');
             if (!canvas || typeof Chart === 'undefined') return;
             const s = data.scan || data;
-
-            // Use OHLCV data or close array
             let dates = data.dates || [];
             let closes = data.close || [];
             let ema9 = data.ema_9 || [];
             let ema21 = data.ema_21 || [];
             let volumes = data.volume || [];
-
-            // Take last 60 days
             const n = Math.min(60, dates.length);
-            dates = dates.slice(-n);
-            closes = closes.slice(-n);
-            ema9 = ema9.slice(-n);
-            ema21 = ema21.slice(-n);
-            volumes = volumes.slice(-n);
-
+            dates = dates.slice(-n); closes = closes.slice(-n);
+            ema9 = ema9.slice(-n); ema21 = ema21.slice(-n); volumes = volumes.slice(-n);
             if (!dates.length) {
                 canvas.parentElement.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Chart data not available</div>';
                 return;
             }
-
             const supports = (s.supports || data.supports || []).filter(v => v > 0);
             const resistances = (s.resistances || data.resistances || []).filter(v => v > 0);
-
-            // Build annotation lines for S/R
             const annotations = {};
             supports.slice(0, 2).forEach((v, i) => {
                 annotations['sup' + i] = { type: 'line', yMin: v, yMax: v, borderColor: 'rgba(16,185,129,0.5)', borderWidth: 1, borderDash: [5, 3], label: { display: i === 0, content: 'S: ' + v.toFixed(0), position: 'start', font: { size: 9 }, color: '#10B981', backgroundColor: 'transparent' } };
@@ -890,7 +885,6 @@
             resistances.slice(0, 2).forEach((v, i) => {
                 annotations['res' + i] = { type: 'line', yMin: v, yMax: v, borderColor: 'rgba(239,68,68,0.5)', borderWidth: 1, borderDash: [5, 3], label: { display: i === 0, content: 'R: ' + v.toFixed(0), position: 'start', font: { size: 9 }, color: '#EF4444', backgroundColor: 'transparent' } };
             });
-
             _drawerChart = new Chart(canvas, {
                 type: 'line',
                 data: {
@@ -922,19 +916,18 @@
             const now = new Date();
             const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
             const day = ist.getDay();
-            if (day === 0 || day === 6) return false; // weekend
+            if (day === 0 || day === 6) return false;
             const h = ist.getHours(), m = ist.getMinutes();
             const mins = h * 60 + m;
-            return mins >= 555 && mins <= 930; // 9:15 to 15:30
+            return mins >= 555 && mins <= 930;
         }
 
         function updateCommandCenter() {
             fetch('/api/status').then(r => r.json()).then(data => {
                 const isLive = isMarketOpen();
                 const pill = document.getElementById('marketStatusPill');
-                pill.className = 'v3-status-pill ' + (isLive ? 'live' : 'closed');
+                pill.className = 'mos-status-pill ' + (isLive ? 'live' : 'closed');
                 document.getElementById('marketStatusText').textContent = isLive ? 'LIVE' : 'CLOSED';
-                // last_scan is a string like "2026-06-05 10:42 IST"
                 const lastScan = data.last_scan || '—';
                 const scanParts = lastScan.split(' ');
                 const scanTime = scanParts.length >= 2 ? scanParts[1] : lastScan;
@@ -942,21 +935,15 @@
                 const regime = (data.market_regime || 'unknown').toLowerCase();
                 const regimeEl = document.getElementById('headerRegime');
                 regimeEl.textContent = (data.market_regime || '—').toUpperCase();
-                regimeEl.className = 'v3-regime-badge ' + (regime.includes('bull') ? 'bullish' : regime.includes('bear') ? 'bearish' : 'sideways');
-
-                // Update sidebar badges from status directly
+                regimeEl.className = 'mos-regime-badge ' + (regime.includes('bull') ? 'bullish' : regime.includes('bear') ? 'bearish' : 'sideways');
                 document.getElementById('hcCount').textContent = data.hc_count !== undefined ? data.hc_count : '—';
                 document.getElementById('goldenCount').textContent = data.golden_count !== undefined ? data.golden_count : '—';
-
-                // Breadth from status directly
                 const adv = data.adv_count || 0;
                 const dec = data.dec_count || 0;
                 const ratio = dec > 0 ? (adv / dec).toFixed(2) : adv > 0 ? '∞' : '1.00';
                 document.getElementById('headerBreadth').textContent = ratio;
             }).catch(() => { });
 
-            // Sprint 1 Phase 4: Leading sector — use cached /api/dashboard data if on dashboard page,
-            // otherwise fetch sector-rotation only during market hours to reduce idle polling
             if (isMarketOpen() || !document.getElementById('headerLeadingSector').textContent || document.getElementById('headerLeadingSector').textContent === '—') {
                 fetch('/api/sector-rotation').then(r => r.json()).then(data => {
                     if (data.sectors) {
@@ -967,85 +954,61 @@
             }
         }
 
-        // ── Quick Actions (P0-3.6: Loader Authority) ───────────────────
+        // ── Quick Actions ───────────────────────────────────────────────
         function triggerScan() {
-            // Guard: prevent double-fire while scan overlay is active
             if (v3Overlay._scanActive) return;
             v3Overlay.showScan();
             fetch('/api/scan', { method: 'POST' }).then(() => {
                 document.getElementById('btnScan').textContent = 'Running...';
-            }).catch(() => {
-                // Failure path: release overlay so UI is never permanently locked
-                v3Overlay._completeScan();
-            });
+            }).catch(() => { v3Overlay._completeScan(); });
         }
 
         function refreshData() {
             v3Overlay.showRefresh();
             updateCommandCenter();
             if (typeof loadPageData === 'function') loadPageData();
-            // Auto-complete refresh after data loads (short delay for visual feedback)
             setTimeout(() => { v3Overlay._completeRefresh(); }, 2500);
         }
 
-        function exportPicks() {
-            window.open('/api/export/csv', '_blank');
-        }
+        function exportPicks() { window.open('/api/export/csv', '_blank'); }
 
         // ── Init ────────────────────────────────────────────────────────
         updateCommandCenter();
 
-        // Sprint 1 Phase 4: Adaptive polling — 30s during market hours, 120s off-market
-        // Reduces unnecessary DB hits when market is closed
         (function initPolling() {
             let _pollTimer = null;
             function schedulePoll() {
                 const interval = isMarketOpen() ? 30000 : 120000;
-                _pollTimer = setTimeout(() => {
-                    updateCommandCenter();
-                    schedulePoll();
-                }, interval);
+                _pollTimer = setTimeout(() => { updateCommandCenter(); schedulePoll(); }, interval);
             }
             schedulePoll();
         })();
 
-        // Sprint 1 Phase 4: Cache search-list in localStorage with 5-min TTL
-        // Eliminates redundant /api/search-list fetch on every page navigation
         (function loadSearchList() {
             const CACHE_KEY = 'v3_search_list';
             const TTL_KEY = 'v3_search_list_ts';
-            const TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-            const cached = localStorage.getItem(CACHE_KEY);
-            const cachedTs = parseInt(localStorage.getItem(TTL_KEY) || '0', 10);
-
+            const TTL_MS = 5 * 60 * 1000;
+            const cached = MarketOS.SystemRepository.getCache(CACHE_KEY);
+            const cachedTs = parseInt(MarketOS.SystemRepository.getCache(TTL_KEY) || '0', 10);
             if (cached && (Date.now() - cachedTs) < TTL_MS) {
-                try {
-                    allStocks = JSON.parse(cached) || [];
-                    return;
-                } catch (e) { /* fall through to fetch */ }
+                try { allStocks = JSON.parse(cached) || []; return; } catch (e) { }
             }
-
             fetch('/api/search-list').then(r => r.json()).then(data => {
                 allStocks = data || [];
-                try {
-                    localStorage.setItem(CACHE_KEY, JSON.stringify(allStocks));
-                    localStorage.setItem(TTL_KEY, String(Date.now()));
-                } catch (e) { /* localStorage full — ignore */ }
+                try { MarketOS.SystemRepository.setCache(CACHE_KEY, JSON.stringify(allStocks)); MarketOS.SystemRepository.setCache(TTL_KEY, String(Date.now())); } catch (e) { }
             }).catch(() => { });
         })();
     </script>
 
-    <!-- ═══ P0-3.6: AI SCAN OVERLAY (production route loader) ═══ -->
+    <!-- ═══ AI SCAN OVERLAY ════════════════════════════════════════════ -->
     <div class="v3-ai-scan-overlay" id="v3ScanOverlay">
         <div id="v3ScanProcessing">
             <div class="v3-ai-spinner-wrap">
                 <div class="v3-ai-ring"></div>
-                <div class="v3-ai-center-text">AI SMART<span>SCANNER</span></div>
+                <div class="v3-ai-center-text">MARKET<span>OS</span></div>
             </div>
             <div class="v3-ai-status-msg" id="v3ScanStatus">Analyzing NSE Market Universe...</div>
-            <div class="v3-ai-dots-line"><span class="v3-ai-pulse-dot"></span><span class="v3-ai-pulse-dot"></span><span
-                    class="v3-ai-pulse-dot"></span></div>
+            <div class="v3-ai-dots-line"><span class="v3-ai-pulse-dot"></span><span class="v3-ai-pulse-dot"></span><span class="v3-ai-pulse-dot"></span></div>
         </div>
         <div class="v3-ai-complete-wrap" id="v3ScanComplete">
             <div class="v3-ai-check-circle">&#10003;</div>
@@ -1054,16 +1017,14 @@
         </div>
     </div>
 
-    <!-- ═══ P0-3.6: AI REFRESH CARD (floating loader) ═══ -->
     <div class="v3-ai-refresh-card" id="v3RefreshCard">
         <div id="v3RefreshProcessing">
             <div class="v3-ai-spinner-wrap">
                 <div class="v3-ai-ring"></div>
-                <div class="v3-ai-center-text">AI SMART<span>SCANNER</span></div>
+                <div class="v3-ai-center-text">MARKET<span>OS</span></div>
             </div>
             <div class="v3-ai-status-msg" id="v3RefreshStatus">Refreshing Market Data...</div>
-            <div class="v3-ai-dots-line"><span class="v3-ai-pulse-dot"></span><span class="v3-ai-pulse-dot"></span><span
-                    class="v3-ai-pulse-dot"></span></div>
+            <div class="v3-ai-dots-line"><span class="v3-ai-pulse-dot"></span><span class="v3-ai-pulse-dot"></span><span class="v3-ai-pulse-dot"></span></div>
         </div>
         <div class="v3-ai-complete-wrap" id="v3RefreshComplete">
             <div class="v3-ai-check-circle">&#10003;</div>
@@ -1072,458 +1033,67 @@
         </div>
     </div>
 
-    <style>
-        /* ═══ P0-3.6: AI Loader Styles (V3 Production) ═══ */
-        .v3-ai-scan-overlay {
-            position: fixed;
-            inset: 0;
-            z-index: 9999;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-direction: column;
-            background: rgba(10, 14, 23, 0.72);
-            backdrop-filter: blur(16px) saturate(1.6);
-            -webkit-backdrop-filter: blur(16px) saturate(1.6);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            opacity: 0;
-            visibility: hidden;
-            transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.5s;
-        }
-
-        .v3-ai-scan-overlay.active {
-            opacity: 1;
-            visibility: visible;
-        }
-
-        .v3-ai-scan-overlay.fade-out {
-            opacity: 0;
-            transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .v3-ai-spinner-wrap {
-            position: relative;
-            width: 200px;
-            height: 200px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 40px;
-        }
-
-        .v3-ai-ring {
-            position: absolute;
-            inset: 0;
-            border-radius: 50%;
-            border: 2.5px solid transparent;
-            background: conic-gradient(from 0deg, transparent 0%, var(--accent-blue, #3b82f6) 30%, rgba(6, 182, 212, 0.6) 50%, var(--accent-blue, #3b82f6) 70%, transparent 100%) border-box;
-            -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
-            -webkit-mask-composite: xor;
-            mask-composite: exclude;
-            animation: v3RingSpin 2.2s linear infinite;
-            will-change: transform;
-            box-shadow: 0 0 20px rgba(6, 182, 212, 0.15), 0 0 40px rgba(6, 182, 212, 0.08);
-        }
-
-        .v3-ai-ring::after {
-            content: '';
-            position: absolute;
-            inset: -8px;
-            border-radius: 50%;
-            border: 1.5px solid transparent;
-            border-top-color: rgba(59, 130, 246, 0.1);
-            border-left-color: rgba(6, 182, 212, 0.06);
-            animation: v3RingSpin 3.5s linear infinite reverse;
-        }
-
-        @keyframes v3RingSpin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-
-        .v3-ai-center-text {
-            font-weight: 800;
-            font-size: 20px;
-            letter-spacing: 2px;
-            text-align: center;
-            line-height: 1.3;
-            color: var(--text-primary, #F1F5F9);
-            text-transform: uppercase;
-            user-select: none;
-        }
-
-        .v3-ai-center-text span {
-            display: block;
-            font-size: 14px;
-            font-weight: 600;
-            letter-spacing: 4px;
-            color: var(--accent-blue, #3b82f6);
-            margin-top: 2px;
-        }
-
-        .v3-ai-status-msg {
-            font-size: 16px;
-            font-weight: 500;
-            color: rgba(241, 245, 249, 0.85);
-            text-align: center;
-            min-height: 28px;
-            transition: opacity 0.6s ease, transform 0.6s ease;
-            opacity: 1;
-            transform: translateY(0);
-        }
-
-        .v3-ai-status-msg.fading {
-            opacity: 0;
-            transform: translateY(-8px);
-        }
-
-        .v3-ai-dots-line {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            margin-top: 20px;
-        }
-
-        .v3-ai-pulse-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--accent-blue, #3b82f6);
-            opacity: 0.25;
-            animation: v3PulseDot 1.4s ease-in-out infinite;
-        }
-
-        .v3-ai-pulse-dot:nth-child(2) {
-            animation-delay: 0.2s;
-        }
-
-        .v3-ai-pulse-dot:nth-child(3) {
-            animation-delay: 0.4s;
-        }
-
-        @keyframes v3PulseDot {
-
-            0%,
-            100% {
-                opacity: 0.25;
-                transform: scale(0.85);
-            }
-
-            50% {
-                opacity: 1;
-                transform: scale(1.1);
-            }
-        }
-
-        .v3-ai-complete-wrap {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 12px;
-            opacity: 0;
-            transform: scale(0.92);
-            transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
-
-        .v3-ai-complete-wrap.show {
-            opacity: 1;
-            transform: scale(1);
-        }
-
-        .v3-ai-check-circle {
-            width: 80px;
-            height: 80px;
-            border-radius: 50%;
-            background: rgba(16, 185, 129, 0.12);
-            border: 2.5px solid var(--success, #10b981);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 36px;
-            color: var(--success, #10b981);
-            margin-bottom: 8px;
-            box-shadow: 0 0 24px rgba(16, 185, 129, 0.2), 0 0 48px rgba(16, 185, 129, 0.08);
-        }
-
-        .v3-ai-complete-title {
-            font-size: 22px;
-            font-weight: 700;
-            color: var(--text-primary, #F1F5F9);
-        }
-
-        .v3-ai-complete-sub {
-            font-size: 14px;
-            color: rgba(241, 245, 249, 0.6);
-        }
-
-        /* ── Floating refresh card ── */
-        .v3-ai-refresh-card {
-            position: fixed;
-            top: 80px;
-            right: 24px;
-            z-index: 9998;
-            background: rgba(30, 41, 59, 0.95);
-            backdrop-filter: blur(20px) saturate(1.3);
-            -webkit-backdrop-filter: blur(20px) saturate(1.3);
-            border: 1px solid rgba(59, 130, 246, 0.2);
-            border-radius: 16px;
-            padding: 24px 32px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 14px;
-            min-width: 280px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03);
-            opacity: 0;
-            visibility: hidden;
-            transform: translateY(-16px) scale(0.96);
-            transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.4s;
-        }
-
-        .v3-ai-refresh-card.active {
-            opacity: 1;
-            visibility: visible;
-            transform: translateY(0) scale(1);
-        }
-
-        .v3-ai-refresh-card.fade-out {
-            opacity: 0;
-            transform: translateY(-12px) scale(0.96);
-            transition: opacity 0.5s ease, transform 0.5s ease;
-        }
-
-        .v3-ai-refresh-card .v3-ai-spinner-wrap {
-            width: 100px;
-            height: 100px;
-            margin-bottom: 8px;
-        }
-
-        .v3-ai-refresh-card .v3-ai-center-text {
-            font-size: 12px;
-        }
-
-        .v3-ai-refresh-card .v3-ai-center-text span {
-            font-size: 9px;
-            letter-spacing: 3px;
-        }
-
-        .v3-ai-refresh-card .v3-ai-ring {
-            border-width: 2px;
-        }
-
-        .v3-ai-refresh-card .v3-ai-ring::after {
-            border-width: 1px;
-            inset: -4px;
-        }
-
-        .v3-ai-refresh-card .v3-ai-status-msg {
-            font-size: 13px;
-        }
-
-        .v3-ai-refresh-card .v3-ai-dots-line {
-            margin-top: 6px;
-        }
-
-        .v3-ai-refresh-card .v3-ai-complete-wrap .v3-ai-check-circle {
-            width: 48px;
-            height: 48px;
-            font-size: 22px;
-        }
-
-        .v3-ai-refresh-card .v3-ai-complete-title {
-            font-size: 16px;
-        }
-
-        .v3-ai-refresh-card .v3-ai-complete-sub {
-            font-size: 12px;
-        }
-
-        /* ── Light theme adjustments ── */
-        [data-theme="light"] .v3-ai-scan-overlay {
-            background: rgba(248, 250, 252, 0.78);
-            border-color: rgba(0, 0, 0, 0.06);
-        }
-
-        [data-theme="light"] .v3-ai-center-text {
-            color: #0F172A;
-        }
-
-        [data-theme="light"] .v3-ai-status-msg {
-            color: rgba(15, 23, 42, 0.75);
-        }
-
-        [data-theme="light"] .v3-ai-complete-title {
-            color: #0F172A;
-        }
-
-        [data-theme="light"] .v3-ai-complete-sub {
-            color: rgba(15, 23, 42, 0.5);
-        }
-
-        [data-theme="light"] .v3-ai-refresh-card {
-            background: rgba(255, 255, 255, 0.96);
-            border-color: rgba(59, 130, 246, 0.15);
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.04);
-        }
-
-        [data-theme="light"] .v3-ai-refresh-card .v3-ai-center-text {
-            color: #0F172A;
-        }
-
-        /* ── Mobile responsive ── */
-        @media (max-width: 768px) {
-            .v3-ai-spinner-wrap {
-                width: 150px;
-                height: 150px;
-                margin-bottom: 28px;
-            }
-
-            .v3-ai-center-text {
-                font-size: 16px;
-            }
-
-            .v3-ai-center-text span {
-                font-size: 11px;
-            }
-
-            .v3-ai-status-msg {
-                font-size: 14px;
-                padding: 0 24px;
-            }
-
-            .v3-ai-refresh-card {
-                right: 12px;
-                left: 12px;
-                min-width: 0;
-            }
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-
-            .v3-ai-ring,
-            .v3-ai-ring::after {
-                animation: none;
-            }
-
-            .v3-ai-pulse-dot {
-                animation: none;
-                opacity: 0.6;
-            }
-        }
-    </style>
-
     <script>
-        // ═══ P0-3.6: V3 AI Overlay Controller ═══
+        // ═══ V3 AI Overlay Controller ═══
         const v3Overlay = {
-            scanMessages: [
-                'Analyzing NSE Market Universe...',
-                'Running Technical Analysis...',
-                'Evaluating Smart Money Flow...',
-                'Processing Earnings Data...',
-                'Computing AI Scores...',
-                'Building Recommendations...',
-            ],
-            refreshMessages: [
-                'Refreshing Market Data...',
-                'Updating Price Information...',
-                'Refreshing News Sentiment...',
-                'Recalculating AI Scores...',
-                'Finalizing Dashboard...',
-            ],
-            _scanMsgIdx: 0, _refreshMsgIdx: 0,
-            _scanMsgTimer: null, _refreshMsgTimer: null,
-            _scanActive: false, _refreshActive: false,
-            _pollTimer: null,
+            scanMessages: ['Analyzing NSE Market Universe...', 'Running Technical Analysis...', 'Evaluating Smart Money Flow...', 'Processing Earnings Data...', 'Computing AI Scores...', 'Building Recommendations...'],
+            refreshMessages: ['Refreshing Market Data...', 'Updating Price Information...', 'Refreshing News Sentiment...', 'Recalculating AI Scores...', 'Finalizing Dashboard...'],
+            _scanMsgIdx: 0, _refreshMsgIdx: 0, _scanMsgTimer: null, _refreshMsgTimer: null, _scanActive: false, _refreshActive: false, _pollTimer: null,
 
             showScan() {
-                // Guard: clear any existing timers to prevent stacking on rapid clicks
-                clearInterval(this._scanMsgTimer);
-                clearInterval(this._pollTimer);
-                this._scanActive = true;
-                this._scanMsgIdx = 0;
-                this._pollCount = 0;
+                clearInterval(this._scanMsgTimer); clearInterval(this._pollTimer);
+                this._scanActive = true; this._scanMsgIdx = 0; this._pollCount = 0;
                 const overlay = document.getElementById('v3ScanOverlay');
                 const processing = document.getElementById('v3ScanProcessing');
                 const complete = document.getElementById('v3ScanComplete');
-                processing.style.display = 'flex';
-                processing.style.flexDirection = 'column';
-                processing.style.alignItems = 'center';
-                complete.classList.remove('show');
-                complete.style.display = 'none';
-                overlay.classList.remove('fade-out');
-                overlay.classList.add('active');
-                this._rotateScanMsg();
-                this._scanMsgTimer = setInterval(() => this._rotateScanMsg(), 4000);
+                processing.style.display = 'flex'; processing.style.flexDirection = 'column'; processing.style.alignItems = 'center';
+                complete.classList.remove('show'); complete.style.display = 'none';
+                overlay.classList.remove('fade-out'); overlay.classList.add('active');
+                this._rotateScanMsg(); this._scanMsgTimer = setInterval(() => this._rotateScanMsg(), 4000);
                 this._startScanPoll();
             },
 
             showRefresh() {
-                // Guard: clear any existing timer to prevent stacking on rapid clicks
-                clearInterval(this._refreshMsgTimer);
-                this._refreshActive = true;
-                this._refreshMsgIdx = 0;
+                clearInterval(this._refreshMsgTimer); this._refreshActive = true; this._refreshMsgIdx = 0;
                 const card = document.getElementById('v3RefreshCard');
                 const processing = document.getElementById('v3RefreshProcessing');
                 const complete = document.getElementById('v3RefreshComplete');
-                processing.style.display = 'flex';
-                processing.style.flexDirection = 'column';
-                processing.style.alignItems = 'center';
-                complete.classList.remove('show');
-                complete.style.display = 'none';
-                card.classList.remove('fade-out');
-                card.classList.add('active');
-                this._rotateRefreshMsg();
-                this._refreshMsgTimer = setInterval(() => this._rotateRefreshMsg(), 3000);
+                processing.style.display = 'flex'; processing.style.flexDirection = 'column'; processing.style.alignItems = 'center';
+                complete.classList.remove('show'); complete.style.display = 'none';
+                card.classList.remove('fade-out'); card.classList.add('active');
+                this._rotateRefreshMsg(); this._refreshMsgTimer = setInterval(() => this._rotateRefreshMsg(), 3000);
             },
 
             _rotateScanMsg() {
-                const el = document.getElementById('v3ScanStatus');
-                if (!el) return;
+                const el = document.getElementById('v3ScanStatus'); if (!el) return;
                 el.classList.add('fading');
-                setTimeout(() => {
-                    this._scanMsgIdx = (this._scanMsgIdx + 1) % this.scanMessages.length;
-                    el.textContent = this.scanMessages[this._scanMsgIdx];
-                    el.classList.remove('fading');
-                }, 500);
+                setTimeout(() => { this._scanMsgIdx = (this._scanMsgIdx + 1) % this.scanMessages.length; el.textContent = this.scanMessages[this._scanMsgIdx]; el.classList.remove('fading'); }, 500);
             },
 
             _rotateRefreshMsg() {
-                const el = document.getElementById('v3RefreshStatus');
-                if (!el) return;
+                const el = document.getElementById('v3RefreshStatus'); if (!el) return;
                 el.classList.add('fading');
-                setTimeout(() => {
-                    this._refreshMsgIdx = (this._refreshMsgIdx + 1) % this.refreshMessages.length;
-                    el.textContent = this.refreshMessages[this._refreshMsgIdx];
-                    el.classList.remove('fading');
-                }, 500);
+                setTimeout(() => { this._refreshMsgIdx = (this._refreshMsgIdx + 1) % this.refreshMessages.length; el.textContent = this.refreshMessages[this._refreshMsgIdx]; el.classList.remove('fading'); }, 500);
             },
 
             _completeScan() {
-                if (!this._scanActive) return;
-                this._scanActive = false;
-                clearInterval(this._scanMsgTimer);
-                clearInterval(this._pollTimer);
+                if (!this._scanActive) return; this._scanActive = false;
+                clearInterval(this._scanMsgTimer); clearInterval(this._pollTimer);
                 const processing = document.getElementById('v3ScanProcessing');
                 const complete = document.getElementById('v3ScanComplete');
-                processing.style.display = 'none';
-                complete.style.display = 'flex';
+                processing.style.display = 'none'; complete.style.display = 'flex';
                 requestAnimationFrame(() => { complete.classList.add('show'); });
                 setTimeout(() => this._closeScan(), 4000);
-                // Reload page data if available
                 if (typeof loadPageData === 'function') loadPageData();
                 updateCommandCenter();
             },
 
             _completeRefresh() {
-                if (!this._refreshActive) return;
-                this._refreshActive = false;
+                if (!this._refreshActive) return; this._refreshActive = false;
                 clearInterval(this._refreshMsgTimer);
                 const processing = document.getElementById('v3RefreshProcessing');
                 const complete = document.getElementById('v3RefreshComplete');
-                processing.style.display = 'none';
-                complete.style.display = 'flex';
+                processing.style.display = 'none'; complete.style.display = 'flex';
                 requestAnimationFrame(() => { complete.classList.add('show'); });
                 setTimeout(() => this._closeRefresh(), 3000);
             },
@@ -1544,38 +1114,61 @@
                 setTimeout(() => { card.classList.remove('active', 'fade-out'); }, 500);
             },
 
-            // Poll /api/status to detect scan completion
             _startScanPoll() {
                 let initialScanTime = null;
-                const MAX_POLL_ITERATIONS = 60; // 60 × 5s = 5 min timeout
+                const MAX_POLL_ITERATIONS = 60;
                 this._pollTimer = setInterval(() => {
                     this._pollCount = (this._pollCount || 0) + 1;
-                    // Timeout guard: release overlay after MAX_POLL_ITERATIONS
-                    if (this._pollCount >= MAX_POLL_ITERATIONS) {
-                        this._completeScan();
-                        return;
-                    }
+                    if (this._pollCount >= MAX_POLL_ITERATIONS) { this._completeScan(); return; }
                     fetch('/api/status').then(r => r.json()).then(data => {
-                        if (!initialScanTime) {
-                            initialScanTime = data.last_scan;
-                            return;
-                        }
-                        // Scan completed when last_scan changes
-                        if (data.last_scan && data.last_scan !== initialScanTime) {
-                            this._completeScan();
-                        }
+                        if (!initialScanTime) { initialScanTime = data.last_scan; return; }
+                        if (data.last_scan && data.last_scan !== initialScanTime) { this._completeScan(); }
                     }).catch(() => { });
                 }, 5000);
             },
 
             cleanup() {
-                clearInterval(this._scanMsgTimer);
-                clearInterval(this._refreshMsgTimer);
-                clearInterval(this._pollTimer);
-                this._scanActive = false;
-                this._refreshActive = false;
+                clearInterval(this._scanMsgTimer); clearInterval(this._refreshMsgTimer); clearInterval(this._pollTimer);
+                this._scanActive = false; this._refreshActive = false;
             }
         };
+    </script>
+
+    <script>
+        // Phase 5.1.9: Sidebar Translation on Mode Change
+        (function() {
+            const SIDEBAR_TRANSLATIONS = {
+                'nav-portfolio': { pro: 'Portfolio Center', beginner: 'My Trades' },
+                'nav-research-terminal': { pro: 'Research Terminal', beginner: 'Analysis Terminal' },
+                'nav-outcome': { pro: 'Performance', beginner: 'Trade Review' },
+            };
+
+            function applySidebarTranslations() {
+                const mode = MarketOS.Terminology.getMode();
+                Object.entries(SIDEBAR_TRANSLATIONS).forEach(([navId, labels]) => {
+                    const el = document.getElementById(navId);
+                    if (!el) return;
+                    const span = el.querySelector('span');
+                    if (span) span.textContent = labels[mode] || labels.pro;
+                });
+            }
+
+            // Apply on load
+            applySidebarTranslations();
+
+            // React to mode changes
+            document.addEventListener('mos-ux-mode-changed', applySidebarTranslations);
+
+            // Phase 5.1.9: Glossary Tooltip Renderer
+            window._renderGlossary = function(term) {
+                const mode = MarketOS.Terminology.getLearningMode();
+                if (mode === 'off') return '';
+                const glossary = MarketOS.GuidedRuleEngine.GLOSSARY;
+                const explanation = glossary[term];
+                if (!explanation) return '';
+                return `<span class="mos-glossary-trigger">?<span class="mos-glossary-popup">${explanation}</span></span>`;
+            };
+        })();
     </script>
 
     {% block scripts %}{% endblock %}

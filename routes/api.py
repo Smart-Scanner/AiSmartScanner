@@ -345,7 +345,7 @@ def get_results():
     total_ms = round((time.perf_counter() - t_start) * 1000, 2)
 
     if not timings["cache_hit"]:
-        print(f"[RESULTS PERF] load_results={timings['load_results']} ms | status={timings['status']} ms | universe={timings['universe']} ms | meta={timings['meta']} ms | slim={t_slim_ms} ms | sort={t_sort_ms} ms | serialize={t_serialize_ms} ms | total={total_ms} ms", flush=True)
+        print(f"[RESULTS PERF] load_results={timings['load_results']} ms | status={timings['status']} ms | universe={timings['universe']} ms | meta={timings['meta']} ms | slim={t_slim_ms} ms | sort={t_sort_ms} ms | serialize={t_serialize_ms} ms | total={total_ms} ms")
         logging.getLogger("screener").info("[RESULTS PERF] load_results=%s ms | status=%s ms | universe=%s ms | meta=%s ms | slim=%s ms | sort=%s ms | serialize=%s ms | total=%s ms", timings['load_results'], timings['status'], timings['universe'], timings['meta'], t_slim_ms, t_sort_ms, t_serialize_ms, total_ms)
         # Phase 5, Section 28: Dashboard performance budget check
         if timings['load_results'] > 150:
@@ -1120,8 +1120,23 @@ def get_paper_trade_stats():
 
 _dashboard_loaded = False
 
+
+import functools, traceback
+def catch_err(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except Exception as e:
+            with open('logs/dash_err.txt', 'w') as errf:
+                errf.write(traceback.format_exc())
+            return {'error': str(e)}, 500
+    return wrapper
+
 @api_bp.route("/api/dashboard")
+@catch_err
 def get_dashboard():
+
     """Single composite endpoint for the V3 dashboard.
 
     Returns status + results summary + heatmap + sector + paper stats

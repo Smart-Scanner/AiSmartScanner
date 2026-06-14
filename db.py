@@ -867,6 +867,7 @@ def init_db():
                         reason TEXT,
                         actor TEXT DEFAULT 'system',
                         correlation_id TEXT,
+                        hash_chain TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                     CREATE INDEX IF NOT EXISTS idx_sst_scan_id ON scan_state_transitions(scan_id);
@@ -1533,6 +1534,20 @@ def _init_sqlite():
             else:
                 log.error("[MIGRATION FAILED] SQLite score_audit error: %s", exc, exc_info=True)
                 raise
+                
+        # Phase 1: Snapshot Schema Migration
+        for col_sql in [
+            "ALTER TABLE research_snapshots_v2 ADD COLUMN cmp_at_generation REAL;",
+            "ALTER TABLE research_snapshots_v2 ADD COLUMN score_at_generation REAL;",
+            "ALTER TABLE research_snapshots_v2 ADD COLUMN raw_score_at_generation REAL;",
+        ]:
+            try:
+                conn.execute(col_sql)
+            except Exception as exc:
+                if "duplicate column name" in str(exc).lower():
+                    pass
+                else:
+                    log.error("[MIGRATION FAILED] SQLite snapshot schema error: %s", exc, exc_info=True)
 
         log.info("SQLite Database initialized: %s", DB_PATH)
 
@@ -1555,8 +1570,8 @@ def auto_clear_daily_cache():
 
         last_date = clear_tracker.read_text().strip()
         if last_date != today_str:
-            log.info("Daily cache auto-clear triggered (Last run: %s, Today: %s). Clearing results...", last_date, today_str)
-            execute_db("DELETE FROM scan_results")
+            log.info("Daily cache auto-clear triggered (Last run: %s, Today: %s).", last_date, today_str)
+            # Removed DELETE FROM scan_results to prevent midnight data wipe
             clear_tracker.write_text(today_str)
             log.info("Daily cache successfully cleared for %s", today_str)
     except Exception as exc:
@@ -3034,7 +3049,7 @@ def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
     total_rows = slim_hits + len(fallback_rows or [])
     mode = f"slim({slim_hits}/{total_rows})" if slim and _DB_USE_SLIM else "full"
     log.info("[DB PERF] load_results limit=%d mode=%s | query=%s ms | parse_json=%s ms | total_rows=%d", limit, mode, t_query, t_parse, len(results))
-    print(f"[DB PERF] load_results limit={limit} mode={mode} | query={t_query} ms | parse_json={t_parse} ms | total_rows={len(results)}", flush=True)
+    print(f"[DB PERF] load_results limit={limit} mode={mode} | query={t_query} ms | parse_json={t_parse} ms | total_rows={len(results)}")
     return results
 
 
@@ -3894,8 +3909,9 @@ def save_research_snapshot_v2(symbol: str, rec_data: dict, scan_context: 'ScanCo
     recommendation_version = scan_context.recommendation_version if scan_context else ""
     config_snapshot = json.dumps(scan_context.config_snapshot) if scan_context and scan_context.config_snapshot else "{}"
     
-    # Hash of critical fields
-    hash_input = f"{symbol}|{entry_low}|{stop_loss}|{target_1}|{recommendation}|{scan_id}"
+    # Hash of critical fields to detect material changes. 
+    # Must NOT include scan_id, otherwise every scan forces a version bump!
+    hash_input = f"{symbol}|{entry_low}|{stop_loss}|{target_1}|{recommendation}"
     snapshot_hash = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
     
     # Fetch current active version

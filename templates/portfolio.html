@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Portfolio Manager — AI Smart Screener</title>
-    <script>(function(){var t=localStorage.getItem('theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();function toggleTheme(){var c=document.documentElement.getAttribute('data-theme')||'dark';var n=c==='light'?'dark':'light';document.documentElement.setAttribute('data-theme',n);localStorage.setItem('theme',n);}</script>
+    <script src="{{ url_for('static', filename='js/marketos-core.js') }}"></script>
+    <script>(function(){var t=MarketOS.SystemRepository.getPreference('theme', null)||'dark';document.documentElement.setAttribute('data-theme',t);})();function toggleTheme(){var c=document.documentElement.getAttribute('data-theme')||'dark';var n=c==='light'?'dark':'light';document.documentElement.setAttribute('data-theme',n);MarketOS.SystemRepository.setPreference('theme',n);}</script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap');
 

@@ -1,0 +1,79 @@
+{
+  "phase": "4C.4a",
+  "tests": {
+    "test_a": {
+      "has_r_multiples": true,
+      "r_multiples": [
+        2,
+        1.5,
+        -2,
+        -1.5,
+        -1.5,
+        2
+      ],
+      "r_count": 6,
+      "avg_r_multiple": 0.08,
+      "expected_avg_r": 0.08,
+      "all_initial_risks_1000": true
+    },
+    "test_b": {
+      "max_consecutive_wins": 2,
+      "max_consecutive_losses": 3,
+      "current_streak_type": "win",
+      "current_streak_count": 1,
+      "streak_frozen": true
+    },
+    "test_c": {
+      "has_equity_curve": true,
+      "curve_length": 6,
+      "curve_first": {
+        "date": "2026-06-13T03:43:28.982Z",
+        "equity": 102000,
+        "pnl": 2000
+      },
+      "curve_last": {
+        "date": "2026-06-13T03:43:29.290Z",
+        "equity": 100500,
+        "pnl": 2000
+      },
+      "max_drawdown_pct": 4.83,
+      "max_drawdown_amount": 5000,
+      "equity_curve_frozen": true,
+      "curve_points_frozen": true,
+      "equities": [
+        102000,
+        103500,
+        101500,
+        100000,
+        98500,
+        100500
+      ]
+    },
+    "test_d": {
+      "best_exists": true,
+      "worst_exists": true,
+      "best_schema_complete": true,
+      "worst_schema_complete": true,
+      "best_frozen": true,
+      "worst_frozen": true,
+      "best_symbol": "WIN1",
+      "best_pnl": 2000,
+      "best_r": 2,
+      "worst_symbol": "LOSS1",
+      "worst_pnl": -2000,
+      "worst_r": -2,
+      "avg_holding_days": 0,
+      "sector_performance_exists": true,
+      "sector_performance_empty": true,
+      "sector_performance_frozen": true
+    }
+  },
+  "verdicts": {
+    "A": true,
+    "B": true,
+    "C": true,
+    "D": true
+  },
+  "all_passed": true,
+  "pass_rate": "4/4"
+}

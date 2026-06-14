@@ -19,7 +19,7 @@ try:
     cur.execute("SELECT COUNT(*) as c FROM universe_catalog")
     evidence['sqlite_total_rows'] = cur.fetchone()['c']
     
-    cur.execute("SELECT COUNT(*) as c FROM universe_catalog WHERE is_active = 1")
+    cur.execute("SELECT COUNT(*) as c FROM universe_catalog WHERE is_active = TRUE")
     evidence['sqlite_active_rows'] = cur.fetchone()['c']
     
     cur.execute("SELECT * FROM universe_catalog LIMIT 5")

@@ -670,9 +670,9 @@ def run_full_scan(context: ScanContext = None):
         for r in results:
             if r.get("high_conviction") or r.get("score", 0) >= 65:
                 try:
-                    db.save_research_snapshot_v2(r.get("symbol"), r, scan_context)
+                    db.save_research_snapshot_v2(r.get("symbol"), r, context)
                 except Exception as exc:
-                    log.warning("[%s] Failed to save research snapshot for %s: %s", correlation_id[:12], r.get("symbol"), exc)
+                    log.exception("[%s] Failed to save research snapshot for %s: %s", correlation_id[:12], r.get("symbol"), exc)
         db.log_scan_event(scan_id, "SNAPSHOT_COMPLETED", "")
         db.log_scan_event(scan_id, "FINALIZE_COMPLETED", "")
                     

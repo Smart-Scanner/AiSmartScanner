@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V4 Institutional Component Sandbox</title>
+    <!-- Tailwind via CDN for quick prototyping -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        bgbase: '#0B1220',
+                        surface: '#111827',
+                        elevated: '#1F2937',
+                        border: 'rgba(255,255,255,0.1)',
+                        brand: {
+                            gold: '#FFD700',
+                            green: '#00E676',
+                            red: '#FF1744'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'Roboto', 'sans-serif'],
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #0B1220;
+            color: #e5e7eb;
+            font-family: 'Inter', 'Roboto', sans-serif;
+        }
+        .terminal-card {
+            background-color: #111827;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 0.375rem; /* rounded-md */
+            padding: 1rem; /* p-4 standard */
+        }
+        .dense-card {
+            padding: 0.5rem; /* p-2 dense */
+        }
+        .block-meter {
+            display: inline-flex;
+            gap: 1px;
+        }
+        .block-meter span {
+            width: 8px;
+            height: 12px;
+            background-color: #374151; /* gray-700 */
+        }
+        .block-meter.high span.filled { background-color: #00E676; }
+        .block-meter.med span.filled { background-color: #FFD700; }
+        .block-meter.low span.filled { background-color: #FF1744; }
+        .block-meter.risk-high span.filled { background-color: #FF1744; }
+        .block-meter.risk-med span.filled { background-color: #F59E0B; }
+        .block-meter.risk-low span.filled { background-color: #00E676; }
+
+        /* Timeline styles */
+        .timeline-item {
+            position: relative;
+            padding-left: 1.5rem;
+            padding-bottom: 1rem;
+        }
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: 0.35rem;
+            top: 1.25rem;
+            bottom: 0;
+            width: 2px;
+            background-color: #374151;
+        }
+        .timeline-item:last-child::before {
+            display: none;
+        }
+        .timeline-dot {
+            position: absolute;
+            left: 0;
+            top: 0.25rem;
+            width: 0.75rem;
+            height: 0.75rem;
+            border-radius: 50%;
+            background-color: #1F2937;
+            border: 2px solid #6B7280;
+        }
+        .timeline-dot.active {
+            background-color: #00E676;
+            border-color: #00E676;
+        }
+        .timeline-dot.passed {
+            background-color: #10B981;
+            border-color: #10B981;
+        }
+    </style>
+</head>
+<body class="p-8">
+
+    <header class="mb-8 border-b border-border pb-4">
+        <h1 class="text-2xl font-bold text-white tracking-wide">V4 UI COMPONENT SANDBOX</h1>
+        <p class="text-sm text-gray-400 mt-1">Institutional Grade UI Implementation Proof</p>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+
+        <!-- 1. AI Score Breakdown & Evidence Pack -->
+        <div class="terminal-card">
+            <h2 class="text-sm font-bold text-gray-300 uppercase mb-4 tracking-wider">Evidence Pack</h2>
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <div class="text-3xl font-bold text-brand-green">74</div>
+                    <div class="text-xs text-gray-400">AI SCORE</div>
+                </div>
+                <div class="text-right">
+                    <div class="text-xl font-bold text-white">91%</div>
+                    <div class="text-xs text-gray-400">CONFIDENCE</div>
+                </div>
+            </div>
+            
+            <div class="space-y-2 text-sm tabular-nums border-b border-border pb-4 mb-4">
+                <div class="flex justify-between"><span class="text-gray-400">Technical</span> <span class="text-brand-green">+22</span></div>
+                <div class="flex justify-between"><span class="text-gray-400">Momentum</span> <span class="text-brand-green">+12</span></div>
+                <div class="flex justify-between"><span class="text-gray-400">Volume</span> <span class="text-brand-green">+11</span></div>
+                <div class="flex justify-between"><span class="text-gray-400">Sector</span> <span class="text-brand-green">+8</span></div>
+                <div class="flex justify-between"><span class="text-gray-400">Fundamentals</span> <span class="text-brand-green">+9</span></div>
+                <div class="flex justify-between"><span class="text-gray-400">Risk Adj.</span> <span class="text-brand-green">+12</span></div>
+            </div>
+
+            <div class="space-y-1 text-xs">
+                <div class="flex justify-between"><span>Technical Signals</span> <span class="text-gray-300">7/9 passed</span></div>
+                <div class="flex justify-between"><span>Volume Signals</span> <span class="text-gray-300">4/5 passed</span></div>
+                <div class="flex justify-between"><span>Momentum Signals</span> <span class="text-gray-300">5/6 passed</span></div>
+                <div class="flex justify-between"><span>Fundamental Signals</span> <span class="text-gray-300">6/8 passed</span></div>
+                <div class="mt-2 text-brand-gold font-semibold text-right">EVIDENCE QUALITY: A</div>
+            </div>
+        </div>
+
+        <!-- 2. Snapshot Diff & Freshness -->
+        <div class="terminal-card">
+            <h2 class="text-sm font-bold text-gray-300 uppercase mb-4 tracking-wider">Snapshot Diff</h2>
+            <div class="bg-elevated p-3 rounded-md mb-4 flex justify-between items-center">
+                <div>
+                    <span class="text-xs text-gray-400 block">Gen Price</span>
+                    <span class="text-lg font-bold">₹1,450.00</span>
+                </div>
+                <div class="text-right">
+                    <span class="text-xs text-gray-400 block">Current CMP</span>
+                    <span class="text-lg font-bold text-brand-green">₹1,515.00</span>
+                </div>
+            </div>
+            
+            <div class="flex justify-between items-center mb-6">
+                <span class="text-sm text-gray-300">Change Since Gen</span>
+                <span class="text-sm font-bold text-brand-green bg-green-900/30 px-2 py-1 rounded">+4.48%</span>
+            </div>
+
+            <div class="mb-4">
+                <div class="flex justify-between text-xs mb-1">
+                    <span class="text-gray-400">Target Distance Remaining</span>
+                    <span class="font-mono">72%</span>
+                </div>
+                <div class="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                    <div class="bg-brand-green h-full" style="width: 28%"></div>
+                </div>
+            </div>
+
+            <div class="pt-4 border-t border-border flex justify-between text-xs text-gray-500">
+                <span>Data: 3m ago</span>
+                <span>Research: 2h ago</span>
+            </div>
+        </div>
+
+        <!-- 3. Conviction & Risk Profile -->
+        <div class="terminal-card">
+            <h2 class="text-sm font-bold text-gray-300 uppercase mb-4 tracking-wider">Risk & Conviction</h2>
+            
+            <div class="mb-6">
+                <div class="flex justify-between text-sm mb-1">
+                    <span>Conviction Level</span>
+                    <span class="text-brand-green font-bold">HIGH</span>
+                </div>
+                <div class="block-meter high">
+                    <span class="filled"></span><span class="filled"></span><span class="filled"></span>
+                    <span class="filled"></span><span class="filled"></span><span class="filled"></span>
+                    <span class="filled"></span><span class="filled"></span><span class="filled"></span>
+                    <span></span>
+                </div>
+            </div>
+
+            <div class="space-y-3 text-sm">
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-400">Gap Risk</span>
+                    <div class="flex items-center gap-2">
+                        <span class="text-brand-green text-xs font-bold">LOW</span>
+                        <div class="block-meter risk-low w-12 flex justify-end">
+                            <span class="filled"></span><span class="filled"></span><span></span><span></span><span></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-400">Liquidity Risk</span>
+                    <div class="flex items-center gap-2">
+                        <span class="text-yellow-500 text-xs font-bold">MED</span>
+                        <div class="block-meter risk-med w-12 flex justify-end">
+                            <span class="filled"></span><span class="filled"></span><span class="filled"></span><span></span><span></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-400">Volatility</span>
+                    <div class="flex items-center gap-2">
+                        <span class="text-brand-red text-xs font-bold">HIGH</span>
+                        <div class="block-meter risk-high w-12 flex justify-end">
+                            <span class="filled"></span><span class="filled"></span><span class="filled"></span><span class="filled"></span><span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. Portfolio Simulation -->
+        <div class="terminal-card">
+            <h2 class="text-sm font-bold text-gray-300 uppercase mb-4 tracking-wider flex items-center gap-2">
+                <svg class="w-4 h-4 text-brand-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                Portfolio Simulator
+            </h2>
+            <div class="bg-elevated p-3 rounded-md mb-4 flex justify-between items-center border border-brand-gold/30">
+                <span class="text-sm text-gray-300">If Invested:</span>
+                <span class="text-lg font-bold text-brand-gold">₹1,00,000</span>
+            </div>
+            
+            <div class="space-y-3">
+                <div class="flex justify-between items-center p-2 hover:bg-elevated rounded transition-colors">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-brand-green"></div>
+                        <span class="text-sm">Target 1 Profit</span>
+                    </div>
+                    <span class="text-sm font-bold text-brand-green">+ ₹8,000</span>
+                </div>
+                <div class="flex justify-between items-center p-2 hover:bg-elevated rounded transition-colors">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-brand-green"></div>
+                        <span class="text-sm">Target 2 Profit</span>
+                    </div>
+                    <span class="text-sm font-bold text-brand-green">+ ₹15,000</span>
+                </div>
+                <div class="flex justify-between items-center p-2 bg-red-900/10 rounded border border-red-900/30">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-brand-red"></div>
+                        <span class="text-sm text-red-200">Risk at Stop Loss</span>
+                    </div>
+                    <span class="text-sm font-bold text-brand-red">- ₹4,500</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. Timeline View -->
+        <div class="terminal-card">
+            <h2 class="text-sm font-bold text-gray-300 uppercase mb-4 tracking-wider">Lifecycle</h2>
+            <div class="mb-4 inline-block px-2 py-1 bg-green-900/30 border border-brand-green/50 text-brand-green text-xs font-bold rounded">
+                [ ACTIVE - ENTRY HIT ]
+            </div>
+            <div class="mt-4">
+                <div class="timeline-item">
+                    <div class="timeline-dot passed"></div>
+                    <div class="text-sm text-gray-300">Research Created</div>
+                    <div class="text-xs text-gray-500">24 Oct 10:30 AM</div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-dot active"></div>
+                    <div class="text-sm text-white font-semibold">Price Entered Zone</div>
+                    <div class="text-xs text-gray-400">Zone: 1440 - 1460</div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-dot"></div>
+                    <div class="text-sm text-gray-500">Target 1 Hit</div>
+                    <div class="text-xs text-gray-600">Pending at 1520</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 6. Structured Thesis -->
+        <div class="terminal-card">
+            <h2 class="text-sm font-bold text-gray-300 uppercase mb-4 tracking-wider">Structured Thesis</h2>
+            <div class="space-y-4">
+                <div>
+                    <h3 class="text-xs font-bold text-gray-400 uppercase mb-1">Why This Stock</h3>
+                    <p class="text-sm text-gray-200 leading-relaxed">Breakout above 200 EMA with 3x volume expansion. Institutional accumulation evident over last 10 days.</p>
+                </div>
+                <div>
+                    <h3 class="text-xs font-bold text-gray-400 uppercase mb-1">What Can Go Right</h3>
+                    <p class="text-sm text-brand-green leading-relaxed">Margin expansion in upcoming quarter. FII inflows resuming in the sector.</p>
+                </div>
+                <div>
+                    <h3 class="text-xs font-bold text-gray-400 uppercase mb-1">What Can Go Wrong</h3>
+                    <p class="text-sm text-brand-red leading-relaxed">Broad market correction or failure to sustain above 1440 breakout level.</p>
+                </div>
+                <div>
+                    <h3 class="text-xs font-bold text-gray-400 uppercase mb-1">Invalidation</h3>
+                    <p class="text-sm text-gray-300 leading-relaxed">Daily close below 1390 completely invalidates the bullish thesis.</p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</body>
+</html>

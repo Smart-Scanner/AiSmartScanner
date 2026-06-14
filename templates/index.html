@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Smart Screener | Professional NSE Stock Scanner</title>
+    <script src="{{ url_for('static', filename='js/marketos-core.js') }}"></script>
     <meta name="description"
         content="Ultra-premium NSE stock screener with AI-driven insights, technical analysis, entry zones, strict stop-losses, and real-time live prices.">
     <style>
@@ -47,25 +48,25 @@
             --border: #E2E8F0;
             --border-light: #F1F5F9;
             --gold: #EAB308;
-            --radius: 12px;
+            --radius: 6px;
         }
 
-        [data-theme="dark"] {
-            --bg-primary: #0F172A;
-            --bg-secondary: #1E293B;
-            --bg-tertiary: #0F172A;
-            --bg-hover: #334155;
-            --bg-card: #1E293B;
-            --sidebar-bg: #1E293B;
-            --sidebar-hover: #334155;
-            --sidebar-active: #1E3A8A;
-            --header-bg: #1E293B;
+                [data-theme="dark"] {
+            --bg-primary: #0B1220;
+            --bg-secondary: #111827;
+            --bg-tertiary: #0B1220;
+            --bg-hover: #1F2937;
+            --bg-card: #111827;
+            --sidebar-bg: #111827;
+            --sidebar-hover: #1F2937;
+            --sidebar-active: #1F2937;
+            --header-bg: #111827;
             --text: #F1F5F9;
             --text-secondary: #E2E8F0;
-            --text-muted: #64748B;
-            --border: #334155;
-            --border-light: #475569;
-            --gold: #F59E0B;
+            --text-muted: #9CA3AF;
+            --border: rgba(255,255,255,0.1);
+            --border-light: rgba(255,255,255,0.05);
+            --gold: #FFD700;
         }
 
         * {
@@ -3194,20 +3195,20 @@
     </div>
 
     <script>
-        let allResults = [], currentFilter = 'all', compareList = [], watchlist = JSON.parse(localStorage.getItem('watchlist') || '[]');
+        let allResults = [], currentFilter = 'all', compareList = [], watchlist = JSON.parse(MarketOS.SystemRepository.getPreference('v3_watchlist', null) || '[]');
         let currentSort = 'score', currentOrder = 'desc';
 
         // ===== THEME =====
         function applyTheme(theme) {
             document.documentElement.setAttribute('data-theme', theme);
-            localStorage.setItem('theme', theme);
+            MarketOS.SystemRepository.setPreference('theme', theme);
             document.getElementById('themeIcon').textContent = theme === 'light' ? '\u263D' : '\u2606';
         }
         function toggleTheme() {
             const current = document.documentElement.getAttribute('data-theme') || 'dark';
             applyTheme(current === 'light' ? 'dark' : 'light');
         }
-        applyTheme(localStorage.getItem('theme') || 'dark');
+        applyTheme(MarketOS.SystemRepository.getPreference('theme', null) || 'dark');
 
         // ===== SIDEBAR COLLAPSE =====
         function applySidebarState(collapsed) {
@@ -3221,10 +3222,10 @@
             const sb = document.querySelector('.sidebar');
             if (sb) {
                 const isCollapsed = sb.classList.toggle('collapsed');
-                localStorage.setItem('sidebar_collapsed', isCollapsed ? 'true' : 'false');
+                MarketOS.SystemRepository.setPreference('mos_sidebar_collapsed', isCollapsed ? 'true' : 'false');
             }
         }
-        applySidebarState(localStorage.getItem('sidebar_collapsed') || 'false');
+        applySidebarState(MarketOS.SystemRepository.getPreference('mos_sidebar_collapsed', null) || 'false');
 
         document.addEventListener('click', e => { const dd = document.getElementById('userDrop'); if (dd && !e.target.closest('#userMenu')) dd.classList.remove('show') });
 
@@ -3540,7 +3541,7 @@
             if (d.summary || allResults.length) {
                 document.getElementById('summaryBox').classList.add('visible');
                 renderSummaryCards(d);
-                const summaryExpanded = localStorage.getItem('summary_expanded') !== 'false';
+                const summaryExpanded = MarketOS.SystemRepository.getPreference('summary_expanded', null) !== 'false';
                 const grid = document.getElementById('summaryGrid');
                 const arrow = document.getElementById('summaryToggleArrow');
                 if (grid && arrow) {
@@ -4109,11 +4110,11 @@
             if (panels.style.display === 'none') {
                 panels.style.display = 'grid';
                 arrow.innerHTML = '&#9662;';
-                localStorage.setItem('intel_dashboard_expanded', 'true');
+                MarketOS.SystemRepository.setPreference('intel_dashboard_expanded', 'true');
             } else {
                 panels.style.display = 'none';
                 arrow.innerHTML = '&#9656;';
-                localStorage.setItem('intel_dashboard_expanded', 'false');
+                MarketOS.SystemRepository.setPreference('intel_dashboard_expanded', 'false');
             }
         }
 
@@ -4124,11 +4125,11 @@
             if (grid.style.display === 'none') {
                 grid.style.display = 'block';
                 arrow.innerHTML = '&#9662;';
-                localStorage.setItem('summary_expanded', 'true');
+                MarketOS.SystemRepository.setPreference('summary_expanded', 'true');
             } else {
                 grid.style.display = 'none';
                 arrow.innerHTML = '&#9656;';
-                localStorage.setItem('summary_expanded', 'false');
+                MarketOS.SystemRepository.setPreference('summary_expanded', 'false');
             }
         }
 
@@ -4615,7 +4616,7 @@
                 await loadRegimeBanner();
 
                 // Restore toggle state
-                if (localStorage.getItem('intel_dashboard_expanded') === 'true') {
+                if (MarketOS.SystemRepository.getPreference('intel_dashboard_expanded', null) === 'true') {
                     document.getElementById('intelPanels').style.display = 'grid';
                     document.getElementById('intelToggleArrow').innerHTML = '&#9662;';
                 } else {
@@ -4718,7 +4719,7 @@
             const i = watchlist.indexOf(sym);
             if (i > -1) { watchlist.splice(i, 1); el.classList.remove('active') }
             else { watchlist.push(sym); el.classList.add('active') }
-            localStorage.setItem('watchlist', JSON.stringify(watchlist));
+            MarketOS.SystemRepository.setPreference('v3_watchlist', JSON.stringify(watchlist));
         }
 
         // ===== COMPARE =====
@@ -5113,11 +5114,11 @@
             el('v6TabWatchlist', watchlist.length);
         }
 
-        let v6ActiveTab = localStorage.getItem('v6_selected_tab') || 'all';
+        let v6ActiveTab = MarketOS.SystemRepository.getPreference('v6_selected_tab', null) || 'all';
 
         function v6SelectTab(tab, btn) {
             v6ActiveTab = tab;
-            localStorage.setItem('v6_selected_tab', tab);
+            MarketOS.SystemRepository.setPreference('v6_selected_tab', tab);
             // Update tab UI
             document.querySelectorAll('.v6-tab').forEach(t => {
                 t.classList.remove('active');
@@ -5151,7 +5152,7 @@
             if (topSearch) topSearch.value = search;
 
             // Save filter state
-            localStorage.setItem('v6_last_filters', JSON.stringify({ search, sector, risk, scoreMin }));
+            MarketOS.SystemRepository.setPreference('v6_last_filters', JSON.stringify({ search, sector, risk, scoreMin }));
 
             filterResults();
         }
@@ -5338,7 +5339,7 @@
         // ═══ V6 — Saved Layout State ═══
         function v6RestoreState() {
             // Restore tab
-            const savedTab = localStorage.getItem('v6_selected_tab');
+            const savedTab = MarketOS.SystemRepository.getPreference('v6_selected_tab', null);
             if (savedTab) {
                 const tabs = document.querySelectorAll('.v6-tab');
                 tabs.forEach(t => {
@@ -5348,7 +5349,7 @@
             }
             // Restore filters
             try {
-                const f = JSON.parse(localStorage.getItem('v6_last_filters'));
+                const f = JSON.parse(MarketOS.SystemRepository.getPreference('v6_last_filters', null));
                 if (f) {
                     const el = id => document.getElementById(id);
                     if (f.search && el('v6FilterSearch')) el('v6FilterSearch').value = f.search;

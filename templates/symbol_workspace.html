@@ -1,0 +1,1302 @@
+{% extends "_app_base.html" %}
+
+{% block title %}{{ symbol }} — Symbol Workspace{% endblock %}
+
+{% block head %}
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="{{ url_for('static', filename='js/marketos-core.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/symbol-workspace.css') }}">
+{% endblock %}
+
+{% block content %}
+<script>window.__MOS_USER_ID = '{{ user.id if user else "anonymous" }}';</script>
+
+<!-- ═══ SYMBOL WORKSPACE SHELL ═══════════════════════════════════════ -->
+<div class="sw-workspace" id="symbolWorkspace">
+
+    <!-- ── Symbol Header Bar ─────────────────────────────────────── -->
+    <header class="sw-header" id="swHeader">
+        <div class="sw-header-left">
+            <div class="sw-symbol-name" id="swSymbolName">{{ symbol }}</div>
+            <span class="sw-sector-tag" id="swSector">—</span>
+            <span class="sw-hc-badge" id="swHcBadge" style="display:none">HIGH CONVICTION</span>
+            <span class="sw-regime-badge" id="swRegimeBadge">REGIME: —</span>
+        </div>
+        <div class="sw-header-right">
+            <div class="sw-price-display">
+                <span class="sw-price" id="swPrice">—</span>
+                <span class="sw-change" id="swChange"></span>
+            </div>
+            <a href="https://www.tradingview.com/chart/?symbol=NSE:{{ symbol }}" target="_blank" rel="noopener" class="sw-tv-link" title="Open in TradingView">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                TV
+            </a>
+        </div>
+    </header>
+
+    <!-- ── Workspace Tabs ────────────────────────────────────────── -->
+    <nav class="sw-tabs" id="swTabs">
+        <button class="sw-tab active" data-tab="research" id="tabResearch">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            Research
+        </button>
+        <button class="sw-tab" data-tab="chart" id="tabChart">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+            Chart
+        </button>
+        <button class="sw-tab" data-tab="portfolio" id="tabPortfolio">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>
+            Portfolio
+        </button>
+        <button class="sw-tab" data-tab="journal" id="tabJournal">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+            Journal
+        </button>
+        <button class="sw-tab" data-tab="analytics" id="tabAnalytics">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+            Analytics
+        </button>
+        <button class="sw-tab" data-tab="timeline" id="tabTimeline">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Timeline
+        </button>
+    </nav>
+
+    <!-- ── Main Content Area ─────────────────────────────────────── -->
+    <div class="sw-body">
+
+        <!-- ── Main Panel ────────────────────────────────────── -->
+        <div class="sw-main" id="swMain">
+
+            <!-- Loading State -->
+            <div class="sw-loading" id="swLoading">
+                <div class="sw-spinner"></div>
+                <p>Loading {{ symbol }} workspace...</p>
+            </div>
+
+            <!-- ═══ RESEARCH TAB ═══ -->
+            <div class="sw-tab-content active" id="panelResearch">
+                <div class="sw-research-split">
+                    <!-- Left: Chart -->
+                    <div class="sw-research-chart">
+                        <div class="sw-chart-container" id="researchChartContainer"></div>
+                    </div>
+                    <!-- Right: Thesis Panel -->
+                    <div class="sw-research-thesis">
+                        <!-- Score Banner -->
+                        <div class="sw-score-strip" id="swScoreStrip"></div>
+
+                        <!-- Quant Blueprint -->
+                        <div class="sw-card" id="swBlueprintCard" style="display:none">
+                            <div class="sw-card-header">
+                                <span class="sw-card-icon">🎯</span>
+                                <h3>QUANT TRADING BLUEPRINT</h3>
+                            </div>
+                            <div class="sw-card-body" id="swBlueprintContent"></div>
+                        </div>
+
+                        <!-- 12-Layer Audit -->
+                        <div class="sw-card">
+                            <div class="sw-card-header">
+                                <span class="sw-card-icon">🧠</span>
+                                <h3>12-Layer Intelligence Audit</h3>
+                            </div>
+                            <div class="sw-card-body" id="swLayerAccordion"></div>
+                        </div>
+
+                        <!-- Why Recommended -->
+                        <div class="sw-card" id="swExplainCard" style="display:none">
+                            <div class="sw-card-header">
+                                <span class="sw-card-icon">💡</span>
+                                <h3>Why Recommended</h3>
+                            </div>
+                            <div class="sw-card-body">
+                                <div id="swExplainPositives"></div>
+                                <div id="swExplainRisks" style="display:none"></div>
+                            </div>
+                        </div>
+
+                        <!-- Signals -->
+                        <div class="sw-card" id="swSignalsCard" style="display:none">
+                            <div class="sw-card-header">
+                                <span class="sw-card-icon">⚠️</span>
+                                <h3>Scan Signals</h3>
+                            </div>
+                            <div class="sw-card-body" id="swSignalsList"></div>
+                        </div>
+
+                        <!-- Targets & S/R -->
+                        <div class="sw-card" id="swTargetsCard" style="display:none">
+                            <div class="sw-card-header">
+                                <span class="sw-card-icon">📏</span>
+                                <h3>Price Targets & Support/Resistance</h3>
+                            </div>
+                            <div class="sw-card-body">
+                                <div id="swTargetBar"></div>
+                                <div class="sw-sr-grid" id="swSrGrid"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ CHART TAB ═══ -->
+            <div class="sw-tab-content" id="panelChart">
+                <div class="sw-fullchart-wrap">
+                    <div class="sw-chart-toolbar" id="swChartToolbar">
+                        <div class="sw-chart-toggles">
+                            <button class="sw-chip active" data-indicator="ema9" onclick="toggleIndicator(this)">EMA 9</button>
+                            <button class="sw-chip active" data-indicator="ema21" onclick="toggleIndicator(this)">EMA 21</button>
+                            <button class="sw-chip" data-indicator="ema200" onclick="toggleIndicator(this)">EMA 200</button>
+                            <button class="sw-chip" data-indicator="volume" onclick="toggleIndicator(this)">Volume</button>
+                        </div>
+                        <div class="sw-chart-overlays">
+                            <button class="sw-chip sw-chip-research active" data-overlay="research" onclick="toggleOverlay(this)">Research Overlay</button>
+                            <button class="sw-chip sw-chip-portfolio" data-overlay="portfolio" onclick="toggleOverlay(this)">Portfolio</button>
+                        </div>
+                    </div>
+                    <div class="sw-chart-container sw-chart-full" id="fullChartContainer"></div>
+                </div>
+            </div>
+
+            <!-- ═══ PORTFOLIO TAB ═══ -->
+            <div class="sw-tab-content" id="panelPortfolio">
+                <div class="sw-card">
+                    <div class="sw-card-header">
+                        <span class="sw-card-icon">💼</span>
+                        <h3>Positions for {{ symbol }}</h3>
+                    </div>
+                    <div class="sw-card-body" id="swPositionsList">
+                        <div class="sw-empty-state">
+                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>
+                            <p>No active positions for {{ symbol }}</p>
+                            <button class="sw-btn sw-btn-primary" onclick="showRailForm('paper-trade')">Create Paper Trade</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ JOURNAL TAB ═══ -->
+            <div class="sw-tab-content" id="panelJournal">
+                <div class="sw-card">
+                    <div class="sw-card-header">
+                        <span class="sw-card-icon">📝</span>
+                        <h3>Trade Journal — {{ symbol }}</h3>
+                        <button class="sw-btn sw-btn-sm" onclick="addJournalEntry()">+ Add Note</button>
+                    </div>
+                    <div class="sw-card-body">
+                        <div class="sw-journal-composer" id="swJournalComposer">
+                            <textarea class="sw-textarea" id="swJournalText" placeholder="What's your thesis? How did the trade go? What did you learn?" rows="3"></textarea>
+                            <div class="sw-journal-meta">
+                                <select class="sw-select" id="swJournalEmotion">
+                                    <option value="neutral">😐 Neutral</option>
+                                    <option value="confident">😎 Confident</option>
+                                    <option value="uncertain">🤔 Uncertain</option>
+                                    <option value="fearful">😰 Fearful</option>
+                                    <option value="greedy">🤑 Greedy</option>
+                                    <option value="regret">😔 Regret</option>
+                                </select>
+                                <button class="sw-btn sw-btn-primary" onclick="saveJournalEntry()">Save Entry</button>
+                            </div>
+                        </div>
+                        <div class="sw-journal-feed" id="swJournalFeed"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ ANALYTICS TAB ═══ -->
+            <div class="sw-tab-content" id="panelAnalytics">
+                <div class="sw-analytics-grid">
+                    <!-- Technical Parameters -->
+                    <div class="sw-card">
+                        <div class="sw-card-header">
+                            <span class="sw-card-icon">📈</span>
+                            <h3>Technical Parameters</h3>
+                        </div>
+                        <div class="sw-card-body">
+                            <div class="sw-params-grid" id="swParamsGrid"></div>
+                        </div>
+                    </div>
+                    <!-- News Sentiment -->
+                    <div class="sw-card" id="swNewsCard" style="display:none">
+                        <div class="sw-card-header">
+                            <span class="sw-card-icon">📰</span>
+                            <h3>News Sentiment (FinBERT AI)</h3>
+                        </div>
+                        <div class="sw-card-body" id="swNewsContent"></div>
+                    </div>
+                    <!-- Fundamentals -->
+                    <div class="sw-card" id="swFundamentalsCard" style="display:none">
+                        <div class="sw-card-header">
+                            <span class="sw-card-icon">📊</span>
+                            <h3>Key Fundamentals</h3>
+                        </div>
+                        <div class="sw-card-body" id="swFundamentalsContent"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ TIMELINE TAB ═══ -->
+            <div class="sw-tab-content" id="panelTimeline">
+                <div class="sw-card">
+                    <div class="sw-card-header">
+                        <span class="sw-card-icon">⏱</span>
+                        <h3>Event Timeline — {{ symbol }}</h3>
+                    </div>
+                    <div class="sw-card-body">
+                        <div class="sw-timeline" id="swTimelineFeed"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Action Rail (Right) ───────────────────────────────── -->
+        <aside class="sw-action-rail" id="swActionRail">
+            <div class="sw-rail-header">
+                <span>Quick Actions</span>
+                <button class="sw-rail-toggle" onclick="toggleActionRail()" title="Toggle action rail">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+            </div>
+
+            <!-- Rail Action Buttons -->
+            <div class="sw-rail-actions" id="swRailActions">
+                <button class="sw-rail-btn" onclick="showRailForm('research')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                    <span>Create Research</span>
+                </button>
+                <button class="sw-rail-btn sw-rail-btn-primary" onclick="showRailForm('paper-trade')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    <span>Paper Trade</span>
+                </button>
+                <button class="sw-rail-btn" onclick="showRailForm('watchlist')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>
+                    <span>Add to Watchlist</span>
+                </button>
+                <button class="sw-rail-btn" onclick="showRailForm('alert')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+                    <span>Create Alert</span>
+                </button>
+            </div>
+
+            <!-- Rail Forms Container (slides in) -->
+            <div class="sw-rail-form-area" id="swRailFormArea" style="display:none"></div>
+
+            <!-- Research Snapshots -->
+            <div class="sw-rail-section" id="swSnapshotsSection">
+                <div class="sw-rail-section-header">
+                    <h4>Research Snapshots</h4>
+                </div>
+                <div class="sw-rail-section-body" id="swSnapshotsList">
+                    <div class="sw-empty-state sw-empty-sm">
+                        <p>No research snapshots yet</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+</div>
+
+<!-- ═══ SYMBOL WORKSPACE JAVASCRIPT ══════════════════════════════════ -->
+<script>
+const SYMBOL = '{{ symbol }}';
+let stockData = null;
+let tvChart = null;
+let tvChartFull = null;
+let indicatorSeries = {};
+let overlaySeries = {};
+
+// ─────────────────────────────────────────────────────────────────
+// TAB SYSTEM
+// ─────────────────────────────────────────────────────────────────
+
+document.querySelectorAll('.sw-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        const target = tab.dataset.tab;
+        document.querySelectorAll('.sw-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.sw-tab-content').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        const panel = document.getElementById('panel' + target.charAt(0).toUpperCase() + target.slice(1));
+        if (panel) panel.classList.add('active');
+
+        // Lazy init charts
+        if (target === 'chart' && stockData && !tvChartFull) {
+            setTimeout(() => initFullChart(stockData), 100);
+        }
+        if (target === 'journal') renderJournal();
+        if (target === 'timeline') renderTimeline();
+    });
+});
+
+
+// ─────────────────────────────────────────────────────────────────
+// ACTION RAIL
+// ─────────────────────────────────────────────────────────────────
+
+function toggleActionRail() {
+    document.getElementById('swActionRail').classList.toggle('collapsed');
+}
+
+function showRailForm(type) {
+    const area = document.getElementById('swRailFormArea');
+    area.style.display = 'block';
+
+    if (type === 'research') area.innerHTML = buildResearchForm();
+    else if (type === 'paper-trade') area.innerHTML = buildPaperTradeForm();
+    else if (type === 'watchlist') area.innerHTML = buildWatchlistForm();
+    else if (type === 'alert') area.innerHTML = buildAlertForm();
+
+    // Init portfolio selector for paper trade
+    if (type === 'paper-trade') initPortfolioSelector();
+}
+
+function closeRailForm() {
+    document.getElementById('swRailFormArea').style.display = 'none';
+    document.getElementById('swRailFormArea').innerHTML = '';
+}
+
+function buildResearchForm() {
+    const scan = stockData?.scan || {};
+    return `
+    <div class="sw-rail-form">
+        <div class="sw-form-header">
+            <h4>Create Research — ${SYMBOL}</h4>
+            <button class="sw-form-close" onclick="closeRailForm()">✕</button>
+        </div>
+        <div class="sw-form-body">
+            <label class="sw-label">Research Source</label>
+            <select class="sw-select" id="rfSource">
+                <option value="MANUAL">Manual</option>
+                <option value="AI">AI Generated</option>
+                <option value="HYBRID">Hybrid</option>
+            </select>
+            <div class="sw-form-row">
+                <div><label class="sw-label">Entry Low</label><input class="sw-input" id="rfEntryLow" type="number" step="0.01" value="${scan.stop_loss ? (scan.stop_loss * 1.02).toFixed(2) : ''}"></div>
+                <div><label class="sw-label">Entry High</label><input class="sw-input" id="rfEntryHigh" type="number" step="0.01" value="${stockData?.price || ''}"></div>
+            </div>
+            <label class="sw-label">Stop Loss</label>
+            <input class="sw-input" id="rfStopLoss" type="number" step="0.01" value="${scan.stop_loss || ''}">
+            <div class="sw-form-row">
+                <div><label class="sw-label">Target 1</label><input class="sw-input" id="rfTarget1" type="number" step="0.01" value="${scan.target_price || ''}"></div>
+                <div><label class="sw-label">Target 2</label><input class="sw-input" id="rfTarget2" type="number" step="0.01" value="${scan.target_price ? (scan.target_price * 1.1).toFixed(2) : ''}"></div>
+            </div>
+            <label class="sw-label">Target 3</label>
+            <input class="sw-input" id="rfTarget3" type="number" step="0.01" value="${scan.target_price ? (scan.target_price * 1.2).toFixed(2) : ''}">
+            <label class="sw-label">Thesis / Notes</label>
+            <textarea class="sw-textarea" id="rfThesis" rows="3" placeholder="Why are you taking this trade?">${scan.explain_positive ? scan.explain_positive.join('. ') : ''}</textarea>
+            <div class="sw-form-rr" id="rfRR"></div>
+            <div class="sw-form-validation" id="rfValidation"></div>
+            <button class="sw-btn sw-btn-primary sw-btn-full" onclick="submitResearch()" id="rfSubmitBtn">
+                ✅ Approve & Create Snapshot
+            </button>
+        </div>
+    </div>`;
+}
+
+function buildPaperTradeForm() {
+    const scan = stockData?.scan || {};
+    return `
+    <div class="sw-rail-form">
+        <div class="sw-form-header">
+            <h4>Paper Trade — ${SYMBOL}</h4>
+            <button class="sw-form-close" onclick="closeRailForm()">✕</button>
+        </div>
+        <div class="sw-form-body">
+            <label class="sw-label">Portfolio <span class="sw-required">*</span></label>
+            <select class="sw-select" id="ptPortfolio"><option value="">Loading portfolios...</option></select>
+            <div class="sw-form-row">
+                <div><label class="sw-label">Entry Price</label><input class="sw-input" id="ptEntry" type="number" step="0.01" value="${stockData?.price || ''}"></div>
+                <div><label class="sw-label">Quantity</label><input class="sw-input" id="ptQty" type="number" value="1" min="1"></div>
+            </div>
+            <label class="sw-label">Stop Loss <span class="sw-required">*</span></label>
+            <input class="sw-input" id="ptStopLoss" type="number" step="0.01" value="${scan.stop_loss || ''}">
+            <label class="sw-label">Target Price</label>
+            <input class="sw-input" id="ptTarget" type="number" step="0.01" value="${scan.target_price || ''}">
+            <label class="sw-label">Position Size % of Portfolio</label>
+            <input class="sw-input" id="ptSize" type="number" step="0.1" value="5" min="0.1" max="100">
+            <div class="sw-form-validation" id="ptValidation"></div>
+            <button class="sw-btn sw-btn-primary sw-btn-full" onclick="submitPaperTrade()" id="ptSubmitBtn" disabled>
+                📄 Create Paper Trade
+            </button>
+        </div>
+    </div>`;
+}
+
+function buildWatchlistForm() {
+    return `
+    <div class="sw-rail-form">
+        <div class="sw-form-header">
+            <h4>Add to Watchlist — ${SYMBOL}</h4>
+            <button class="sw-form-close" onclick="closeRailForm()">✕</button>
+        </div>
+        <div class="sw-form-body">
+            <label class="sw-label">Watchlist</label>
+            <select class="sw-select" id="wlList">
+                <option value="Personal">Personal</option>
+                <option value="Momentum">Momentum</option>
+                <option value="Sector">Sector</option>
+                <option value="Earnings">Earnings</option>
+            </select>
+            <label class="sw-label">Label (optional)</label>
+            <input class="sw-input" id="wlLabel" type="text" placeholder="e.g. breakout candidate">
+            <button class="sw-btn sw-btn-primary sw-btn-full" onclick="submitWatchlist()">
+                ⭐ Add to Watchlist
+            </button>
+        </div>
+    </div>`;
+}
+
+function buildAlertForm() {
+    return `
+    <div class="sw-rail-form">
+        <div class="sw-form-header">
+            <h4>Create Alert — ${SYMBOL}</h4>
+            <button class="sw-form-close" onclick="closeRailForm()">✕</button>
+        </div>
+        <div class="sw-form-body">
+            <label class="sw-label">Alert Type</label>
+            <select class="sw-select" id="alType">
+                <option value="price_above">Price Above</option>
+                <option value="price_below">Price Below</option>
+                <option value="breakout">Breakout</option>
+                <option value="volume_surge">Volume Surge</option>
+            </select>
+            <label class="sw-label">Trigger Value</label>
+            <input class="sw-input" id="alValue" type="number" step="0.01" value="${stockData?.price || ''}">
+            <label class="sw-label">Note</label>
+            <input class="sw-input" id="alNote" type="text" placeholder="Optional reminder">
+            <button class="sw-btn sw-btn-primary sw-btn-full" onclick="submitAlert()">
+                🔔 Create Alert
+            </button>
+        </div>
+    </div>`;
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// FORM SUBMISSIONS (Using Frozen Contracts)
+// ─────────────────────────────────────────────────────────────────
+
+async function initPortfolioSelector() {
+    const select = document.getElementById('ptPortfolio');
+    if (!select) return;
+    const portfolios = await MarketOS.getPortfolios();
+    select.innerHTML = '<option value="">— Select Portfolio —</option>' +
+        portfolios.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+    // Enable submit only when portfolio selected
+    select.addEventListener('change', validatePaperTrade);
+    // Also validate on other inputs
+    ['ptEntry', 'ptStopLoss', 'ptSize', 'ptQty'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', validatePaperTrade);
+    });
+}
+
+function validatePaperTrade() {
+    const portfolioId = document.getElementById('ptPortfolio')?.value;
+    const size = parseFloat(document.getElementById('ptSize')?.value) || 0;
+    const stopLoss = parseFloat(document.getElementById('ptStopLoss')?.value) || 0;
+    const btn = document.getElementById('ptSubmitBtn');
+    const validEl = document.getElementById('ptValidation');
+
+    const result = MarketOS.checkRiskLimits(portfolioId, SYMBOL, size, stopLoss);
+
+    let html = '';
+    result.errors.forEach(e => { html += `<div class="sw-validation-error">❌ ${e}</div>`; });
+    result.warnings.forEach(w => { html += `<div class="sw-validation-warn">⚠️ ${w}</div>`; });
+    if (result.allowed) html += `<div class="sw-validation-ok">✅ Risk check passed</div>`;
+    validEl.innerHTML = html;
+
+    btn.disabled = !result.allowed;
+}
+
+function submitResearch() {
+    const entryLow = parseFloat(document.getElementById('rfEntryLow')?.value) || 0;
+    const entryHigh = parseFloat(document.getElementById('rfEntryHigh')?.value) || 0;
+    const stopLoss = parseFloat(document.getElementById('rfStopLoss')?.value) || 0;
+    const target1 = parseFloat(document.getElementById('rfTarget1')?.value) || 0;
+    const thesis = document.getElementById('rfThesis')?.value || '';
+    const source = document.getElementById('rfSource')?.value || 'MANUAL';
+
+    // Validate R:R >= 1.5
+    const avgEntry = (entryLow + entryHigh) / 2;
+    const risk = avgEntry - stopLoss;
+    const reward = target1 - avgEntry;
+    const rr = risk > 0 ? (reward / risk) : 0;
+
+    if (rr < 1.5) {
+        document.getElementById('rfValidation').innerHTML = `<div class="sw-validation-error">❌ R:R ${rr.toFixed(2)} is below minimum 1.5. Adjust targets or stop loss.</div>`;
+        return;
+    }
+
+    if (!stopLoss || !target1) {
+        document.getElementById('rfValidation').innerHTML = `<div class="sw-validation-error">❌ Stop loss and at least one target are required.</div>`;
+        return;
+    }
+
+    const result = MarketOS.createResearchSnapshot({
+        symbol: SYMBOL,
+        source: source,
+        entry_low: entryLow,
+        entry_high: entryHigh,
+        stop_loss: stopLoss,
+        target_1: target1,
+        target_2: document.getElementById('rfTarget2')?.value,
+        target_3: document.getElementById('rfTarget3')?.value,
+        risk_reward: rr,
+        thesis_text: thesis,
+        confidence_technical: stockData?.scan?.score || 0,
+        confidence_fundamental: stockData?.scan?.fundamental_score || 0,
+        confidence_ai: stockData?.scan?.ai_score || 0,
+        confidence_total: stockData?.scan?.score || 0,
+    });
+
+    if (!result.success) {
+        document.getElementById('rfValidation').innerHTML = `<div class="sw-validation-error">❌ ${result.error}</div>`;
+        return;
+    }
+
+    const snapshot = result.snapshot;
+
+    // Phase 4D.4.4: Snapshot starts as 'draft'. RESEARCH_APPROVED emitted on explicit approval only.
+
+    document.getElementById('rfValidation').innerHTML = `<div class="sw-validation-ok">✅ Research snapshot created as DRAFT (v${snapshot.version}). Approve to activate.</div>`;
+    closeRailForm();
+    renderSnapshots();
+    showToast('Draft research snapshot created for ' + SYMBOL, 'success');
+}
+
+function submitPaperTrade() {
+    const portfolioId = document.getElementById('ptPortfolio')?.value;
+    const entry = parseFloat(document.getElementById('ptEntry')?.value) || 0;
+    const qty = parseInt(document.getElementById('ptQty')?.value) || 0;
+    const stopLoss = parseFloat(document.getElementById('ptStopLoss')?.value) || 0;
+    const target = parseFloat(document.getElementById('ptTarget')?.value) || 0;
+    const size = parseFloat(document.getElementById('ptSize')?.value) || 0;
+
+    // Risk validation (already done on UI, but enforce again)
+    const riskCheck = MarketOS.checkRiskLimits(portfolioId, SYMBOL, size, stopLoss);
+    if (!riskCheck.allowed) {
+        showToast('Risk check failed. Cannot create paper trade.', 'error');
+        return;
+    }
+
+    const positionId = 'pt_' + Date.now();
+
+    // Phase 4D.4.5: Consume PositionCreationIntent if this trade originated from Research handoff
+    const intentId = window._activeIntentId;
+    if (intentId) {
+        const consumeResult = MarketOS.consumePositionIntent(intentId, positionId);
+        if (!consumeResult.success) {
+            showToast(consumeResult.error, 'error');
+            return;
+        }
+        window._activeIntentId = null; // Clear after consumption
+    }
+
+    // Emit POSITION_OPENED event (Portfolio domain owns this)
+    MarketOS.createEvent('POSITION_OPENED', 'portfolio', {
+        entity_type: 'Position',
+        entity_id: SYMBOL,
+        source: intentId ? 'research' : 'manual',
+        metadata: {
+            position_id: positionId,
+            portfolio_id: portfolioId,
+            entry_price: entry,
+            quantity: qty,
+            stop_loss: stopLoss,
+            target_price: target,
+            position_size_pct: size,
+            trade_type: 'paper',
+            intent_id: intentId || null,
+        }
+    });
+
+    closeRailForm();
+    showToast('Paper trade created for ' + SYMBOL + (intentId ? ' (from research thesis)' : ''), 'success');
+}
+
+function submitWatchlist() {
+    const list = document.getElementById('wlList')?.value || 'Personal';
+    const label = document.getElementById('wlLabel')?.value || '';
+    const added = MarketOS.WatchlistRepository.addSymbol(list, SYMBOL, label);
+    closeRailForm();
+    showToast(added ? `${SYMBOL} added to ${list} watchlist` : `${SYMBOL} already in ${list} watchlist`, added ? 'success' : 'info');
+}
+
+function submitAlert() {
+    const type = document.getElementById('alType')?.value;
+    const value = parseFloat(document.getElementById('alValue')?.value) || 0;
+    const note = document.getElementById('alNote')?.value || '';
+
+    MarketOS.createEvent('ALERT_CREATED', 'alerts', {
+        entity_type: 'Alert',
+        entity_id: SYMBOL,
+        source: 'manual',
+        metadata: { alert_id: 'alert_' + Date.now(), alert_type: type, trigger_value: value, note }
+    });
+
+    closeRailForm();
+    showToast(`Alert created: ${type} at ₹${value}`, 'success');
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// TRADINGVIEW LIGHTWEIGHT CHARTS
+// ─────────────────────────────────────────────────────────────────
+
+function getChartTheme() {
+    const isDark = (document.documentElement.getAttribute('data-theme') || 'dark') === 'dark';
+    return {
+        layout: {
+            background: { type: 'solid', color: isDark ? '#0d111a' : '#ffffff' },
+            textColor: isDark ? '#9ca3af' : '#475569',
+        },
+        grid: {
+            vertLines: { color: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.04)' },
+            horzLines: { color: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.04)' },
+        },
+        crosshair: { mode: 0 },
+        rightPriceScale: { borderColor: isDark ? '#182235' : '#e2e8f0' },
+        timeScale: {
+            borderColor: isDark ? '#182235' : '#e2e8f0',
+            timeVisible: false,
+        },
+    };
+}
+
+function initResearchChart(data) {
+    const container = document.getElementById('researchChartContainer');
+    if (!container || !data.ohlcv || !data.ohlcv.length) return;
+    container.innerHTML = '';
+
+    const theme = getChartTheme();
+    const chart = LightweightCharts.createChart(container, {
+        ...theme,
+        width: container.clientWidth,
+        height: 360,
+        handleScroll: { mouseWheel: true, pressedMouseMove: true },
+        handleScale: { mouseWheel: true, pinch: true },
+    });
+
+    // Base Layer — Market Data Domain (Candlesticks)
+    const candleSeries = chart.addCandlestickSeries({
+        upColor: '#05ffc7', downColor: '#ff4b72',
+        borderUpColor: '#05ffc7', borderDownColor: '#ff4b72',
+        wickUpColor: '#05ffc788', wickDownColor: '#ff4b7288',
+    });
+    const candles = data.ohlcv.map(d => ({
+        time: d.date, open: d.o, high: d.h, low: d.l, close: d.c
+    }));
+    candleSeries.setData(candles);
+
+    // Volume sub-pane
+    const volumeSeries = chart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'vol',
+    });
+    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    volumeSeries.setData(data.ohlcv.map(d => ({
+        time: d.date, value: d.v,
+        color: d.c >= d.o ? 'rgba(5,255,199,0.15)' : 'rgba(255,75,114,0.15)',
+    })));
+
+    // Indicator Layer — Analytics Domain (EMA)
+    if (data.ema_9) {
+        const ema9 = chart.addLineSeries({ color: 'rgba(79,168,255,0.7)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+        ema9.setData(data.ema_9.map((v, i) => v !== null ? { time: data.ohlcv[i]?.date, value: v } : null).filter(Boolean));
+    }
+    if (data.ema_21) {
+        const ema21 = chart.addLineSeries({ color: 'rgba(0,200,255,0.7)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+        ema21.setData(data.ema_21.map((v, i) => v !== null ? { time: data.ohlcv[i]?.date, value: v } : null).filter(Boolean));
+    }
+
+    // Research Overlay — Research Domain (Entry, Stop, Targets)
+    const scan = data.scan || {};
+    if (scan.stop_loss) {
+        candleSeries.createPriceLine({ price: scan.stop_loss, color: '#ff4b72', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
+    }
+    if (scan.target_price) {
+        candleSeries.createPriceLine({ price: scan.target_price, color: '#05ffc7', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T1' });
+    }
+
+    chart.timeScale().fitContent();
+    tvChart = chart;
+
+    new ResizeObserver(() => {
+        chart.applyOptions({ width: container.clientWidth });
+    }).observe(container);
+}
+
+function initFullChart(data) {
+    const container = document.getElementById('fullChartContainer');
+    if (!container || !data.ohlcv || !data.ohlcv.length) return;
+    container.innerHTML = '';
+
+    const theme = getChartTheme();
+    const chart = LightweightCharts.createChart(container, {
+        ...theme,
+        width: container.clientWidth,
+        height: container.clientHeight || 500,
+        handleScroll: { mouseWheel: true, pressedMouseMove: true },
+        handleScale: { mouseWheel: true, pinch: true },
+    });
+
+    // Base Layer — Market Data Domain
+    const candleSeries = chart.addCandlestickSeries({
+        upColor: '#05ffc7', downColor: '#ff4b72',
+        borderUpColor: '#05ffc7', borderDownColor: '#ff4b72',
+        wickUpColor: '#05ffc788', wickDownColor: '#ff4b7288',
+    });
+    candleSeries.setData(data.ohlcv.map(d => ({
+        time: d.date, open: d.o, high: d.h, low: d.l, close: d.c
+    })));
+
+    // Volume
+    const vol = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
+    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    vol.setData(data.ohlcv.map(d => ({
+        time: d.date, value: d.v,
+        color: d.c >= d.o ? 'rgba(5,255,199,0.12)' : 'rgba(255,75,114,0.12)',
+    })));
+    indicatorSeries.volume = vol;
+
+    // Indicator Layer — Analytics Domain
+    if (data.ema_9) {
+        const s = chart.addLineSeries({ color: 'rgba(79,168,255,0.7)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+        s.setData(data.ema_9.map((v, i) => v !== null ? { time: data.ohlcv[i]?.date, value: v } : null).filter(Boolean));
+        indicatorSeries.ema9 = s;
+    }
+    if (data.ema_21) {
+        const s = chart.addLineSeries({ color: 'rgba(0,200,255,0.7)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+        s.setData(data.ema_21.map((v, i) => v !== null ? { time: data.ohlcv[i]?.date, value: v } : null).filter(Boolean));
+        indicatorSeries.ema21 = s;
+    }
+    if (data.ema_200) {
+        const s = chart.addLineSeries({ color: 'rgba(255,82,82,0.5)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, visible: false });
+        s.setData(data.ema_200.map((v, i) => v !== null ? { time: data.ohlcv[i]?.date, value: v } : null).filter(Boolean));
+        indicatorSeries.ema200 = s;
+    }
+
+    // Research Overlay — Research Domain
+    const scan = data.scan || {};
+    if (scan.stop_loss) {
+        overlaySeries.sl = candleSeries.createPriceLine({ price: scan.stop_loss, color: '#ff4b72', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
+    }
+    if (scan.target_price) {
+        overlaySeries.t1 = candleSeries.createPriceLine({ price: scan.target_price, color: '#05ffc7', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T1' });
+    }
+
+    chart.timeScale().fitContent();
+    tvChartFull = chart;
+
+    new ResizeObserver(() => {
+        chart.applyOptions({ width: container.clientWidth, height: container.clientHeight || 500 });
+    }).observe(container);
+}
+
+function toggleIndicator(btn) {
+    btn.classList.toggle('active');
+    const key = btn.dataset.indicator;
+    const visible = btn.classList.contains('active');
+    if (indicatorSeries[key]) {
+        indicatorSeries[key].applyOptions({ visible });
+    }
+}
+
+function toggleOverlay(btn) {
+    btn.classList.toggle('active');
+    // Overlay visibility toggling would require chart reconstruction
+    // For now, visual toggle only
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// DATA LOADING & RENDERING
+// ─────────────────────────────────────────────────────────────────
+
+async function loadWorkspace() {
+    try {
+        const resp = await fetch('/api/stock/' + SYMBOL);
+        if (!resp.ok) throw new Error('API error ' + resp.status);
+        stockData = await resp.json();
+        if (stockData.error) throw new Error(stockData.error);
+
+        document.getElementById('swLoading').style.display = 'none';
+        renderHeader(stockData);
+        renderScoreStrip(stockData);
+        renderResearch(stockData);
+        initResearchChart(stockData);
+        renderAnalytics(stockData);
+        renderSnapshots();
+    } catch (e) {
+        document.getElementById('swLoading').innerHTML = `<p style="color:var(--danger)">Failed to load: ${e.message}</p>`;
+    }
+}
+
+function renderHeader(data) {
+    const scan = data.scan || {};
+    document.getElementById('swSector').textContent = scan.sector || data.sector || '—';
+    document.getElementById('swPrice').textContent = '₹' + (data.price || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    const chg = scan.pct_1w || 0;
+    const chgEl = document.getElementById('swChange');
+    chgEl.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(1) + '% 1W';
+    chgEl.className = 'sw-change ' + (chg >= 0 ? 'positive' : 'negative');
+
+    if (scan.high_conviction) {
+        document.getElementById('swHcBadge').style.display = 'inline-flex';
+    }
+
+    const regime = (data.market_regime || 'unknown').toLowerCase();
+    const regBadge = document.getElementById('swRegimeBadge');
+    regBadge.textContent = 'REGIME: ' + regime.toUpperCase();
+    regBadge.className = 'sw-regime-badge regime-' + regime;
+}
+
+function renderScoreStrip(data) {
+    const scan = data.scan;
+    if (!scan) { document.getElementById('swScoreStrip').innerHTML = '<div class="sw-score-item"><span class="sw-score-label">Status</span><span class="sw-score-value" style="color:var(--text-muted)">Not in scan</span></div>'; return; }
+    const sc = scan.score >= 70 ? 'var(--success)' : scan.score >= 40 ? 'var(--warning)' : 'var(--text-muted)';
+    const rc = scan.risk_score < 40 ? 'var(--success)' : scan.risk_score < 65 ? 'var(--warning)' : 'var(--danger)';
+    const rrc = scan.risk_reward >= 2.5 ? 'var(--success)' : scan.risk_reward >= 1.5 ? 'var(--warning)' : 'var(--danger)';
+    document.getElementById('swScoreStrip').innerHTML = `
+        <div class="sw-score-item"><span class="sw-score-label">Score</span><span class="sw-score-value" style="color:${sc}">${scan.score}/100</span></div>
+        <div class="sw-score-item"><span class="sw-score-label">Risk</span><span class="sw-score-value" style="color:${rc}">${scan.risk_score}/100</span></div>
+        <div class="sw-score-item"><span class="sw-score-label">R:R</span><span class="sw-score-value" style="color:${rrc}">${scan.risk_reward ? '1:' + scan.risk_reward.toFixed(1) : '—'}</span></div>
+        <div class="sw-score-item"><span class="sw-score-label">Target</span><span class="sw-score-value" style="color:var(--success)">${scan.target_price ? '₹' + scan.target_price.toLocaleString() : '—'}</span></div>
+        <div class="sw-score-item"><span class="sw-score-label">Stop Loss</span><span class="sw-score-value" style="color:var(--danger)">${scan.stop_loss ? '₹' + scan.stop_loss.toLocaleString() : '—'}</span></div>`;
+}
+
+function renderResearch(data) {
+    const scan = data.scan;
+    if (!scan) return;
+
+    // Blueprint
+    const trade = scan.trade || {};
+    if (trade.entry || scan.target_price) {
+        document.getElementById('swBlueprintCard').style.display = 'block';
+        document.getElementById('swBlueprintContent').innerHTML = `
+            <div class="sw-blueprint-grid">
+                <div class="sw-bp-item"><span class="sw-bp-label">Entry Zone</span><span class="sw-bp-value">₹${trade.entry_low || scan.stop_loss || '—'} — ₹${trade.entry_high || data.price || '—'}</span></div>
+                <div class="sw-bp-item"><span class="sw-bp-label">Stop Loss</span><span class="sw-bp-value sw-danger">₹${scan.stop_loss || '—'}</span></div>
+                <div class="sw-bp-item"><span class="sw-bp-label">Target</span><span class="sw-bp-value sw-success">₹${scan.target_price || '—'}</span></div>
+                <div class="sw-bp-item"><span class="sw-bp-label">R:R</span><span class="sw-bp-value">${scan.risk_reward ? '1:' + scan.risk_reward.toFixed(1) : '—'}</span></div>
+            </div>`;
+    }
+
+    // Explainability
+    renderExplainability(data);
+
+    // Signals
+    if (scan.signals && scan.signals.length) {
+        document.getElementById('swSignalsCard').style.display = 'block';
+        document.getElementById('swSignalsList').innerHTML = scan.signals.map(s =>
+            `<div class="sw-signal"><span class="sw-signal-dot ${s[2]}"></span><strong>${s[0]}</strong> <span>${s[1]}</span></div>`
+        ).join('');
+    }
+
+    // Targets
+    renderTargets(data);
+
+    // 12-Layer Audit
+    renderLayerAccordion(data);
+}
+
+function renderExplainability(data) {
+    const scan = data.scan || {};
+    const positives = [], risks = [];
+    if (scan.fundamental_score > 5) positives.push('Strong fundamentals (score: ' + scan.fundamental_score + ')');
+    if (scan.is_breakout) positives.push('Breakout above resistance');
+    if (scan.adx > 25) positives.push('Strong trending momentum (ADX: ' + scan.adx + ')');
+    if (scan.rsi < 40 && scan.rsi > 20) positives.push('Oversold bounce potential (RSI: ' + scan.rsi + ')');
+    if (scan.volume_ratio > 2) positives.push('Unusual volume surge (' + scan.volume_ratio + 'x)');
+    if (scan.weekly_trend === 'up') positives.push('Weekly uptrend confirmed');
+    if (scan.high_conviction) positives.push('High conviction pick');
+    const rr = (scan.trade || {}).risk_reward || scan.risk_reward || 0;
+    if (rr >= 3) positives.push('Excellent R:R (1:' + rr.toFixed(1) + ')');
+
+    if (scan.risk_score > 65) risks.push('Elevated risk score (' + scan.risk_score + '/100)');
+    if (rr > 0 && rr < 1.5) risks.push('Unfavorable R:R (1:' + rr.toFixed(1) + ')');
+    if (scan.rsi > 70) risks.push('Overbought territory (RSI: ' + scan.rsi + ')');
+    if (scan.weekly_trend === 'down') risks.push('Weekly downtrend active');
+
+    if (!positives.length && !risks.length) return;
+    document.getElementById('swExplainCard').style.display = 'block';
+    document.getElementById('swExplainPositives').innerHTML = positives.slice(0, 4).map(r =>
+        `<div class="sw-explain-item positive">✓ ${r}</div>`
+    ).join('');
+    if (risks.length) {
+        document.getElementById('swExplainRisks').style.display = 'block';
+        document.getElementById('swExplainRisks').innerHTML = '<h4 class="sw-risk-header">⚠ Risks</h4>' +
+            risks.slice(0, 3).map(r => `<div class="sw-explain-item negative">⚠ ${r}</div>`).join('');
+    }
+}
+
+function renderTargets(data) {
+    const scan = data.scan || {};
+    const sr = scan.support_resistance || {};
+    if (!sr.s1 && !scan.target_price) return;
+    document.getElementById('swTargetsCard').style.display = 'block';
+
+    if (sr.s1) {
+        document.getElementById('swSrGrid').innerHTML = `
+            <div class="sw-sr-item"><span class="sw-sr-label">S2</span><span class="sw-sr-value" style="color:var(--danger)">₹${sr.s2 || '—'}</span></div>
+            <div class="sw-sr-item"><span class="sw-sr-label">S1</span><span class="sw-sr-value">₹${sr.s1}</span></div>
+            <div class="sw-sr-item"><span class="sw-sr-label">Pivot</span><span class="sw-sr-value">₹${sr.pivot || '—'}</span></div>
+            <div class="sw-sr-item"><span class="sw-sr-label">R1</span><span class="sw-sr-value">₹${sr.r1 || '—'}</span></div>
+            <div class="sw-sr-item"><span class="sw-sr-label">R2</span><span class="sw-sr-value" style="color:var(--success)">₹${sr.r2 || '—'}</span></div>`;
+    }
+}
+
+function renderLayerAccordion(data) {
+    const scan = data.scan || {};
+    const layers = [
+        { name: 'Technical Indicators', score: scan.score || 0, max: 100, color: 'var(--primary)' },
+        { name: 'Multi-Timeframe', score: scan.mtf_score || 0, max: 6, color: scan.mtf_score > 0 ? 'var(--success)' : 'var(--danger)' },
+        { name: 'Support/Resistance', score: 10, max: 10, color: 'var(--purple)' },
+        { name: 'Fundamentals', score: scan.fundamentals?.fund_score || 0, max: 32, color: 'var(--info)' },
+        { name: 'Seasonal Intelligence', score: scan.seasonal?.score || 0, max: 30, color: 'var(--purple)' },
+        { name: 'News Sentiment', score: scan.news?.score || 0, max: 20, color: 'var(--warning)' },
+    ];
+
+    document.getElementById('swLayerAccordion').innerHTML = layers.map((l, i) => {
+        const pct = l.max > 0 ? Math.min(100, (l.score / l.max) * 100) : 0;
+        return `<div class="sw-layer">
+            <div class="sw-layer-header">
+                <span class="sw-layer-num">${i + 1}</span>
+                <span class="sw-layer-name">${l.name}</span>
+                <span class="sw-layer-score" style="color:${l.color}">${l.score}/${l.max}</span>
+                <div class="sw-layer-bar"><div class="sw-layer-fill" style="width:${pct}%;background:${l.color}"></div></div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// ANALYTICS TAB
+// ─────────────────────────────────────────────────────────────────
+
+function renderAnalytics(data) {
+    const scan = data.scan || {};
+    const last = k => { const a = data[k]; return a ? a.filter(v => v !== null).pop() : null; };
+    const rsi = last('rsi'), adx = last('adx');
+    const macdBull = (last('macd_line') || 0) > (last('macd_signal') || 0);
+    const emaBull = (last('ema_9') || 0) > (last('ema_21') || 0);
+
+    const params = [
+        { l: 'Price', v: '₹' + (data.price || 0).toLocaleString(), c: 'var(--text-primary)' },
+        { l: '52W High', v: '₹' + (data.high_52w || 0).toLocaleString(), c: 'var(--success)' },
+        { l: '52W Low', v: '₹' + (data.low_52w || 0).toLocaleString(), c: 'var(--danger)' },
+        { l: 'RSI (14)', v: rsi ? rsi.toFixed(1) : '—', c: rsi < 30 ? 'var(--success)' : rsi > 70 ? 'var(--danger)' : 'var(--text-primary)' },
+        { l: 'ADX', v: adx ? adx.toFixed(1) : '—', c: adx > 25 ? 'var(--success)' : 'var(--text-primary)' },
+        { l: 'MACD', v: macdBull ? 'Bullish' : 'Bearish', c: macdBull ? 'var(--success)' : 'var(--danger)' },
+        { l: 'EMA 9/21', v: emaBull ? '9>21 (Bull)' : '9<21 (Bear)', c: emaBull ? 'var(--success)' : 'var(--danger)' },
+        { l: 'Regime', v: (data.market_regime || 'unknown').toUpperCase(), c: data.market_regime === 'bullish' ? 'var(--success)' : data.market_regime === 'bearish' ? 'var(--danger)' : 'var(--warning)' },
+    ];
+
+    document.getElementById('swParamsGrid').innerHTML = params.map(p =>
+        `<div class="sw-param"><span class="sw-param-label">${p.l}</span><span class="sw-param-value" style="color:${p.c}">${p.v}</span></div>`
+    ).join('');
+
+    // News
+    if (scan.news_sentiment && scan.news_sentiment.length) {
+        document.getElementById('swNewsCard').style.display = 'block';
+        document.getElementById('swNewsContent').innerHTML = scan.news_sentiment.slice(0, 5).map(n =>
+            `<div class="sw-news-item"><span class="sw-news-sentiment ${n.sentiment}">${n.sentiment}</span><span class="sw-news-headline">${n.headline}</span></div>`
+        ).join('');
+    }
+
+    // Fundamentals
+    if (scan.fundamentals) {
+        const f = scan.fundamentals;
+        document.getElementById('swFundamentalsCard').style.display = 'block';
+        document.getElementById('swFundamentalsContent').innerHTML = `
+            <div class="sw-fund-grid">
+                <div class="sw-fund-item"><span>PE</span><span>${f.pe || '—'}</span></div>
+                <div class="sw-fund-item"><span>PB</span><span>${f.pb || '—'}</span></div>
+                <div class="sw-fund-item"><span>ROE</span><span>${f.roe ? f.roe + '%' : '—'}</span></div>
+                <div class="sw-fund-item"><span>D/E</span><span>${f.debt_to_equity || '—'}</span></div>
+                <div class="sw-fund-item"><span>Promoters</span><span>${f.promoter_pct ? f.promoter_pct + '%' : '—'}</span></div>
+                <div class="sw-fund-item"><span>Score</span><span>${f.fund_score || 0}/32</span></div>
+            </div>`;
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// JOURNAL TAB (Via JournalRepository)
+// ─────────────────────────────────────────────────────────────────
+
+function renderJournal() {
+    const entries = MarketOS.JournalRepository.getEntries(SYMBOL);
+    const feed = document.getElementById('swJournalFeed');
+    if (!entries.length) {
+        feed.innerHTML = '<div class="sw-empty-state sw-empty-sm"><p>No journal entries yet. Start writing!</p></div>';
+        return;
+    }
+    feed.innerHTML = entries.map(e => `
+        <div class="sw-journal-entry">
+            <div class="sw-journal-entry-header">
+                <span class="sw-journal-emotion">${emotionEmoji(e.emotion)}</span>
+                <span class="sw-journal-date">${new Date(e.created_at).toLocaleString()}</span>
+                <button class="sw-journal-delete" onclick="deleteJournalEntry('${e.id}')" title="Delete">✕</button>
+            </div>
+            <div class="sw-journal-entry-body">${escapeHtml(e.text)}</div>
+        </div>
+    `).join('');
+}
+
+function saveJournalEntry() {
+    const text = document.getElementById('swJournalText')?.value?.trim();
+    if (!text) return;
+    const emotion = document.getElementById('swJournalEmotion')?.value || 'neutral';
+    MarketOS.JournalRepository.addEntry({ symbol: SYMBOL, text, emotion });
+
+    // Emit journal event
+    MarketOS.createEvent('JOURNAL_ENTRY', 'analytics', {
+        entity_type: 'Asset',
+        entity_id: SYMBOL,
+        source: 'manual',
+        metadata: { emotion }
+    });
+
+    document.getElementById('swJournalText').value = '';
+    renderJournal();
+    showToast('Journal entry saved', 'success');
+}
+
+function deleteJournalEntry(id) {
+    MarketOS.JournalRepository.deleteEntry(SYMBOL, id);
+    renderJournal();
+}
+
+function emotionEmoji(emotion) {
+    const map = { neutral: '😐', confident: '😎', uncertain: '🤔', fearful: '😰', greedy: '🤑', regret: '😔' };
+    return map[emotion] || '😐';
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// TIMELINE TAB (Via TimelineRepository)
+// ─────────────────────────────────────────────────────────────────
+
+function renderTimeline() {
+    const events = MarketOS.TimelineRepository.getEvents(SYMBOL);
+    const feed = document.getElementById('swTimelineFeed');
+    if (!events.length) {
+        feed.innerHTML = '<div class="sw-empty-state sw-empty-sm"><p>No events recorded yet for ' + SYMBOL + '</p></div>';
+        return;
+    }
+    feed.innerHTML = events.slice(0, 50).map(e => {
+        const icon = { RESEARCH_CREATED: '🔬', RESEARCH_APPROVED: '✅', POSITION_OPENED: '📈', ALERT_CREATED: '⏰', WATCHLIST_ADDED: '⭐', JOURNAL_ENTRY: '📝' }[e.event_type] || '📋';
+        return `<div class="sw-timeline-item">
+            <div class="sw-timeline-dot">${icon}</div>
+            <div class="sw-timeline-content">
+                <div class="sw-timeline-type">${e.event_type.replace(/_/g, ' ')}</div>
+                <div class="sw-timeline-time">${new Date(e.timestamp).toLocaleString()}</div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// RESEARCH SNAPSHOTS
+// ─────────────────────────────────────────────────────────────────
+
+function renderSnapshots() {
+    let snapshots = MarketOS.getSnapshots(SYMBOL);
+    const container = document.getElementById('swSnapshotsList');
+    if (!snapshots.length) {
+        container.innerHTML = '<div class="sw-empty-state sw-empty-sm"><p>No snapshots yet</p></div>';
+        return;
+    }
+
+    // Sort by version descending (newest first)
+    snapshots = [...snapshots].sort((a, b) => (b.version || 1) - (a.version || 1));
+
+    const statusColors = {
+        draft: '#f59e0b',
+        active: '#05ffc7',
+        rejected: '#ff4b72',
+        superseded: '#6b7280',
+        archived: '#4b5563',
+    };
+
+    container.innerHTML = snapshots.slice(0, 10).map(s => {
+        const color = statusColors[s.snapshot_status] || '#6b7280';
+        const isDraft = s.snapshot_status === 'draft';
+        const isActive = s.snapshot_status === 'active';
+        const isInactive = s.snapshot_status === 'superseded' || s.snapshot_status === 'archived' || s.snapshot_status === 'rejected';
+
+        // Phase 4D.4.4: Action buttons based on status
+        let actions = '';
+        if (isDraft) {
+            actions = `
+                <button class="sw-btn sw-btn-sm" onclick="approveSnapshot('${s.snapshot_id}')" style="background:rgba(5,255,199,0.15); color:#05ffc7; border:1px solid rgba(5,255,199,0.3); padding:2px 8px; font-size:10px; cursor:pointer; border-radius:4px;">✓ Approve</button>
+                <button class="sw-btn sw-btn-sm" onclick="rejectSnapshot('${s.snapshot_id}')" style="background:rgba(255,75,114,0.15); color:#ff4b72; border:1px solid rgba(255,75,114,0.3); padding:2px 8px; font-size:10px; cursor:pointer; border-radius:4px;">✕ Reject</button>`;
+        } else if (isActive) {
+            actions = `
+                <button class="sw-btn sw-btn-sm" onclick="executeTradeFromSnapshot('${s.snapshot_id}')" style="background:rgba(79,168,255,0.15); color:#4fa8ff; border:1px solid rgba(79,168,255,0.3); padding:2px 8px; font-size:10px; cursor:pointer; border-radius:4px;">⚡ Execute Trade</button>
+                <button class="sw-btn sw-btn-sm" onclick="archiveSnapshot('${s.snapshot_id}')" style="padding:2px 6px; font-size:10px; cursor:pointer; border-radius:4px;">Archive</button>`;
+        } else if (s.snapshot_status === 'superseded') {
+            actions = `<button class="sw-btn sw-btn-sm" onclick="archiveSnapshot('${s.snapshot_id}')" style="padding:2px 6px; font-size:10px; cursor:pointer; border-radius:4px;">Archive</button>`;
+        }
+
+        return `
+        <div class="sw-snapshot-card" style="border-left: 3px solid ${color}; ${isInactive ? 'opacity: 0.6;' : ''}; margin-bottom: 8px; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 6px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                <div style="display:flex; align-items:center; gap: 6px;">
+                    <span style="font-weight:600; font-size:12px; color:var(--text-primary);">v${s.version || 1}</span>
+                    <span style="font-size:10px; color:${color}; padding:1px 6px; border-radius:3px; background:${color}22; text-transform:uppercase; font-weight:600;">${s.snapshot_status || 'draft'}</span>
+                    <span style="font-size:10px; color:var(--text-muted);">${s.source}</span>
+                </div>
+                <span style="font-size:10px; color:var(--text-muted);">${new Date(s.created_at).toLocaleDateString()}</span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:3px; font-size:11px; color:var(--text-muted); margin-bottom:6px;">
+                <span>Entry: ₹${s.entry_range?.low}–₹${s.entry_range?.high}</span>
+                <span>SL: ₹${s.stop_loss}</span>
+                <span>T1: ₹${s.targets?.[0] || '—'}</span>
+                <span>R:R: 1:${s.risk_reward_ratio?.toFixed(1)}</span>
+            </div>
+            ${s.thesis_text ? `<div style="font-size:11px; color:var(--text-muted); margin-bottom:6px; font-style:italic; border-left:2px solid rgba(255,255,255,0.1); padding-left:6px;">${s.thesis_text.substring(0, 80)}${s.thesis_text.length > 80 ? '...' : ''}</div>` : ''}
+            ${s.parent_snapshot_id ? '<div style="font-size:10px; color:var(--text-muted); margin-bottom:4px;">↳ Revision of previous version</div>' : ''}
+            <div style="display:flex; gap:4px; flex-wrap:wrap;">${actions}</div>
+        </div>`;
+    }).join('');
+
+    // Phase 4D.4.3: Version Lineage Panel
+    const groups = {};
+    snapshots.forEach(s => {
+        const gid = s.snapshot_group_id || 'ungrouped';
+        if (!groups[gid]) groups[gid] = [];
+        groups[gid].push(s);
+    });
+
+    const lineageGroups = Object.values(groups).filter(g => g.length > 1);
+    if (lineageGroups.length > 0) {
+        container.innerHTML += `
+        <div style="margin-top:12px; padding:8px; background:rgba(255,255,255,0.02); border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
+            <div style="font-size:11px; font-weight:600; color:var(--text-muted); margin-bottom:6px;">VERSION LINEAGE</div>
+            ${lineageGroups.map(group => {
+                const sorted = [...group].sort((a, b) => (b.version || 1) - (a.version || 1));
+                return sorted.map((s, i) => {
+                    const color = statusColors[s.snapshot_status] || '#6b7280';
+                    const connector = i < sorted.length - 1 ? '<div style="text-align:center; color:var(--text-muted); font-size:10px;">↑</div>' : '';
+                    return `<div style="display:flex; align-items:center; gap:6px; font-size:11px; padding:2px 0;">
+                        <span style="color:${color}; font-weight:600;">V${s.version}</span>
+                        <span style="color:${color}; text-transform:uppercase; font-size:10px;">${s.snapshot_status}</span>
+                        <span style="color:var(--text-muted); font-size:10px;">${new Date(s.created_at).toLocaleDateString()}</span>
+                    </div>${connector}`;
+                }).join('');
+            }).join('')}
+        </div>`;
+    }
+}
+
+// Phase 4D.5.5: Create user actor for command dispatch
+const _actor = MarketOS.createActor({ actor_type: 'user' });
+
+// Phase 4D.4.4 + 4D.5.5: Approval Workflow via Command Bus
+window.approveSnapshot = function(snapshotId) {
+    const cmd = MarketOS.dispatchCommand('APPROVE_SNAPSHOT', _actor, {
+        snapshot_id: snapshotId,
+        symbol: SYMBOL,
+    });
+    if (cmd.success) {
+        renderSnapshots();
+        showToast('Research snapshot approved & activated', 'success');
+    } else {
+        showToast(cmd.error, 'error');
+    }
+};
+
+window.rejectSnapshot = function(snapshotId) {
+    if (confirm('Reject this research thesis? This action is permanent.')) {
+        const cmd = MarketOS.dispatchCommand('REJECT_SNAPSHOT', _actor, {
+            snapshot_id: snapshotId,
+            symbol: SYMBOL,
+        });
+        if (cmd.success) {
+            renderSnapshots();
+            showToast('Research snapshot rejected', 'info');
+        } else {
+            showToast(cmd.error, 'error');
+        }
+    }
+};
+
+window.archiveSnapshot = function(snapshotId) {
+    if (confirm('Archive this snapshot?')) {
+        // Archive is not yet a Command Bus command — uses direct call (Option B)
+        const result = MarketOS.updateSnapshotStatus(SYMBOL, snapshotId, 'archived');
+        if (result.success) {
+            renderSnapshots();
+        } else {
+            showToast(result.error, 'error');
+        }
+    }
+};
+
+// Phase 4D.4.5 + 4D.5.5: Research → Portfolio Handoff via Command Bus
+window.executeTradeFromSnapshot = function(snapshotId) {
+    const cmd = MarketOS.dispatchCommand('CREATE_POSITION_INTENT', _actor, {
+        snapshot_id: snapshotId,
+        symbol: SYMBOL,
+    });
+
+    if (!cmd.success) {
+        showToast(cmd.error, 'error');
+        return;
+    }
+
+    const intent = cmd.result.intent;
+
+    // Pre-populate and open Paper Trade form
+    showRailForm('paper-trade');
+
+    // Wait for DOM render, then populate from intent
+    setTimeout(() => {
+        const entryEl = document.getElementById('ptEntry');
+        const slEl = document.getElementById('ptStopLoss');
+        const targetEl = document.getElementById('ptTarget');
+
+        if (entryEl) entryEl.value = intent.entry_price;
+        if (slEl) slEl.value = intent.stop_loss;
+        if (targetEl && intent.targets?.[0]) targetEl.value = intent.targets[0];
+
+        // Store intent_id for consumption on submission
+        window._activeIntentId = intent.intent_id;
+
+        showToast(`Trade intent created from v${intent.snapshot_version} thesis. Complete the trade form.`, 'info');
+    }, 100);
+};
+
+
+// ─────────────────────────────────────────────────────────────────
+// UTILITIES
+// ─────────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function showToast(msg, type) {
+    const toast = document.createElement('div');
+    toast.className = 'sw-toast sw-toast-' + (type || 'info');
+    toast.textContent = msg;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('visible'));
+    setTimeout(() => { toast.classList.remove('visible'); setTimeout(() => toast.remove(), 300); }, 3000);
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────────
+loadWorkspace();
+</script>
+{% endblock %}

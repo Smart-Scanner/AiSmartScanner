@@ -47,6 +47,7 @@ from routes.api import api_bp
 from routes.portfolio import portfolio_bp
 from routes.auth import auth_bp
 from routes.admin import admin_bp
+from routes.broker_zerodha import zerodha_bp
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -82,7 +83,16 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(pages_bp)
 app.register_blueprint(api_bp)
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    import traceback
+    with open('logs/flask_err.txt', 'w') as errf:
+        errf.write(traceback.format_exc())
+    return str(e), 500
+
 app.register_blueprint(portfolio_bp)
+app.register_blueprint(zerodha_bp)
 
 
 @app.context_processor

@@ -84,11 +84,11 @@
 let wlResults = {};
 
 function getWatchlist() {
-    try { return JSON.parse(localStorage.getItem('v3_watchlist') || '[]'); } catch { return []; }
+    try { return JSON.parse(MarketOS.SystemRepository.getPreference('v3_watchlist', null) || '[]'); } catch { return []; }
 }
 
 function saveWatchlist(wl) {
-    localStorage.setItem('v3_watchlist', JSON.stringify(wl));
+    MarketOS.SystemRepository.setPreference('v3_watchlist', JSON.stringify(wl));
 }
 
 function removeFromWatchlist(symbol) {

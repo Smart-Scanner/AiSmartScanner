@@ -237,7 +237,7 @@ def get_universe_chunks(symbols: list) -> list[tuple[str, list[str]]]:
     """
     try:
         import db
-        catalog_rows = db.execute_db("SELECT symbol, market_cap_bucket FROM universe_catalog WHERE is_active = 1", fetch="all")
+        catalog_rows = db.execute_db("SELECT symbol, market_cap_bucket FROM universe_catalog WHERE is_active = TRUE", fetch="all")
         if catalog_rows:
             # We have an active catalog, use it!
             bucket_map = {row["symbol"]: row.get("market_cap_bucket", "Unknown Cap") for row in catalog_rows if row.get("symbol")}

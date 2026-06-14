@@ -1,0 +1,292 @@
+{% extends "_app_base.html" %}
+{% set active_page = "research" %}
+{% block title %}Research Center{% endblock %}
+{% block content %}
+
+<!-- ═══ RESEARCH CENTER — Phase 4D.4.2 ═══════════════════════════════ -->
+<div class="v3-page-header">
+    <div class="v3-page-title">Research Center</div>
+    <div class="v3-page-subtitle">Manage research candidates, approve theses, and hand off to Portfolio for execution</div>
+</div>
+
+<!-- Mode Tabs -->
+<div class="poc-mode-bar" id="resModeBar">
+    <button class="poc-mode-btn active" data-mode="queue" onclick="setResMode('queue')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Research Queue <span class="disc-tab-count" id="resQueueCount">0</span>
+    </button>
+    <button class="poc-mode-btn" data-mode="snapshots" onclick="setResMode('snapshots')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        All Snapshots
+    </button>
+    <button class="poc-mode-btn" data-mode="intents" onclick="setResMode('intents')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        Trade Intents <span class="disc-tab-count" id="resIntentCount">0</span>
+    </button>
+</div>
+
+<!-- ═══ RESEARCH QUEUE ═══ -->
+<div class="disc-panel active" id="panelQueue">
+    <div class="disc-card" style="margin-bottom: 16px;">
+        <div class="disc-card-header">
+            <h3>📋 Research Candidates</h3>
+            <span class="disc-badge" id="resCandidatesBadge">0 active</span>
+        </div>
+        <div class="disc-card-body">
+            <table class="disc-inbox-table" id="resQueueTable">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Priority</th>
+                        <th>Source</th>
+                        <th>Promoted</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="resQueueBody"></tbody>
+            </table>
+            <div class="disc-empty" id="resQueueEmpty" style="display:none;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.3"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                <p style="color:var(--text-muted); margin-top:8px;">No research candidates in the queue</p>
+                <p style="color:var(--text-muted); font-size:12px;">Promote signals from <a href="/discovery" style="color:var(--primary);">Discovery Center</a> to begin research</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ ALL SNAPSHOTS ═══ -->
+<div class="disc-panel" id="panelSnapshots">
+    <div class="disc-card">
+        <div class="disc-card-header">
+            <h3>📄 Research Snapshots</h3>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <select class="disc-select" id="snapStatusFilter" onchange="renderAllSnapshots()" style="font-size:12px; padding:4px 8px;">
+                    <option value="all">All Statuses</option>
+                    <option value="draft">Draft</option>
+                    <option value="active">Active</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="superseded">Superseded</option>
+                    <option value="archived">Archived</option>
+                </select>
+            </div>
+        </div>
+        <div class="disc-card-body" id="resSnapshotsBody">
+            <div class="disc-empty">
+                <p style="color:var(--text-muted);">No research snapshots yet</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ TRADE INTENTS ═══ -->
+<div class="disc-panel" id="panelIntents">
+    <div class="disc-card">
+        <div class="disc-card-header">
+            <h3>⚡ Position Creation Intents</h3>
+            <span class="disc-badge" id="resIntentBadge">0 open</span>
+        </div>
+        <div class="disc-card-body">
+            <table class="disc-inbox-table" id="resIntentsTable">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Snapshot</th>
+                        <th>Entry</th>
+                        <th>Stop Loss</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody id="resIntentsBody"></tbody>
+            </table>
+            <div class="disc-empty" id="resIntentsEmpty" style="display:none;">
+                <p style="color:var(--text-muted);">No trade intents yet</p>
+                <p style="color:var(--text-muted); font-size:12px;">Approve a research thesis and click "Execute Trade" to create an intent</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── Mode Switching ──
+function setResMode(mode) {
+    document.querySelectorAll('#resModeBar .poc-mode-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`#resModeBar [data-mode="${mode}"]`).classList.add('active');
+    document.querySelectorAll('.disc-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel' + mode.charAt(0).toUpperCase() + mode.slice(1)).classList.add('active');
+}
+
+// ── Research Queue ──
+function renderResearchQueue() {
+    const candidates = MarketOS.ResearchCandidateRepository.getAll();
+    const tbody = document.getElementById('resQueueBody');
+    const empty = document.getElementById('resQueueEmpty');
+    const table = document.getElementById('resQueueTable');
+
+    // Sort by priority descending
+    const sorted = [...candidates].sort((a, b) => (b.priority_score || 0) - (a.priority_score || 0));
+
+    if (!sorted.length) {
+        table.style.display = 'none';
+        empty.style.display = 'block';
+        return;
+    }
+
+    table.style.display = 'table';
+    empty.style.display = 'none';
+
+    const activeCount = sorted.filter(c => c.status === 'pending' || c.status === 'active').length;
+    document.getElementById('resQueueCount').textContent = activeCount;
+    document.getElementById('resCandidatesBadge').textContent = activeCount + ' active';
+
+    const terminalStatuses = ['snapshot_created', 'rejected'];
+
+    tbody.innerHTML = sorted.map(c => {
+        const isTerminal = terminalStatuses.includes(c.status);
+        const statusColors = {
+            pending: '#f59e0b',
+            active: '#05ffc7',
+            snapshot_created: '#4fa8ff',
+            rejected: '#ff4b72'
+        };
+        const color = statusColors[c.status] || '#6b7280';
+
+        return `<tr style="${isTerminal ? 'opacity:0.5;' : ''}">
+            <td><a href="/symbol/${c.symbol || c.instrument_id?.split(':')[1] || '—'}" style="color:var(--primary); text-decoration:none; font-weight:600;">${c.symbol || c.instrument_id || '—'}</a></td>
+            <td><span style="font-weight:600; color:${(c.priority_score || 0) >= 80 ? '#05ffc7' : (c.priority_score || 0) >= 50 ? '#f59e0b' : '#6b7280'}">${c.priority_score || '—'}</span></td>
+            <td><span style="font-size:11px; color:var(--text-muted);">${c.provenance?.source_type || '—'}</span></td>
+            <td style="font-size:11px; color:var(--text-muted);">${_timeAgo(c.promoted_at)}</td>
+            <td><span style="color:${color}; font-size:11px; text-transform:uppercase; font-weight:600;">${c.status}</span></td>
+            <td>
+                ${!isTerminal ? `
+                    ${c.status === 'pending' ? `<button class="rq-action-btn activate" onclick="transitionCandidate('${c.candidate_id}', 'activate')">Activate</button>` : ''}
+                    <a href="/symbol/${c.symbol || c.instrument_id?.split(':')[1] || ''}" class="rq-action-btn" style="text-decoration:none; display:inline-block;">Research</a>
+                    <button class="rq-action-btn reject" onclick="transitionCandidate('${c.candidate_id}', 'reject')">Reject</button>
+                ` : `
+                    ${c.snapshot_id ? `<a href="/symbol/${c.symbol || ''}" class="rq-action-btn" style="text-decoration:none; display:inline-block; font-size:10px;">View Snapshot</a>` : '—'}
+                `}
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+// Phase 4D.5.5: Actor for command dispatch
+const _actor = MarketOS.createActor({ actor_type: 'user' });
+
+function transitionCandidate(candidateId, action) {
+    const cmd = MarketOS.dispatchCommand('TRANSITION_CANDIDATE', _actor, {
+        candidate_id: candidateId,
+        action: action,
+    });
+    if (!cmd.success) {
+        console.error('[Research] Command rejected:', cmd.error);
+    }
+    renderResearchQueue();
+}
+
+// ── All Snapshots ──
+function renderAllSnapshots() {
+    const body = document.getElementById('resSnapshotsBody');
+    const filter = document.getElementById('snapStatusFilter')?.value || 'all';
+
+    // Collect snapshots from all known symbols via candidates
+    const candidates = MarketOS.ResearchCandidateRepository.getAll();
+    const symbols = new Set();
+    candidates.forEach(c => {
+        if (c.symbol) symbols.add(c.symbol);
+    });
+
+    let allSnapshots = [];
+    symbols.forEach(sym => {
+        const snaps = MarketOS.getSnapshots(sym);
+        snaps.forEach(s => allSnapshots.push(s));
+    });
+
+    if (filter !== 'all') {
+        allSnapshots = allSnapshots.filter(s => s.snapshot_status === filter);
+    }
+
+    allSnapshots.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    if (!allSnapshots.length) {
+        body.innerHTML = '<div class="disc-empty"><p style="color:var(--text-muted);">No snapshots match the selected filter</p></div>';
+        return;
+    }
+
+    const statusColors = {
+        draft: '#f59e0b', active: '#05ffc7', rejected: '#ff4b72',
+        superseded: '#6b7280', archived: '#4b5563'
+    };
+
+    body.innerHTML = `<table class="disc-inbox-table"><thead><tr>
+        <th>Symbol</th><th>Version</th><th>Status</th><th>R:R</th><th>Entry</th><th>SL</th><th>Created</th><th>Actions</th>
+    </tr></thead><tbody>` + allSnapshots.map(s => {
+        const color = statusColors[s.snapshot_status] || '#6b7280';
+        return `<tr>
+            <td><a href="/symbol/${s.symbol}" style="color:var(--primary); text-decoration:none; font-weight:600;">${s.symbol}</a></td>
+            <td>v${s.version || 1}</td>
+            <td><span style="color:${color}; text-transform:uppercase; font-size:11px; font-weight:600;">${s.snapshot_status}</span></td>
+            <td>1:${s.risk_reward_ratio?.toFixed(1) || '—'}</td>
+            <td>₹${s.entry_range?.low}–₹${s.entry_range?.high}</td>
+            <td>₹${s.stop_loss}</td>
+            <td style="font-size:11px; color:var(--text-muted);">${new Date(s.created_at).toLocaleDateString()}</td>
+            <td><a href="/symbol/${s.symbol}" class="rq-action-btn" style="text-decoration:none; display:inline-block; font-size:10px;">Open</a></td>
+        </tr>`;
+    }).join('') + '</tbody></table>';
+}
+
+// ── Trade Intents ──
+function renderIntents() {
+    const intents = MarketOS.getPositionIntents();
+    const tbody = document.getElementById('resIntentsBody');
+    const empty = document.getElementById('resIntentsEmpty');
+    const table = document.getElementById('resIntentsTable');
+
+    if (!intents.length) {
+        table.style.display = 'none';
+        empty.style.display = 'block';
+        return;
+    }
+
+    table.style.display = 'table';
+    empty.style.display = 'none';
+
+    const openCount = intents.filter(i => i.status === 'open').length;
+    document.getElementById('resIntentCount').textContent = openCount;
+    document.getElementById('resIntentBadge').textContent = openCount + ' open';
+
+    const statusColors = { open: '#f59e0b', consumed: '#05ffc7', cancelled: '#ff4b72' };
+
+    tbody.innerHTML = intents.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map(i => {
+        const color = statusColors[i.status] || '#6b7280';
+        return `<tr>
+            <td><a href="/symbol/${i.symbol}" style="color:var(--primary); text-decoration:none; font-weight:600;">${i.symbol}</a></td>
+            <td>v${i.snapshot_version}</td>
+            <td>₹${i.entry_price}</td>
+            <td>₹${i.stop_loss}</td>
+            <td><span style="color:${color}; text-transform:uppercase; font-size:11px; font-weight:600;">${i.status}</span></td>
+            <td style="font-size:11px; color:var(--text-muted);">${_timeAgo(i.created_at)}</td>
+        </tr>`;
+    }).join('');
+}
+
+// ── Utilities ──
+function _timeAgo(isoStr) {
+    if (!isoStr) return '—';
+    const diff = Date.now() - new Date(isoStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// ── Init ──
+renderResearchQueue();
+renderAllSnapshots();
+renderIntents();
+</script>
+
+{% endblock %}

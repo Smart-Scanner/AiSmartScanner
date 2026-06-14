@@ -4,11 +4,205 @@
 {% block content %}
 <div class="v3-page-header">
     <div class="v3-page-title">Settings</div>
-    <div class="v3-page-subtitle">System status, account settings, and platform configuration</div>
+    <div class="v3-page-subtitle">UX preferences, terminology mode, and system health</div>
 </div>
-<div class="v3-empty-state">
-    <div class="v3-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
-    <div class="v3-empty-title">Coming in Phase 5</div>
-    <div class="v3-empty-desc">System status panel with health checks, API/model versions, and user preferences.</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px" id="settingsGrid">
+
+    <!-- UX Mode Card -->
+    <div class="mos-card" style="padding:24px">
+        <div style="font-weight:700;font-size:15px;margin-bottom:16px;display:flex;align-items:center;gap:8px">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            UX Mode
+        </div>
+
+        <div style="margin-bottom:20px">
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Interface Mode</div>
+            <div id="uxModeSegment" style="display:flex;gap:0;border-radius:10px;overflow:hidden;border:1px solid var(--border)">
+                <button class="mos-seg-btn" data-mode="pro" onclick="setUXMode('pro')" style="flex:1;padding:10px 16px;font-size:13px;font-weight:600;border:none;cursor:pointer;transition:all 0.2s;background:transparent;color:var(--text-muted)">
+                    ⚡ Pro
+                </button>
+                <button class="mos-seg-btn" data-mode="beginner" onclick="setUXMode('beginner')" style="flex:1;padding:10px 16px;font-size:13px;font-weight:600;border:none;cursor:pointer;transition:all 0.2s;background:transparent;color:var(--text-muted)">
+                    🎓 Beginner
+                </button>
+            </div>
+        </div>
+
+        <div style="margin-bottom:16px">
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Learning Mode</div>
+            <select id="learningModeSelect" onchange="setLearningMode(this.value)" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);font-size:13px;font-weight:500;outline:none;cursor:pointer">
+                <option value="off">Off — No guidance</option>
+                <option value="basic">Basic — Tooltips & translations</option>
+                <option value="guided">Guided — Warnings + risk checks</option>
+            </select>
+        </div>
+
+        <div style="font-size:11px;color:var(--text-muted);line-height:1.5;padding:10px 12px;background:var(--surface-2);border-radius:8px">
+            <strong>Pro:</strong> Full technical terminology.<br>
+            <strong>Beginner:</strong> Simplified labels (Snapshot→Trade Plan, Intent→Ready Trade).<br>
+            <strong>Guided:</strong> Live risk warnings when creating positions.
+        </div>
+    </div>
+
+    <!-- Onboarding Preview Card -->
+    <div class="mos-card" style="padding:24px">
+        <div style="font-weight:700;font-size:15px;margin-bottom:16px;display:flex;align-items:center;gap:8px">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            Live Preview
+        </div>
+        <div id="previewCard" style="padding:16px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2)">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">
+                <div>
+                    <div style="color:var(--text-muted);font-size:11px;margin-bottom:4px">Term</div>
+                    <div style="font-weight:600" id="prevCandidate">Candidate</div>
+                </div>
+                <div>
+                    <div style="color:var(--text-muted);font-size:11px;margin-bottom:4px">Term</div>
+                    <div style="font-weight:600" id="prevSnapshot">ResearchSnapshot</div>
+                </div>
+                <div>
+                    <div style="color:var(--text-muted);font-size:11px;margin-bottom:4px">Term</div>
+                    <div style="font-weight:600" id="prevIntent">PositionIntent</div>
+                </div>
+                <div>
+                    <div style="color:var(--text-muted);font-size:11px;margin-bottom:4px">Term</div>
+                    <div style="font-weight:600" id="prevPortfolio">Portfolio</div>
+                </div>
+                <div>
+                    <div style="color:var(--text-muted);font-size:11px;margin-bottom:4px">Term</div>
+                    <div style="font-weight:600" id="prevReview">Review</div>
+                </div>
+                <div>
+                    <div style="color:var(--text-muted);font-size:11px;margin-bottom:4px">Term</div>
+                    <div style="font-weight:600" id="prevResearch">Research</div>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top:12px;font-size:11px;color:var(--text-muted)">
+            Change UX Mode above to see translations update live.
+        </div>
+    </div>
 </div>
+
+<!-- Terminology Comparison Table -->
+<div class="mos-card" style="padding:24px;margin-bottom:24px">
+    <div style="font-weight:700;font-size:15px;margin-bottom:16px;display:flex;align-items:center;gap:8px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        Terminology Dictionary
+    </div>
+    <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px" id="termTable">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border)">
+                    <th style="text-align:left;padding:10px 12px;color:var(--text-muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Pro Term</th>
+                    <th style="text-align:left;padding:10px 12px;color:var(--text-muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Beginner Term</th>
+                </tr>
+            </thead>
+            <tbody id="termTableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- System Health -->
+<div class="mos-card" style="padding:24px;margin-bottom:24px">
+    <div style="font-weight:700;font-size:15px;margin-bottom:16px;display:flex;align-items:center;gap:8px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        Subsystem Health
+    </div>
+    <div id="healthGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    // ── Segmented Control State ──
+    function setUXMode(mode) {
+        MarketOS.Terminology.setMode(mode);
+        updateUI();
+    }
+    window.setUXMode = setUXMode;
+
+    function setLearningMode(mode) {
+        MarketOS.Terminology.setLearningMode(mode);
+    }
+    window.setLearningMode = setLearningMode;
+
+    function updateUI() {
+        const mode = MarketOS.Terminology.getMode();
+        const lm = MarketOS.Terminology.getLearningMode();
+
+        // Segment highlight
+        document.querySelectorAll('.mos-seg-btn').forEach(btn => {
+            const isActive = btn.dataset.mode === mode;
+            btn.style.background = isActive ? 'var(--accent)' : 'transparent';
+            btn.style.color = isActive ? '#fff' : 'var(--text-muted)';
+        });
+
+        // Learning mode select
+        document.getElementById('learningModeSelect').value = lm;
+
+        // Preview card
+        const terms = ['Candidate', 'ResearchSnapshot', 'PositionIntent', 'Portfolio', 'Review', 'Research'];
+        const ids = ['prevCandidate', 'prevSnapshot', 'prevIntent', 'prevPortfolio', 'prevReview', 'prevResearch'];
+        terms.forEach((term, i) => {
+            const el = document.getElementById(ids[i]);
+            if (el) el.textContent = window._t(term, term);
+        });
+    }
+
+    // ── Terminology Table ──
+    function renderTermTable() {
+        const dict = MarketOS.Terminology.DICTIONARY;
+        const tbody = document.getElementById('termTableBody');
+        const seen = new Set();
+        tbody.innerHTML = Object.entries(dict).map(([pro, beginner]) => {
+            if (seen.has(beginner)) return '';
+            seen.add(beginner);
+            return `<tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:10px 12px;font-weight:500;font-family:'JetBrains Mono',monospace;font-size:12px">${pro}</td>
+                <td style="padding:10px 12px;color:var(--success);font-weight:600">${beginner}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    // ── System Health ──
+    function renderHealth() {
+        const health = MarketOS.SystemRegistry.getHealth();
+        const grid = document.getElementById('healthGrid');
+        const statusColors = {
+            healthy: 'var(--success)', warning: 'var(--warning)',
+            degraded: '#f97316', critical: 'var(--danger)',
+            down: 'var(--danger)', unknown: 'var(--text-muted)'
+        };
+        const statusIcons = {
+            healthy: '✅', warning: '⚠️', degraded: '🟠',
+            critical: '🔴', down: '⛔', unknown: '❓'
+        };
+
+        grid.innerHTML = Object.values(health).map(sub => `
+            <div style="padding:14px 16px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2)">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <span style="font-weight:600;font-size:13px">${sub.name}</span>
+                    <span style="font-size:16px">${statusIcons[sub.status] || '❓'}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:8px;height:8px;border-radius:50%;background:${statusColors[sub.status] || 'var(--text-muted)'}"></span>
+                    <span style="font-size:12px;color:${statusColors[sub.status] || 'var(--text-muted)'};font-weight:600;text-transform:uppercase">${sub.status}</span>
+                    <span style="font-size:11px;color:var(--text-muted);margin-left:auto">v${sub.version}</span>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // Init
+    updateUI();
+    renderTermTable();
+    renderHealth();
+
+    // Listen for mode changes
+    document.addEventListener('mos-ux-mode-changed', updateUI);
+})();
+</script>
 {% endblock %}

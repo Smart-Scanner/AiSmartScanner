@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ symbol }} | AI Smart Screener</title>
+    <script src="{{ url_for('static', filename='js/marketos-core.js') }}"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap');
 
@@ -983,7 +984,7 @@ let stockData = null;
 // ===== THEME =====
 function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
+    MarketOS.SystemRepository.setPreference('theme', theme);
     document.getElementById('themeIcon').textContent = theme === 'light' ? '\u263D' : '\u2606';
 }
 function toggleTheme() {
@@ -992,7 +993,7 @@ function toggleTheme() {
     // Redraw charts with new bg
     loadStock();
 }
-applyTheme(localStorage.getItem('theme') || 'dark');
+applyTheme(MarketOS.SystemRepository.getPreference('theme', null) || 'dark');
 
 // =================== CHART HELPERS ===================
 function setupCanvas(canvas, height) {
