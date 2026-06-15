@@ -433,6 +433,9 @@ def mission_control_universe_status():
     candidate_count_meta = db.get_meta("candidate_frozen_count")
     candidate_count = int(candidate_count_meta) if candidate_count_meta else 0
 
+    import cache_layer as _cache_layer
+    _cache_metrics = _cache_layer.get_cache_metrics()
+
     return jsonify({
         "catalog_total": catalog_total,
         "catalog_synced": catalog_synced,
@@ -467,6 +470,18 @@ def mission_control_universe_status():
         # Phase 5.6B/C: Coverage & exclusion metrics
         "permanent_exclusions": int(db.get_meta("liquidity_permanent_exclusions") or 0),
         "liquidity_coverage_pct": float(db.get_meta("liquidity_progress_pct") or 0),
+        # Phase A: Cache observability metrics
+        # NOTE: metrics are process-local; each Gunicorn worker tracks independently
+        "cache_metrics": {
+            "status_hit_rate": _cache_metrics.get("status_hit_rate", 0.0),
+            "dashboard_hit_rate": _cache_metrics.get("dashboard_hit_rate", 0.0),
+            "search_hit_rate": _cache_metrics.get("search_hit_rate", 0.0),
+            "results_hit_rate": _cache_metrics.get("results_hit_rate", 0.0),
+            "status_age_seconds": _cache_metrics.get("status_age_seconds"),
+            "status_hits": _cache_metrics.get("status_hits", 0),
+            "status_misses": _cache_metrics.get("status_misses", 0),
+            "status_invalidations": _cache_metrics.get("status_invalidations", 0),
+        },
     })
 
 @admin_bp.route("/api/mission-control/scanner-control", methods=["POST"])

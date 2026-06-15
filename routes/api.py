@@ -247,7 +247,7 @@ def scan_status():
             "dec_count": dec_count,
         }
 
-    result = cache_layer.get_or_compute(cache_layer.status_cache, "status", _compute)
+    result = cache_layer.get_status_cache(_compute)
 
     # Phase 5.5: Inject batch-level progress when universe engine is active
     from config import USE_UNIVERSE_ENGINE

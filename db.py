@@ -597,6 +597,8 @@ def init_db():
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_scan_results_score ON scan_results(score DESC);")
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);")
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_return ON paper_trades(return_pct);")
+                    # Phase A: Composite index for paper trade status+date queries
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_status_date ON paper_trades(status, entry_date);")
                     log.info("Performance indexes verified")
                 except Exception as e:
                     log.warning("Index creation failed (non-fatal): %s", e)
@@ -1148,6 +1150,35 @@ def init_db():
     except Exception as exc:
         log.warning("[DATA INTEGRITY] Startup audit failed (non-fatal): %s", exc)
 
+    # ── Phase A: Index Verification ──────────────────────────────────────
+    verify_indexes_startup()
+
+
+def verify_indexes_startup():
+    """Verify that performance-critical indexes exist. Logs WARNING if missing.
+
+    Phase A: Performance issue != availability issue.
+    Missing index degrades performance but NEVER crashes startup.
+    """
+    required = "idx_paper_trades_status_date"
+    try:
+        if DATABASE_URL:
+            row = execute_db(
+                "SELECT 1 FROM pg_indexes WHERE indexname = %s",
+                (required,), fetch="one"
+            )
+        else:
+            row = execute_db(
+                "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?",
+                (required,), fetch="one"
+            )
+        if row:
+            log.info("[INDEX VERIFIED] %s exists", required)
+        else:
+            log.warning("[INDEX MISSING] %s not found — paper trade queries may be slow", required)
+    except Exception as exc:
+        log.warning("[INDEX CHECK] Could not verify %s (non-fatal): %s", required, exc)
+
 
 def _init_sqlite():
     """Create SQLite tables using a single fresh connection."""
@@ -1448,6 +1479,7 @@ def _init_sqlite():
             CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
             CREATE INDEX IF NOT EXISTS idx_paper_trades_symbol ON paper_trades(symbol);
             CREATE INDEX IF NOT EXISTS idx_paper_trades_entry ON paper_trades(entry_date);
+            CREATE INDEX IF NOT EXISTS idx_paper_trades_status_date ON paper_trades(status, entry_date);
 
             CREATE TABLE IF NOT EXISTS recommendation_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2013,6 +2045,20 @@ def transition_scan_state(scan_id: str, from_status: str, to_status: str,
         "[STATE MACHINE] %s -> %s | scan=%s | reason=%s | actor=%s",
         from_status, to_status, scan_id[:20], reason, actor
     )
+
+    # Phase A: Event-based cache invalidation
+    # Guard: only invalidate when transitioning to a DIFFERENT state to prevent stampede
+    if from_status != to_status and to_status in ("running", "completed", "failed", "cancelled"):
+        try:
+            import cache_layer
+            cache_layer.invalidate_all()
+            log.info("[CACHE_INVALIDATED] Scan state %s -> %s | scan=%s",
+                     from_status, to_status, scan_id[:20])
+            if to_status == "completed":
+                log.info("[SCAN_COMPLETED] scan_id=%s", scan_id[:20])
+        except Exception as exc:
+            log.warning("[CACHE_INVALIDATED] Cache invalidation failed (non-fatal): %s", exc)
+
     return True
 
 
@@ -4014,6 +4060,12 @@ def create_paper_trade(stock_data: dict, nifty_price: float = None,
     trade_id = execute_db("SELECT MAX(id) as id FROM paper_trades WHERE symbol = ?", (sym,), fetch="one")
     log.info("[PaperTrade] ENTRY: %s @ ₹%.2f, score=%d, grade=%s",
              sym, entry_price, stock_data.get("score", 0), stock_data.get("grade", ""))
+    # Phase A: Invalidate dashboard/stats cache on new trade
+    try:
+        import cache_layer
+        cache_layer.invalidate_stats()
+    except Exception:
+        pass
     return trade_id["id"] if trade_id else None
 
 
@@ -4058,6 +4110,12 @@ def close_paper_trade(trade_id: int, exit_price: float, exit_reason: str,
     log.info("[PaperTrade] EXIT: %s @ ₹%.2f (%s), return=%.2f%%, alpha=%.2f%%, held=%d days",
              trade["symbol"], exit_price, exit_reason, return_pct,
              alpha_pct or 0, days_held)
+    # Phase A: Invalidate dashboard/stats cache on trade close
+    try:
+        import cache_layer
+        cache_layer.invalidate_stats()
+    except Exception:
+        pass
 
     # ── R1 Evidence Collection: trade_outcomes.csv (Append-Only) ──
     try:

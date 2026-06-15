@@ -9,6 +9,14 @@ import time
 import signal
 import logging
 import threading
+import warnings
+
+# Phase A: Suppress pandas/pytz timezone UserWarning (log noise, non-actionable)
+warnings.filterwarnings(
+    "ignore",
+    message=".*no explicit representation of timezones.*",
+    category=UserWarning,
+)
 
 from dotenv import load_dotenv
 load_dotenv()  # must run before any config import that reads env vars
@@ -109,6 +117,57 @@ log.info("Smart Screener v5 | Stock Screener + Portfolio Manager")
 # Init DBs
 db.init_db()
 auth_db.init_db()
+
+# Phase A: Non-blocking status cache warm-up
+# Runs in daemon thread so DB coldness/slowness never delays startup
+def _warmup_compute():
+    """Minimal compute function used only for startup warm-up."""
+    state = scan_state.status()
+    use_pg = db.is_postgresql() and not db.pg_cooldown_active()
+    try:
+        if use_pg:
+            agg = db.execute_db("""
+                SELECT
+                    COALESCE(SUM(high_conviction), 0) as hc_count,
+                    COALESCE(SUM(CASE WHEN (data->>'is_golden')::text IN ('true','1') THEN 1 ELSE 0 END), 0) as golden_count,
+                    COALESCE(SUM(CASE WHEN COALESCE(NULLIF(data->>'change_pct',''),'0')::numeric > 0 THEN 1 ELSE 0 END), 0) as adv_count,
+                    COALESCE(SUM(CASE WHEN COALESCE(NULLIF(data->>'change_pct',''),'0')::numeric < 0 THEN 1 ELSE 0 END), 0) as dec_count
+                FROM scan_results
+            """, fetch="one")
+        else:
+            raise Exception("use sqlite")
+    except Exception:
+        agg = db.execute_db("""
+            SELECT
+                COALESCE(SUM(high_conviction), 0) as hc_count,
+                COALESCE(SUM(CASE WHEN json_extract(data, '$.is_golden') IN (1, 'true') THEN 1 ELSE 0 END), 0) as golden_count,
+                COALESCE(SUM(CASE WHEN CAST(json_extract(data, '$.change_pct') AS REAL) > 0 THEN 1 ELSE 0 END), 0) as adv_count,
+                COALESCE(SUM(CASE WHEN CAST(json_extract(data, '$.change_pct') AS REAL) < 0 THEN 1 ELSE 0 END), 0) as dec_count
+            FROM scan_results
+        """, fetch="one")
+    hc = agg.get("hc_count", 0) if isinstance(agg, dict) else 0
+    golden = agg.get("golden_count", 0) if isinstance(agg, dict) else 0
+    adv = agg.get("adv_count", 0) if isinstance(agg, dict) else 0
+    dec = agg.get("dec_count", 0) if isinstance(agg, dict) else 0
+    return {
+        "scanning": state.get("scanning", False),
+        "progress": state.get("progress", 0),
+        "total": state.get("total", 0),
+        "last_scan": db.get_meta("last_scan"),
+        "market_regime": db.get_meta("market_regime", "unknown"),
+        "login_status": db.get_meta("angel_login_status", {}),
+        "hc_count": hc,
+        "golden_count": golden,
+        "adv_count": adv,
+        "dec_count": dec,
+    }
+
+threading.Thread(
+    target=cache_layer.warm_status_cache,
+    args=(_warmup_compute,),
+    daemon=True,
+    name="cache-warmup",
+).start()
 
 # Phase 5.5: Startup resume + universe rebuild check
 from config import USE_UNIVERSE_ENGINE, AUTO_SCAN_ENABLED_DEFAULT
@@ -310,7 +369,7 @@ def _auto_scan_loop():
                     db.set_meta("last_scan_ts", str(last_fast))
                     needs_deep = True
                 else:
-                    log.info("[AutoScan] Fast scan scheduled but AUTO_SCAN_ENABLED is 0. Skipping.")
+                    log.debug("[AutoScan] Fast scan scheduled but AUTO_SCAN_ENABLED is 0. Skipping.")
             elif not market_open:
                 last = db.get_meta("last_scan")
                 if not last:
@@ -324,7 +383,7 @@ def _auto_scan_loop():
                         db.set_meta("last_fast_scan_ts", str(last_fast))
                         db.set_meta("last_scan_ts", str(last_fast))
                     else:
-                        log.info("[AutoScan] Initial scan pending but AUTO_SCAN_ENABLED is 0. Skipping.")
+                        log.debug("[AutoScan] Initial scan pending but AUTO_SCAN_ENABLED is 0. Skipping.")
 
             # 3. MACRO REFRESH — any time
             if now - last_macro >= _MACRO_INTERVAL:
