@@ -1058,6 +1058,61 @@ def init_db():
                 except Exception as exc:
                     log.warning("Phase 5.5: Schema migration failed (non-fatal): %s", exc)
 
+                # ── Phase 5.6B/C: Liquidity Enrichment & Universe Governance ──
+                try:
+                    # Extend universe_catalog with liquidity tracking columns
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS liquidity_synced_at TIMESTAMP;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS liquidity_sync_fail_count INTEGER DEFAULT 0;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS liquidity_excluded BOOLEAN DEFAULT FALSE;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS liquidity_excluded_reason TEXT;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS liquidity_excluded_at TIMESTAMP;")
+
+                    # Universe Snapshot (append-only audit trail per build)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS universe_snapshot (
+                            id BIGSERIAL PRIMARY KEY,
+                            universe_version TEXT NOT NULL,
+                            symbol TEXT NOT NULL,
+                            market_cap_cr REAL,
+                            avg_volume_20d REAL,
+                            avg_turnover_20d REAL,
+                            price REAL,
+                            eligibility_reason TEXT DEFAULT 'FILTER_PASS',
+                            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_us_version ON universe_snapshot(universe_version);
+                    """)
+
+                    # Candidate Universe (version-locked snapshot for enrichment)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS candidate_universe (
+                            id BIGSERIAL PRIMARY KEY,
+                            universe_version TEXT NOT NULL,
+                            symbol TEXT NOT NULL,
+                            market_cap_cr REAL,
+                            frozen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE(universe_version, symbol)
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_cu_version ON candidate_universe(universe_version);
+                    """)
+
+                    # Universe Build Validation Snapshot (forensic evidence per activation)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS universe_build_validation_snapshot (
+                            id BIGSERIAL PRIMARY KEY,
+                            universe_version TEXT NOT NULL,
+                            candidate_count INTEGER DEFAULT 0,
+                            eligible_count INTEGER DEFAULT 0,
+                            marketcap_coverage_pct REAL DEFAULT 0,
+                            liquidity_coverage_pct REAL DEFAULT 0,
+                            build_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+
+                    log.info("Phase 5.6B/C: Liquidity & Governance schema verified (PG)")
+                except Exception as exc:
+                    log.warning("Phase 5.6B/C: Schema migration failed (non-fatal): %s", exc)
+
                 log.info("PostgreSQL tables checked/created.")
             finally:
                 conn.close()
@@ -1736,6 +1791,60 @@ def _init_sqlite():
             conn.execute("ALTER TABLE scan_batches ADD COLUMN retry_count INTEGER DEFAULT 0;")
         except Exception:
             pass  # already exists
+
+        # ── Phase 5.6B/C: Liquidity Enrichment & Universe Governance (SQLite) ──
+        for col_sql in [
+            "ALTER TABLE universe_catalog ADD COLUMN liquidity_synced_at TEXT;",
+            "ALTER TABLE universe_catalog ADD COLUMN liquidity_sync_fail_count INTEGER DEFAULT 0;",
+            "ALTER TABLE universe_catalog ADD COLUMN liquidity_excluded INTEGER DEFAULT 0;",
+            "ALTER TABLE universe_catalog ADD COLUMN liquidity_excluded_reason TEXT;",
+            "ALTER TABLE universe_catalog ADD COLUMN liquidity_excluded_at TEXT;",
+        ]:
+            try:
+                conn.execute(col_sql)
+            except Exception as exc:
+                if "duplicate column name" in str(exc).lower():
+                    pass
+
+        # Universe Snapshot (append-only audit trail, SQLite)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS universe_snapshot (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                universe_version TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                market_cap_cr REAL,
+                avg_volume_20d REAL,
+                avg_turnover_20d REAL,
+                price REAL,
+                eligibility_reason TEXT DEFAULT 'FILTER_PASS',
+                generated_at TEXT DEFAULT (datetime('now'))
+            );
+        """)
+
+        # Candidate Universe (version-locked snapshot, SQLite)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS candidate_universe (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                universe_version TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                market_cap_cr REAL,
+                frozen_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(universe_version, symbol)
+            );
+        """)
+
+        # Universe Build Validation Snapshot (forensic evidence, SQLite)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS universe_build_validation_snapshot (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                universe_version TEXT NOT NULL,
+                candidate_count INTEGER DEFAULT 0,
+                eligible_count INTEGER DEFAULT 0,
+                marketcap_coverage_pct REAL DEFAULT 0,
+                liquidity_coverage_pct REAL DEFAULT 0,
+                build_timestamp TEXT DEFAULT (datetime('now'))
+            );
+        """)
 
         log.info("SQLite Database initialized: %s", DB_PATH)
 
@@ -5046,3 +5155,536 @@ def update_universe_catalog_metrics(symbol: str, avg_volume: float,
            WHERE symbol = ?""",
         (avg_volume, avg_turnover, price, symbol)
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 5.6B/C: Liquidity Enrichment & Universe Governance Helpers
+# ═══════════════════════════════════════════════════════════════
+
+# ── Instrument Classification ─────────────────────────────────
+
+_ETF_HEURISTIC_PATTERNS = [
+    "BEES", "ETF", "LIQUID", "GOLDBEES", "SILVERBEES",
+    "NIFTYBEES", "BANKBEES", "JUNIORBEES", "SETFNIF50",
+]
+_NAV_HEURISTIC_PATTERNS = ["NAV", "INAV"]
+
+def classify_instrument_types():
+    """Bulk-classify instrument_type in universe_catalog.
+    Priority: Metadata (yfinance quoteType via last_synced_at) > Name Heuristics.
+    Only applies heuristics for unsynced symbols (last_synced_at IS NULL).
+    """
+    # Get unsynced symbols where heuristics should apply
+    unsynced = execute_db(
+        """SELECT symbol, company_name, instrument_type
+           FROM universe_catalog
+           WHERE is_active = TRUE AND last_synced_at IS NULL""",
+        fetch="all"
+    ) or []
+
+    if not unsynced:
+        log.info("[Phase 5.6B/C] classify_instrument_types: no unsynced symbols to classify")
+        return 0
+
+    classified = 0
+    for row in unsynced:
+        sym = row.get("symbol", "")
+        name = (row.get("company_name") or sym).upper()
+        current_type = (row.get("instrument_type") or "EQ").upper()
+
+        # Already classified by metadata — skip
+        if current_type != "EQ":
+            continue
+
+        detected_type = None
+        sym_upper = sym.upper()
+
+        # ETF heuristics
+        for pattern in _ETF_HEURISTIC_PATTERNS:
+            if pattern in sym_upper or pattern in name:
+                detected_type = "ETF"
+                break
+
+        # NAV/INAV heuristics (only if not already detected as ETF)
+        if not detected_type:
+            for pattern in _NAV_HEURISTIC_PATTERNS:
+                # Check suffix or standalone presence — avoid matching GOLDIAM, SILVERTOUCH etc.
+                if sym_upper.endswith(pattern) or f" {pattern}" in name or name.startswith(f"{pattern} "):
+                    detected_type = pattern
+                    break
+
+        if detected_type:
+            execute_db(
+                "UPDATE universe_catalog SET instrument_type = ? WHERE symbol = ?",
+                (detected_type, sym)
+            )
+            classified += 1
+
+    log.info("[Phase 5.6B/C] classify_instrument_types: classified %d/%d unsynced symbols",
+             classified, len(unsynced))
+    return classified
+
+
+# ── Candidate Universe Operations ─────────────────────────────
+
+def get_candidate_universe() -> list:
+    """Stage-1 query: active EQ symbols with market_cap >= 1500 Cr, not excluded.
+    Returns list of dicts with symbol, market_cap (in Cr).
+    """
+    return execute_db(
+        """SELECT symbol, market_cap, price
+           FROM universe_catalog
+           WHERE is_active = TRUE
+             AND (instrument_type = 'EQ' OR instrument_type IS NULL)
+             AND market_cap >= 1500
+             AND (liquidity_excluded = FALSE OR liquidity_excluded = 0 OR liquidity_excluded IS NULL)
+           ORDER BY market_cap DESC""",
+        fetch="all"
+    ) or []
+
+
+def freeze_candidate_universe(version: str) -> dict:
+    """Freeze Stage-1 candidates into candidate_universe for the specified version.
+    Returns dict with frozen_count and frozen_checksum.
+    """
+    import hashlib
+
+    candidates = get_candidate_universe()
+    if not candidates:
+        log.warning("[Phase 5.6B/C] freeze_candidate_universe: no candidates found")
+        return {"frozen_count": 0, "frozen_checksum": ""}
+
+    # Clear any existing freeze for this version
+    execute_db("DELETE FROM candidate_universe WHERE universe_version = ?", (version,))
+
+    # Insert candidates
+    for c in candidates:
+        mcap = c.get("market_cap", 0)
+        # Normalize market_cap: if in absolute rupees (> 10000), convert to Cr
+        mcap_cr = mcap / 1e7 if mcap > 10000 else mcap
+        execute_db(
+            """INSERT INTO candidate_universe (universe_version, symbol, market_cap_cr)
+               VALUES (?, ?, ?)
+               ON CONFLICT (universe_version, symbol) DO NOTHING""",
+            (version, c.get("symbol"), mcap_cr)
+        )
+
+    # Compute SHA256 checksum from sorted symbols (deterministic regardless of DB row order)
+    symbols_sorted = sorted(c.get("symbol", "") for c in candidates)
+    checksum = hashlib.sha256("|".join(symbols_sorted).encode()).hexdigest()
+    frozen_count = len(candidates)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Store in metadata
+    set_meta("candidate_frozen_count", str(frozen_count))
+    set_meta("candidate_frozen_checksum", checksum)
+    set_meta("candidate_frozen_version", version)
+    set_meta("candidate_frozen_created_at", now)
+
+    log.info("[Phase 5.6B/C] Frozen %d candidates for %s (sha256=%s)",
+             frozen_count, version, checksum[:12])
+    return {"frozen_count": frozen_count, "frozen_checksum": checksum}
+
+
+def get_frozen_candidates(version: str) -> list:
+    """Return list of symbols frozen for the specified version."""
+    rows = execute_db(
+        "SELECT symbol FROM candidate_universe WHERE universe_version = ? ORDER BY symbol",
+        (version,), fetch="all"
+    ) or []
+    return [r.get("symbol") for r in rows if r.get("symbol")]
+
+
+def verify_candidate_integrity(version: str) -> tuple:
+    """Verify candidate universe hasn't been tampered with.
+    Returns (is_valid, current_count, current_checksum).
+    Uses SHA256 checksum on sorted symbols for deterministic verification.
+    """
+    import hashlib
+
+    rows = execute_db(
+        "SELECT symbol FROM candidate_universe WHERE universe_version = ? ORDER BY symbol",
+        (version,), fetch="all"
+    ) or []
+    symbols = [r.get("symbol", "") for r in rows]
+
+    current_count = len(symbols)
+    current_checksum = hashlib.sha256("|".join(symbols).encode()).hexdigest()
+
+    stored_count = int(get_meta("candidate_frozen_count") or 0)
+    stored_checksum = get_meta("candidate_frozen_checksum") or ""
+
+    is_valid = (current_count == stored_count and current_checksum == stored_checksum)
+
+    if not is_valid:
+        log.error("[Phase 5.6B/C] CANDIDATE INTEGRITY MISMATCH: "
+                  "stored=%d/%s current=%d/%s",
+                  stored_count, stored_checksum[:12],
+                  current_count, current_checksum[:12])
+
+    return is_valid, current_count, current_checksum
+
+
+# ── Liquidity Tracking ────────────────────────────────────────
+
+def get_liquidity_pending_symbols_v2(version: str, batch_size: int = 50) -> list:
+    """Get symbols from candidate_universe for the version whose corresponding
+    universe_catalog entries have liquidity_synced_at IS NULL or > 7 days old,
+    and liquidity_sync_fail_count < 3.
+    """
+    rows = execute_db(
+        """SELECT cu.symbol
+           FROM candidate_universe cu
+           JOIN universe_catalog uc ON cu.symbol = uc.symbol
+           WHERE cu.universe_version = ?
+             AND (uc.liquidity_excluded = FALSE OR uc.liquidity_excluded = 0 OR uc.liquidity_excluded IS NULL)
+             AND uc.liquidity_sync_fail_count < 3
+             AND (uc.liquidity_synced_at IS NULL
+                  OR uc.liquidity_synced_at < datetime('now', '-7 days'))
+           ORDER BY uc.liquidity_synced_at ASC NULLS FIRST
+           LIMIT ?""",
+        (version, batch_size), fetch="all"
+    ) or []
+    return [r.get("symbol") for r in rows if r.get("symbol")]
+
+
+def update_liquidity_metrics(symbol: str, avg_volume: float, avg_turnover: float, price: float):
+    """Update liquidity metrics for a symbol after successful enrichment.
+    Resets fail count and stamps liquidity_synced_at.
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    execute_db(
+        """UPDATE universe_catalog
+           SET avg_volume_20d = ?,
+               avg_turnover_20d = ?,
+               price = ?,
+               liquidity_synced_at = ?,
+               liquidity_sync_fail_count = 0
+           WHERE symbol = ?""",
+        (avg_volume, avg_turnover, price, now, symbol)
+    )
+
+
+def increment_liquidity_sync_fail(symbol: str, failure_type: str):
+    """Increment liquidity sync failure count for a symbol.
+    If fail_count >= 3 AND failure_type == 'SYMBOL_NOT_SUPPORTED',
+    mark as liquidity_excluded.
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Increment fail count
+    execute_db(
+        """UPDATE universe_catalog
+           SET liquidity_sync_fail_count = COALESCE(liquidity_sync_fail_count, 0) + 1
+           WHERE symbol = ?""",
+        (symbol,)
+    )
+
+    # Check if we should exclude
+    row = execute_db(
+        "SELECT liquidity_sync_fail_count FROM universe_catalog WHERE symbol = ?",
+        (symbol,), fetch="one"
+    )
+    fail_count = int(row.get("liquidity_sync_fail_count", 0)) if row else 0
+
+    if fail_count >= 3 and failure_type == "SYMBOL_NOT_SUPPORTED":
+        execute_db(
+            """UPDATE universe_catalog
+               SET liquidity_excluded = TRUE,
+                   liquidity_excluded_reason = ?,
+                   liquidity_excluded_at = ?
+               WHERE symbol = ?""",
+            (f"SYMBOL_NOT_SUPPORTED (failed {fail_count} times)", now, symbol)
+        )
+        log.warning("[Phase 5.6B/C] %s excluded from liquidity enrichment: %s (fail_count=%d)",
+                    symbol, failure_type, fail_count)
+
+
+# ── Universe Health Metrics ───────────────────────────────────
+
+def get_universe_health_metrics_v3(version: str) -> dict:
+    """Return universe health metrics with formal coverage denominator.
+
+    coverage_pct = done_candidates / (total_candidates - permanently_excluded) * 100
+
+    Permanently excluded = liquidity_excluded = TRUE AND fail_count >= 3
+                           AND failure_type == SYMBOL_NOT_SUPPORTED
+    Temporarily failed = fail_count > 0 but < 3, remains in denominator.
+    """
+    # Total candidates for this version
+    total_row = execute_db(
+        "SELECT COUNT(*) as c FROM candidate_universe WHERE universe_version = ?",
+        (version,), fetch="one"
+    )
+    total_candidates = int(total_row.get("c", 0)) if total_row else 0
+
+    # Permanently excluded candidates
+    excluded_row = execute_db(
+        """SELECT COUNT(*) as c
+           FROM candidate_universe cu
+           JOIN universe_catalog uc ON cu.symbol = uc.symbol
+           WHERE cu.universe_version = ?
+             AND (uc.liquidity_excluded = TRUE OR uc.liquidity_excluded = 1)""",
+        (version,), fetch="one"
+    )
+    excluded_count = int(excluded_row.get("c", 0)) if excluded_row else 0
+
+    # Done candidates (liquidity_synced_at IS NOT NULL)
+    done_row = execute_db(
+        """SELECT COUNT(*) as c
+           FROM candidate_universe cu
+           JOIN universe_catalog uc ON cu.symbol = uc.symbol
+           WHERE cu.universe_version = ?
+             AND uc.liquidity_synced_at IS NOT NULL""",
+        (version,), fetch="one"
+    )
+    done_candidates = int(done_row.get("c", 0)) if done_row else 0
+
+    # Market cap coverage
+    mcap_row = execute_db(
+        """SELECT COUNT(*) as c
+           FROM candidate_universe cu
+           JOIN universe_catalog uc ON cu.symbol = uc.symbol
+           WHERE cu.universe_version = ?
+             AND uc.market_cap > 0""",
+        (version,), fetch="one"
+    )
+    mcap_populated = int(mcap_row.get("c", 0)) if mcap_row else 0
+
+    denominator = total_candidates - excluded_count
+    liquidity_coverage_pct = (done_candidates / denominator * 100) if denominator > 0 else 0
+    marketcap_coverage_pct = (mcap_populated / total_candidates * 100) if total_candidates > 0 else 0
+
+    return {
+        "total_candidates": total_candidates,
+        "excluded_count": excluded_count,
+        "done_candidates": done_candidates,
+        "denominator": denominator,
+        "liquidity_coverage_pct": round(liquidity_coverage_pct, 2),
+        "marketcap_coverage_pct": round(marketcap_coverage_pct, 2),
+        "mcap_populated": mcap_populated,
+    }
+
+
+# ── Universe Snapshot & Validation ────────────────────────────
+
+def save_eligible_universe_with_snapshot(symbols_data: list, version: str):
+    """Save eligible universe AND append to universe_snapshot for audit trail.
+    Replaces the old save_eligible_universe for Phase 5.6B/C builds.
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Clear old eligible universe
+    execute_db("DELETE FROM eligible_universe WHERE 1=1")
+
+    for s in symbols_data:
+        # Insert into eligible_universe (active set)
+        execute_db(
+            """INSERT INTO eligible_universe
+               (symbol, market_cap_cr, avg_volume_20d, avg_turnover_20d,
+                price, eligibility_reason, universe_version, generated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (symbol) DO UPDATE SET
+                 market_cap_cr = EXCLUDED.market_cap_cr,
+                 avg_volume_20d = EXCLUDED.avg_volume_20d,
+                 avg_turnover_20d = EXCLUDED.avg_turnover_20d,
+                 price = EXCLUDED.price,
+                 eligibility_reason = EXCLUDED.eligibility_reason,
+                 universe_version = EXCLUDED.universe_version,
+                 generated_at = EXCLUDED.generated_at""",
+            (s["symbol"], s.get("market_cap_cr", 0), s.get("avg_volume_20d", 0),
+             s.get("avg_turnover_20d", 0), s.get("price", 0),
+             s.get("eligibility_reason", "FILTER_PASS"), version, now)
+        )
+
+        # Append to universe_snapshot (audit trail — never deleted)
+        execute_db(
+            """INSERT INTO universe_snapshot
+               (universe_version, symbol, market_cap_cr, avg_volume_20d,
+                avg_turnover_20d, price, eligibility_reason, generated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (version, s["symbol"], s.get("market_cap_cr", 0),
+             s.get("avg_volume_20d", 0), s.get("avg_turnover_20d", 0),
+             s.get("price", 0), s.get("eligibility_reason", "FILTER_PASS"), now)
+        )
+
+    set_meta("universe_version", version)
+    set_meta("universe_stock_count", str(len(symbols_data)))
+    set_meta("universe_generated_at", now)
+    log.info("[Phase 5.6B/C] Saved eligible universe + snapshot: %d symbols, version=%s",
+             len(symbols_data), version)
+
+
+def save_validation_snapshot(version: str, candidate_count: int,
+                             eligible_count: int, marketcap_coverage_pct: float,
+                             liquidity_coverage_pct: float):
+    """Write validation evidence to universe_build_validation_snapshot."""
+    execute_db(
+        """INSERT INTO universe_build_validation_snapshot
+           (universe_version, candidate_count, eligible_count,
+            marketcap_coverage_pct, liquidity_coverage_pct)
+           VALUES (?, ?, ?, ?, ?)""",
+        (version, candidate_count, eligible_count,
+         marketcap_coverage_pct, liquidity_coverage_pct)
+    )
+    log.info("[Phase 5.6B/C] Validation snapshot saved: version=%s candidates=%d eligible=%d "
+             "mcap_cov=%.1f%% liq_cov=%.1f%%",
+             version, candidate_count, eligible_count,
+             marketcap_coverage_pct, liquidity_coverage_pct)
+
+
+# ── Atomic Version Activation ─────────────────────────────────
+
+def activate_universe_version_transaction(version: str) -> bool:
+    """Atomically activate a new universe version.
+    Wraps the metadata switch in a single DB transaction.
+    Uses explicit ROLLING_BACK state for crash recovery clarity.
+    Returns True if activation succeeded.
+    """
+    global _pg_pool
+
+    current_active = get_meta("active_universe_version") or ""
+
+    if current_active == version:
+        log.warning("[Phase 5.6B/C] Version %s is already active — skipping activation", version)
+        return False
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Mark ROLLING_BACK state before attempting switch (crash recovery breadcrumb)
+    set_meta("universe_state", "ACTIVATING")
+
+    # Attempt PostgreSQL transactional switch
+    if is_postgresql():
+        pool = _get_pg_pool()
+        if pool:
+            conn = None
+            try:
+                from psycopg2.extras import RealDictCursor
+                conn = pool.getconn()
+                conn.autocommit = False  # Start transaction
+
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Swap versions atomically
+                    for key, val in [
+                        ("previous_active_universe_version", current_active),
+                        ("active_universe_version", version),
+                        ("building_universe_version", ""),
+                        ("scan_ready", "true"),
+                        ("universe_state", "READY"),
+                        ("universe_activated_at", now),
+                    ]:
+                        cur.execute(
+                            """INSERT INTO scan_meta (key, value, updated_at) VALUES (%s, %s, %s)
+                               ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at""",
+                            (key, val, now)
+                        )
+
+                conn.commit()
+                log.info("[Phase 5.6B/C] ATOMIC VERSION SWITCH: %s → %s (PG transaction committed)",
+                         current_active, version)
+
+                # Update cache
+                if _META_CACHE_ENABLED:
+                    _meta_cache["previous_active_universe_version"] = (current_active, time.time())
+                    _meta_cache["active_universe_version"] = (version, time.time())
+                    _meta_cache["building_universe_version"] = ("", time.time())
+                    _meta_cache["scan_ready"] = ("true", time.time())
+                    _meta_cache["universe_state"] = ("READY", time.time())
+
+                return True
+
+            except Exception as exc:
+                if conn:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                log.error("[Phase 5.6B/C] ATOMIC VERSION SWITCH FAILED — ROLLED BACK: %s", exc)
+                # Recover: restore previous state
+                set_meta("universe_state", "DEGRADED")
+                set_meta("building_universe_version", "")
+                return False
+            finally:
+                if conn:
+                    try:
+                        conn.autocommit = True
+                        pool.putconn(conn)
+                    except Exception:
+                        pass
+
+    # SQLite fallback: no true transaction but sequential writes
+    try:
+        set_meta("previous_active_universe_version", current_active)
+        set_meta("active_universe_version", version)
+        set_meta("building_universe_version", "")
+        set_meta("scan_ready", "true")
+        set_meta("universe_state", "READY")
+        set_meta("universe_activated_at", now)
+        log.info("[Phase 5.6B/C] VERSION SWITCH: %s → %s (SQLite sequential)",
+                 current_active, version)
+        return True
+    except Exception as exc:
+        log.error("[Phase 5.6B/C] VERSION SWITCH FAILED (SQLite): %s", exc)
+        set_meta("universe_state", "DEGRADED")
+        set_meta("building_universe_version", "")
+        return False
+
+
+# ── Exclusion Percentage Guard ────────────────────────────────
+
+def check_exclusion_guard(version: str, max_exclusion_pct: float = 10.0) -> tuple:
+    """Check if permanent exclusions exceed the safety threshold.
+    Returns (is_safe, exclusion_pct, excluded_count, total_candidates).
+
+    If excluded_count / total_candidates > max_exclusion_pct:
+        universe_state → DEGRADED
+    """
+    total_row = execute_db(
+        "SELECT COUNT(*) as c FROM candidate_universe WHERE universe_version = ?",
+        (version,), fetch="one"
+    )
+    total_candidates = int(total_row.get("c", 0)) if total_row else 0
+
+    excluded_row = execute_db(
+        """SELECT COUNT(*) as c
+           FROM candidate_universe cu
+           JOIN universe_catalog uc ON cu.symbol = uc.symbol
+           WHERE cu.universe_version = ?
+             AND (uc.liquidity_excluded = TRUE OR uc.liquidity_excluded = 1)""",
+        (version,), fetch="one"
+    )
+    excluded_count = int(excluded_row.get("c", 0)) if excluded_row else 0
+
+    exclusion_pct = (excluded_count / total_candidates * 100) if total_candidates > 0 else 0
+    is_safe = exclusion_pct <= max_exclusion_pct
+
+    if not is_safe:
+        log.error("[Phase 5.6B/C] EXCLUSION GUARD TRIGGERED: %.1f%% excluded (%d/%d) > %.1f%% max",
+                  exclusion_pct, excluded_count, total_candidates, max_exclusion_pct)
+        set_meta("universe_state", "DEGRADED")
+
+    return is_safe, round(exclusion_pct, 2), excluded_count, total_candidates
+
+
+# ── Snapshot Retention ────────────────────────────────────────
+
+def cleanup_old_snapshots(keep_days: int = 90):
+    """Remove universe_snapshot rows older than keep_days.
+    Always keeps all rows for the active version regardless of age.
+    """
+    active_version = get_meta("active_universe_version") or ""
+
+    deleted = execute_db(
+        """DELETE FROM universe_snapshot
+           WHERE generated_at < datetime('now', '-' || ? || ' days')
+             AND universe_version != ?""",
+        (str(keep_days), active_version), fetch="rowcount"
+    )
+
+    if deleted and deleted > 0:
+        log.info("[Phase 5.6B/C] Snapshot retention: deleted %d rows older than %d days "
+                 "(kept active=%s)", deleted, keep_days, active_version)
+    return deleted or 0
+
+

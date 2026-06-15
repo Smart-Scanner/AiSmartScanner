@@ -89,12 +89,24 @@ MAX_SCAN_WORKERS = min(int(os.getenv("MAX_SCAN_WORKERS", "2")), 2)  # hard cap a
 PROGRESSIVE_PUBLISH_INTERVAL = int(os.getenv("PROGRESSIVE_PUBLISH_INTERVAL", "25"))
 
 # Universe Eligibility Filters (Turnover = primary, Volume = secondary)
-UNIVERSE_MIN_MCAP_CR = float(os.getenv("UNIVERSE_MIN_MCAP_CR", "1000"))
+UNIVERSE_MIN_MCAP_CR = float(os.getenv("UNIVERSE_MIN_MCAP_CR", "1500"))
 UNIVERSE_MIN_AVG_TURNOVER_CR = float(os.getenv("UNIVERSE_MIN_AVG_TURNOVER_CR", "5"))
 UNIVERSE_MIN_AVG_VOLUME = int(os.getenv("UNIVERSE_MIN_AVG_VOLUME", "100000"))
 UNIVERSE_MIN_PRICE = float(os.getenv("UNIVERSE_MIN_PRICE", "20"))
 UNIVERSE_MIN_DATA_COVERAGE = float(os.getenv("UNIVERSE_MIN_DATA_COVERAGE", "0.90"))
 UNIVERSE_MIN_LISTING_DAYS = int(os.getenv("UNIVERSE_MIN_LISTING_DAYS", "180"))  # IPO age filter
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 5.6B/C: Liquidity Enrichment & Universe Governance
+# ═══════════════════════════════════════════════════════════════
+LIQUIDITY_ENRICHMENT_BATCH_SIZE = int(os.getenv("LIQUIDITY_ENRICHMENT_BATCH_SIZE", "50"))
+LIQUIDITY_ENRICHMENT_WORKERS = int(os.getenv("LIQUIDITY_ENRICHMENT_WORKERS", "4"))
+LIQUIDITY_MIN_COVERAGE_PCT = float(os.getenv("LIQUIDITY_MIN_COVERAGE_PCT", "80"))
+
+# API Governance — protect Angel Historical API stability
+LIQUIDITY_API_RPS = float(os.getenv("LIQUIDITY_API_RPS", "2"))
+LIQUIDITY_WORKER_SLEEP_MS = int(os.getenv("LIQUIDITY_WORKER_SLEEP_MS", "500"))
+LIQUIDITY_MAX_RETRIES = int(os.getenv("LIQUIDITY_MAX_RETRIES", "3"))
 
 # Master Sync & Universe Rebuild
 MASTER_SYNC_INTERVAL_DAYS = int(os.getenv("MASTER_SYNC_INTERVAL_DAYS", "14"))
@@ -148,7 +160,7 @@ BASELINE_CONFIG = {
     # Phase 5.5: Universe Engine
     "SCAN_BATCH_SIZE": 50,
     "MAX_SCAN_WORKERS": 2,
-    "UNIVERSE_MIN_MCAP_CR": 1000,
+    "UNIVERSE_MIN_MCAP_CR": 1500,
     "UNIVERSE_MIN_AVG_TURNOVER_CR": 5,
     "UNIVERSE_MIN_AVG_VOLUME": 100000,
     "UNIVERSE_MIN_PRICE": 20,

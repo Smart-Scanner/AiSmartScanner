@@ -397,6 +397,7 @@ def mission_control_universe_status():
         auto_scan_enabled = "1" if AUTO_SCAN_ENABLED_DEFAULT else "0"
         
     universe_build_status = db.get_meta("universe_build_status") or "UNKNOWN"
+    universe_state = db.get_meta("universe_state") or "UNKNOWN"
         
     eligible_count = history.get("eligible_count", 0)
     health = "BROKEN"
@@ -404,15 +405,43 @@ def mission_control_universe_status():
         health = "HEALTHY"
     elif eligible_count >= 100:
         health = "WARNING"
-        
-    scan_ready = (auto_scan_enabled == "1" and universe_build_status == "READY" and eligible_count >= 500)
-        
+    
+    # Phase 5.6B/C: Comprehensive scan_ready gate
+    scan_ready_meta = db.get_meta("scan_ready")
+    scan_ready = (scan_ready_meta == "true" and 
+                  auto_scan_enabled == "1" and
+                  eligible_count >= 500)
+
+    # Phase 5.6B/C: Liquidity worker status
+    liquidity_worker_status = db.get_meta("liquidity_worker_status") or "idle"
+    liquidity_worker_started_at = db.get_meta("liquidity_worker_started_at")
+    liquidity_worker_runtime = db.get_meta("liquidity_worker_runtime_minutes") or "0"
+
+    # Phase 5.6B/C: API governance metrics
+    api_error_count = int(db.get_meta("liquidity_api_errors") or 0)
+    throttle_count = int(db.get_meta("liquidity_api_throttles") or 0)
+
+    # Phase 5.6B/C: Liquidity progress
+    liquidity_progress_pct = float(db.get_meta("liquidity_progress_pct") or 0)
+
+    # Phase 5.6B/C: Version governance
+    active_universe_version = db.get_meta("active_universe_version") or history.get("universe_version", "unknown")
+    building_universe_version = db.get_meta("building_universe_version") or ""
+    previous_universe_version = db.get_meta("previous_active_universe_version") or ""
+
+    # Candidate count (liquidity-enrichment specific)
+    candidate_count_meta = db.get_meta("candidate_frozen_count")
+    candidate_count = int(candidate_count_meta) if candidate_count_meta else 0
+
     return jsonify({
         "catalog_total": catalog_total,
         "catalog_synced": catalog_synced,
         "catalog_pending": catalog_pending,
-        "universe_version": history.get("universe_version", "unknown"),
+        "universe_version": active_universe_version,
+        "building_version": building_universe_version,
+        "previous_version": previous_universe_version,
         "eligible_count": eligible_count,
+        "candidate_count": candidate_count,
         "rejected_breakdown": {
             "mcap": history.get("rejected_mcap", 0),
             "turnover": history.get("rejected_turnover", 0),
@@ -424,8 +453,20 @@ def mission_control_universe_status():
         "last_master_sync_at": db.get_meta("master_sync_last_completed"),
         "universe_health": health,
         "universe_build_status": universe_build_status,
+        "universe_state": universe_state,
         "auto_scan_enabled": auto_scan_enabled == "1",
-        "scan_ready": scan_ready
+        "scan_ready": scan_ready,
+        # Phase 5.6B/C: Liquidity enrichment
+        "liquidity_progress_pct": liquidity_progress_pct,
+        "liquidity_worker_status": liquidity_worker_status,
+        "liquidity_worker_started_at": liquidity_worker_started_at,
+        "liquidity_worker_runtime_minutes": float(liquidity_worker_runtime),
+        # Phase 5.6B/C: API governance
+        "api_error_count": api_error_count,
+        "throttle_count": throttle_count,
+        # Phase 5.6B/C: Coverage & exclusion metrics
+        "permanent_exclusions": int(db.get_meta("liquidity_permanent_exclusions") or 0),
+        "liquidity_coverage_pct": float(db.get_meta("liquidity_progress_pct") or 0),
     })
 
 @admin_bp.route("/api/mission-control/scanner-control", methods=["POST"])

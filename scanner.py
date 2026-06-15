@@ -962,30 +962,46 @@ import queue as _q
 
 def _run_parallel_scan(context: ScanContext):
     """
-    Phase 5.5: Queue-based parallel scan with 2 persistent workers.
+    Phase 5.5/5.6B/C: Queue-based parallel scan with 2 persistent workers.
 
     Architecture:
-      1. Build eligible universe (or resume from checkpoint)
-      2. Acquire scan lock (heartbeat-based)
-      3. Split into batches of SCAN_BATCH_SIZE
-      4. Create persistent workers that pull from batch queue
-      5. Progressive publish every PROGRESSIVE_PUBLISH_INTERVAL stocks
-      6. Update resume checkpoint after each batch
-      7. Finalize (sector strength, AI summary, evidence)
-      8. Release lock + cleanup resume state
+      1. Load eligible universe from active version (or resume from checkpoint)
+      2. Safety gate: abort if eligible_universe < 500
+      3. Acquire scan lock (heartbeat-based)
+      4. Split into batches of SCAN_BATCH_SIZE
+      5. Create persistent workers that pull from batch queue
+      6. Progressive publish every PROGRESSIVE_PUBLISH_INTERVAL stocks
+      7. Update resume checkpoint after each batch
+      8. Finalize (sector strength, AI summary, evidence)
+      9. Release lock + cleanup resume state
     """
     from config import (
         SCAN_BATCH_SIZE, MAX_SCAN_WORKERS, PROGRESSIVE_PUBLISH_INTERVAL,
         DATA_LOOKBACK_DAYS, SCAN_DURATION_ALERT_MINUTES,
     )
-    from universe_builder import build_eligible_universe
 
     scan_id = context.scan_id
     correlation_id = context.correlation_id
 
-    log.info("[%s] ═══ Phase 5.5: Parallel Scan Engine ═══", correlation_id[:12])
+    log.info("[%s] ═══ Phase 5.6B/C: Parallel Scan Engine ═══", correlation_id[:12])
 
-    # ── 1. Build or resume universe ──────────────────────────────
+    # ── Safety Gate: Check eligible_universe count ────────────
+    try:
+        eu_count_row = db.execute_db(
+            "SELECT COUNT(*) as c FROM eligible_universe",
+            fetch="one"
+        )
+        eu_count = int(eu_count_row.get("c", 0)) if eu_count_row else 0
+
+        if eu_count < 500:
+            log.error("[%s] SCAN SAFETY GATE: eligible_universe count=%d < 500. Scan BLOCKED.",
+                      correlation_id[:12], eu_count)
+            scan_state.complete(success=False, error_message="SAFETY_GATE: eligible_universe too small (%d < 500)" % eu_count)
+            return
+    except Exception as exc:
+        log.warning("[%s] Safety gate check failed (non-fatal): %s", correlation_id[:12], exc)
+
+    # ── 1. Load or resume universe ──────────────────────────────
     resume = db.get_pending_resume()
     start_batch = 0
 
@@ -997,11 +1013,31 @@ def _run_parallel_scan(context: ScanContext):
         log.info("[%s] RESUMING scan from batch %d, universe=%s (%d stocks)",
                  correlation_id[:12], start_batch, universe_version, len(eligible))
     else:
-        eligible, universe_version = build_eligible_universe()
+        # Phase 5.6B/C: Load existing eligible universe instead of rebuilding
+        active_version = db.get_meta("active_universe_version")
+        if active_version:
+            eligible_rows = db.get_eligible_universe(active_version)
+            eligible = [r["symbol"] for r in eligible_rows] if eligible_rows else []
+            universe_version = active_version
+            log.info("[%s] Loaded active universe %s: %d stocks",
+                     correlation_id[:12], universe_version, len(eligible))
+        else:
+            # Fallback: try loading latest universe
+            eligible_rows = db.get_eligible_universe()
+            if eligible_rows and len(eligible_rows) >= 500:
+                eligible = [r["symbol"] for r in eligible_rows]
+                universe_version = eligible_rows[0].get("universe_version", "UNKNOWN")
+                log.info("[%s] Loaded latest universe %s: %d stocks",
+                         correlation_id[:12], universe_version, len(eligible))
+            else:
+                # Last resort: build via legacy path
+                from universe_builder import build_eligible_universe
+                eligible, universe_version = build_eligible_universe()
 
     MIN_UNIVERSE_SIZE = 500
     if not eligible or len(eligible) < MIN_UNIVERSE_SIZE:
         log.error("[%s] Universe too small (count=%d, min=%d). Scan blocked.", correlation_id[:12], len(eligible) if eligible else 0, MIN_UNIVERSE_SIZE)
+        scan_state.complete(success=False, error_message="Universe too small: %d < %d" % (len(eligible) if eligible else 0, MIN_UNIVERSE_SIZE))
         return
 
     total = len(eligible)
@@ -1027,11 +1063,20 @@ def _run_parallel_scan(context: ScanContext):
     db.clear_meta_cache()
     log.info("[%s] Scan lock acquired, starting parallel scan against Universe %s", correlation_id[:12], universe_version)
     
-    # Store universe_version in scan_runs
+    # Store universe metadata in scan_runs for forensic audit
     try:
         db.execute_db("UPDATE scan_runs SET universe_version=? WHERE scan_id=?", (universe_version, scan_id))
+        # Phase 5.6B/C: Record candidate + eligible counts for forensic analysis
+        candidate_count_meta = db.get_meta("candidate_frozen_count") or "0"
+        db.execute_db(
+            """UPDATE scan_runs SET candidate_count=?
+               WHERE scan_id=?""",
+            (total, scan_id)
+        )
+        log.info("[%s] Scan universe audit: version=%s eligible=%d candidates=%s",
+                 correlation_id[:12], universe_version, total, candidate_count_meta)
     except Exception as exc:
-        log.warning("[%s] Failed to store universe_version in scan_runs: %s", correlation_id[:12], exc)
+        log.warning("[%s] Failed to store universe metadata in scan_runs: %s", correlation_id[:12], exc)
 
     start_time = time.monotonic()
 

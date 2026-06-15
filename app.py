@@ -115,7 +115,7 @@ from config import USE_UNIVERSE_ENGINE, AUTO_SCAN_ENABLED_DEFAULT
 if USE_UNIVERSE_ENGINE:
     log.info("[Phase 5.5] Universe Engine ACTIVE")
     
-    # Background Boot Sequence (Master Sync -> Universe Build)
+    # Background Boot Sequence (Master Sync -> Liquidity Worker -> Universe Build)
     def _boot_universe_prep():
         # One-time data repair: fix symbols corrupted by old Phase 1
         # (last_synced_at was set but market_cap=0, meaning yfinance never ran)
@@ -136,14 +136,23 @@ if USE_UNIVERSE_ENGINE:
             run_master_sync()
         except Exception as e:
             log.error("[BootPrep] Master Sync error: %s", e)
-            
-        log.info("[BootPrep] Running Universe Build...")
+
+        # Phase 5.6B/C: Launch background liquidity worker (detached from boot)
+        # Worker will: freeze candidates → enrich → check coverage → build universe
+        log.info("[BootPrep] Launching Background Liquidity Worker...")
         try:
-            from universe_builder import build_eligible_universe
-            build_eligible_universe()
+            from liquidity_enrichment import start_background_liquidity_worker
+            start_background_liquidity_worker()
         except Exception as e:
-            log.error("[BootPrep] Universe Build error: %s", e)
-            
+            log.error("[BootPrep] Liquidity Worker launch error: %s", e)
+            # Fallback: try legacy universe build if worker fails
+            log.info("[BootPrep] Falling back to legacy Universe Build...")
+            try:
+                from universe_builder import build_eligible_universe
+                build_eligible_universe()
+            except Exception as e2:
+                log.error("[BootPrep] Legacy Universe Build error: %s", e2)
+
         log.info("[BootPrep] Universe Prep Complete.")
         
     threading.Thread(target=_boot_universe_prep, daemon=True, name="boot-prep").start()
@@ -247,7 +256,7 @@ def _auto_scan_loop():
                 except Exception as exc:
                     log.warning("[Phase 5.5] Master sync failed: %s", exc)
 
-                # Phase 5.5: Daily universe rebuild at 8:30 AM IST
+                # Phase 5.6B/C: Daily universe rebuild + liquidity refresh at 8:30 AM IST
                 try:
                     from datetime import datetime, timezone, timedelta as _td
                     _IST = timezone(_td(hours=5, minutes=30))
@@ -257,13 +266,14 @@ def _auto_scan_loop():
                         _now_ist.minute >= UNIVERSE_REBUILD_MINUTE and
                         _now_ist.minute < UNIVERSE_REBUILD_MINUTE + 5 and
                         (now - last_universe_rebuild) > 3600):
-                        log.info("[Phase 5.5] Daily universe rebuild triggered")
-                        from universe_builder import build_eligible_universe
-                        build_eligible_universe()
+                        log.info("[Phase 5.6B/C] Daily universe refresh triggered")
+                        # Kick off liquidity worker which handles freeze → enrich → build
+                        from liquidity_enrichment import start_background_liquidity_worker
+                        start_background_liquidity_worker()
                         last_universe_rebuild = time.time()
                         db.set_meta("last_universe_rebuild_ts", str(last_universe_rebuild))
                 except Exception as exc:
-                    log.warning("[Phase 5.5] Universe rebuild failed: %s", exc)
+                    log.warning("[Phase 5.6B/C] Daily universe refresh failed: %s", exc)
 
             market_open = live_feed.is_market_open()
 

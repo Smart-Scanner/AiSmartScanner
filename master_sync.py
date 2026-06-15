@@ -123,6 +123,14 @@ def run_master_sync():
 
         log.info("[MasterSync] Phase 1 done: %d symbols in catalog", len(all_symbols))
 
+        # Phase 1.5: Classify instrument types for unsynced symbols
+        # Applies name heuristics ONLY for symbols without yfinance metadata
+        try:
+            classified = db.classify_instrument_types()
+            log.info("[MasterSync] Phase 1.5: Classified %d instrument types (heuristic)", classified)
+        except Exception as exc:
+            log.warning("[MasterSync] Phase 1.5: Classification failed (non-fatal): %s", exc)
+
         # Catalog monitoring for Mission Control
         try:
             catalog_stats = db.execute_db(
