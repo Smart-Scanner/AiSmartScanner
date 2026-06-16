@@ -176,6 +176,26 @@ def _run_liquidity_enrichment():
             log.warning("[LiquidityWorker] Instrument classification failed (non-fatal): %s", exc)
 
         # 3. Freeze candidate universe
+        # Pre-freeze observability: log candidate breakdown
+        try:
+            pre_candidates = db.get_candidate_universe()
+            pre_count = len(pre_candidates) if pre_candidates else 0
+            # Count currently excluded symbols for diagnostics
+            excluded_info = db.execute_db(
+                "SELECT COUNT(*) as c FROM universe_catalog WHERE COALESCE(liquidity_excluded, FALSE) = TRUE",
+                fetch="one"
+            )
+            excluded_count = int(excluded_info.get("c", 0)) if excluded_info else 0
+            total_active = db.execute_db(
+                "SELECT COUNT(*) as c FROM universe_catalog WHERE is_active = TRUE",
+                fetch="one"
+            )
+            total_active_count = int(total_active.get("c", 0)) if total_active else 0
+            log.info("[LiquidityWorker] candidate_count=%d eligible=%d excluded=%d",
+                     total_active_count, pre_count, excluded_count)
+        except Exception as exc:
+            log.warning("[LiquidityWorker] Pre-freeze diagnostics failed (non-fatal): %s", exc)
+
         freeze_result = db.freeze_candidate_universe(target_version)
         frozen_count = freeze_result.get("frozen_count", 0)
 
@@ -185,7 +205,7 @@ def _run_liquidity_enrichment():
             _release_lock("failed_no_candidates")
             return
 
-        log.info("[LiquidityWorker] Frozen %d candidates for enrichment", frozen_count)
+        log.info("[LiquidityWorker] frozen=%d version=%s", frozen_count, target_version)
 
         # 4. Batch enrichment loop
         # Hard cap concurrency at 4 — no config override can exceed this

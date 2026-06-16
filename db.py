@@ -21,7 +21,7 @@ import threading
 import sqlite3
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from metrics.timer import timed
 
 log = logging.getLogger("db")
@@ -5504,7 +5504,7 @@ def get_candidate_universe() -> list:
            WHERE is_active = TRUE
              AND (instrument_type = 'EQ' OR instrument_type IS NULL)
              AND market_cap >= 1500
-             AND (liquidity_excluded = FALSE OR liquidity_excluded = 0 OR liquidity_excluded IS NULL)
+             AND COALESCE(liquidity_excluded, FALSE) = FALSE
            ORDER BY market_cap DESC""",
         fetch="all"
     ) or []
@@ -5599,18 +5599,19 @@ def get_liquidity_pending_symbols_v2(version: str, batch_size: int = 50) -> list
     universe_catalog entries have liquidity_synced_at IS NULL or > 7 days old,
     and liquidity_sync_fail_count < 3.
     """
+    cutoff_7d = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
     rows = execute_db(
         """SELECT cu.symbol
            FROM candidate_universe cu
            JOIN universe_catalog uc ON cu.symbol = uc.symbol
            WHERE cu.universe_version = ?
-             AND (uc.liquidity_excluded = FALSE OR uc.liquidity_excluded = 0 OR uc.liquidity_excluded IS NULL)
+             AND COALESCE(uc.liquidity_excluded, FALSE) = FALSE
              AND uc.liquidity_sync_fail_count < 3
              AND (uc.liquidity_synced_at IS NULL
-                  OR uc.liquidity_synced_at < datetime('now', '-7 days'))
+                  OR uc.liquidity_synced_at < ?)
            ORDER BY uc.liquidity_synced_at ASC NULLS FIRST
            LIMIT ?""",
-        (version, batch_size), fetch="all"
+        (version, cutoff_7d, batch_size), fetch="all"
     ) or []
     return [r.get("symbol") for r in rows if r.get("symbol")]
 
@@ -5691,7 +5692,7 @@ def get_universe_health_metrics_v3(version: str) -> dict:
            FROM candidate_universe cu
            JOIN universe_catalog uc ON cu.symbol = uc.symbol
            WHERE cu.universe_version = ?
-             AND (uc.liquidity_excluded = TRUE OR uc.liquidity_excluded = 1)""",
+             AND COALESCE(uc.liquidity_excluded, FALSE) = TRUE""",
         (version,), fetch="one"
     )
     excluded_count = int(excluded_row.get("c", 0)) if excluded_row else 0
@@ -5918,7 +5919,7 @@ def check_exclusion_guard(version: str, max_exclusion_pct: float = 10.0) -> tupl
            FROM candidate_universe cu
            JOIN universe_catalog uc ON cu.symbol = uc.symbol
            WHERE cu.universe_version = ?
-             AND (uc.liquidity_excluded = TRUE OR uc.liquidity_excluded = 1)""",
+             AND COALESCE(uc.liquidity_excluded, FALSE) = TRUE""",
         (version,), fetch="one"
     )
     excluded_count = int(excluded_row.get("c", 0)) if excluded_row else 0
@@ -5939,14 +5940,16 @@ def check_exclusion_guard(version: str, max_exclusion_pct: float = 10.0) -> tupl
 def cleanup_old_snapshots(keep_days: int = 90):
     """Remove universe_snapshot rows older than keep_days.
     Always keeps all rows for the active version regardless of age.
+    Uses Python-side cutoff for PG+SQLite compatibility.
     """
     active_version = get_meta("active_universe_version") or ""
+    cutoff = (datetime.now() - timedelta(days=keep_days)).strftime("%Y-%m-%d %H:%M:%S")
 
     deleted = execute_db(
         """DELETE FROM universe_snapshot
-           WHERE generated_at < datetime('now', '-' || ? || ' days')
+           WHERE generated_at < ?
              AND universe_version != ?""",
-        (str(keep_days), active_version), fetch="rowcount"
+        (cutoff, active_version), fetch="rowcount"
     )
 
     if deleted and deleted > 0:

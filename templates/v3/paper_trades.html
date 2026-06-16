@@ -74,8 +74,8 @@
 </style>
 
 <script>
-let ptTrades = [];
-let ptStats = {};
+let globalPtTrades = [];
+let globalPtStats = {};
 
 function switchPTTab(tab, btn) {
     document.querySelectorAll('#ptTabs .v3-tab').forEach(t => t.classList.remove('active'));
@@ -203,16 +203,16 @@ async function loadPaperTrades() {
         const tradesData = await tradesResp.json();
         const statsData = await statsResp.json();
 
-        ptTrades = tradesData.trades || [];
-        ptStats = statsData;
+        globalPtTrades = tradesData.trades || [];
+        globalPtStats = statsData;
 
         document.getElementById('ptLoading').style.display = 'none';
         document.getElementById('ptContent').style.display = 'block';
 
-        renderStats(ptStats);
+        renderStats(globalPtStats);
 
-        const openTrades = ptTrades.filter(t => t.status === 'OPEN');
-        const closedTrades = ptTrades.filter(t => t.status === 'CLOSED');
+        const openTrades = globalPtTrades.filter(t => t.status === 'OPEN');
+        const closedTrades = globalPtTrades.filter(t => t.status === 'CLOSED');
 
         document.getElementById('ptOpen').innerHTML = openTrades.length
             ? openTrades.map(t => renderTradeRow(t, true)).join('')
