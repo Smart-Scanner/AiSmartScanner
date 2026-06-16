@@ -486,6 +486,20 @@ def mission_control_universe_status():
             "status_misses": _cache_metrics.get("status_misses", 0),
             "status_invalidations": _cache_metrics.get("status_invalidations", 0),
         },
+        # P0: JSON Sanitization & Angel Reauth observability metrics
+        "json_sanitizer_metrics": {
+            "json_processed_count": int(db.get_meta("json_processed_count") or 0),
+            "json_sanitized_count": int(db.get_meta("json_sanitized_count") or 0),
+            "json_rejected_count": int(db.get_meta("json_rejected_count") or 0),
+            "json_rejection_rate_pct": round(
+                (int(db.get_meta("json_rejected_count") or 0) /
+                 max(int(db.get_meta("json_processed_count") or 0), 1)) * 100, 2
+            ),
+        },
+        "angel_reauth_metrics": {
+            "angel_reauth_count": int(db.get_meta("angel_reauth_count") or 0),
+            "sqlite_fallback_count": int(db.get_meta("sqlite_fallback_count") or 0),
+        },
     })
 
 @admin_bp.route("/api/mission-control/scanner-control", methods=["POST"])

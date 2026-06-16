@@ -17,6 +17,8 @@ Phase 1 Changes:
 import os
 import json
 import logging
+import math
+import atexit
 import threading
 import sqlite3
 import time
@@ -25,6 +27,205 @@ from datetime import datetime, timedelta
 from metrics.timer import timed
 
 log = logging.getLogger("db")
+
+# ── P0: JSON Sanitization & Observability Metrics ───────────────────────
+# Thread-safe memory counters for JSON sanitization and operational metrics.
+# Flushed to scan_meta periodically (every 5 min) and on application exit.
+# Success-only reset: counters are only decremented after confirmed DB write.
+_batch_metrics = {
+    "json_processed_count": 0,
+    "json_sanitized_count": 0,
+    "json_rejected_count": 0,
+    "angel_reauth_count": 0,
+    "sqlite_fallback_count": 0,
+}
+_metrics_lock = threading.Lock()
+
+
+def increment_mem_counter(key: str, amount: int = 1):
+    """Increment an in-memory metric counter (thread-safe)."""
+    with _metrics_lock:
+        _batch_metrics[key] = _batch_metrics.get(key, 0) + amount
+
+
+def flush_metrics_to_db():
+    """Flush in-memory metric counters to scan_meta.
+
+    Success-only reset: counters are decremented only after confirmed
+    DB write so that failed flushes retain the data for the next attempt.
+    """
+    with _metrics_lock:
+        snapshot = {k: v for k, v in _batch_metrics.items() if v != 0}
+    if not snapshot:
+        return
+    for key, amount in snapshot.items():
+        try:
+            current = get_meta(key) or 0
+            try:
+                current = int(current)
+            except (ValueError, TypeError):
+                current = 0
+            set_meta(key, str(current + amount))
+            # Success — deduct flushed amount
+            with _metrics_lock:
+                _batch_metrics[key] = _batch_metrics.get(key, 0) - amount
+        except Exception as exc:
+            log.warning("[METRICS_FLUSH] Failed to flush %s=%d: %s — retaining for next flush", key, amount, exc)
+
+
+def _metrics_flush_loop():
+    """Background daemon thread: flush metrics every 5 minutes."""
+    while True:
+        try:
+            time.sleep(300)
+            flush_metrics_to_db()
+        except Exception as exc:
+            log.warning("[METRICS_FLUSH] Background flush error (non-fatal): %s", exc)
+
+
+try:
+    _metrics_flush_thread = threading.Thread(target=_metrics_flush_loop, daemon=True)
+    _metrics_flush_thread.start()
+except Exception:
+    pass  # Thread failure must never block startup
+
+atexit.register(flush_metrics_to_db)
+
+
+def sanitize_for_json(obj, symbol=None, scan_id=None, component=None, _path="", _visited=None):
+    """Recursively sanitize a Python object for safe JSON serialization.
+
+    - Replaces float NaN, inf, -inf with None.
+    - Tracks visited containers (dict/list/tuple/set) to detect circular references.
+    - Primitives (str, int, float, bool, None) are NOT tracked to avoid false
+      positives from Python's object interning.
+    - Logs each replacement for root-cause analysis.
+
+    Returns the sanitized object (new copy for containers, in-place for primitives).
+    """
+    if _visited is None:
+        _visited = set()
+
+    # Primitive float check — the main NaN/inf catch
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            label = "NaN" if math.isnan(obj) else ("inf" if obj > 0 else "-inf")
+            log.warning(
+                "[JSON_SANITIZER] symbol=%s field=%s component=%s original=%s scan_id=%s",
+                symbol or "?", _path or "root", component or "unknown", label, scan_id or "?"
+            )
+            increment_mem_counter("json_sanitized_count")
+            return None
+        return obj
+
+    # numpy scalar check (has .item())
+    if hasattr(obj, "item"):
+        try:
+            native = obj.item()
+            if isinstance(native, float) and (math.isnan(native) or math.isinf(native)):
+                label = "NaN" if math.isnan(native) else ("inf" if native > 0 else "-inf")
+                log.warning(
+                    "[JSON_SANITIZER] symbol=%s field=%s component=%s original=%s(numpy) scan_id=%s",
+                    symbol or "?", _path or "root", component or "unknown", label, scan_id or "?"
+                )
+                increment_mem_counter("json_sanitized_count")
+                return None
+            return native
+        except Exception:
+            pass
+
+    # Container types — track by id to detect circular references
+    if isinstance(obj, dict):
+        obj_id = id(obj)
+        if obj_id in _visited:
+            log.warning("[JSON_SANITIZER_CIRCULAR] Circular reference detected at symbol=%s path=%s", symbol, _path)
+            return None
+        _visited.add(obj_id)
+        result = {}
+        for k, v in obj.items():
+            child_path = f"{_path}.{k}" if _path else k
+            child_component = component
+            # Infer component from top-level keys
+            if not _path:
+                if k == "fundamentals":
+                    child_component = "fundamentals"
+                elif k in ("news_sentiment", "gdelt"):
+                    child_component = "sentiment"
+                elif k in ("_score_components", "earnings_signals"):
+                    child_component = "scoring"
+                elif k in ("trade", "support_resistance"):
+                    child_component = "trade_levels"
+                elif child_component is None:
+                    child_component = "technical_scoring"
+            result[k] = sanitize_for_json(v, symbol=symbol, scan_id=scan_id, component=child_component, _path=child_path, _visited=_visited)
+        _visited.discard(obj_id)
+        return result
+
+    if isinstance(obj, (list, tuple)):
+        obj_id = id(obj)
+        if obj_id in _visited:
+            log.warning("[JSON_SANITIZER_CIRCULAR] Circular reference detected at symbol=%s path=%s", symbol, _path)
+            return None
+        _visited.add(obj_id)
+        items = [
+            sanitize_for_json(v, symbol=symbol, scan_id=scan_id, component=component,
+                              _path=f"{_path}[{i}]", _visited=_visited)
+            for i, v in enumerate(obj)
+        ]
+        _visited.discard(obj_id)
+        return items if isinstance(obj, list) else tuple(items)
+
+    if isinstance(obj, set):
+        obj_id = id(obj)
+        if obj_id in _visited:
+            log.warning("[JSON_SANITIZER_CIRCULAR] Circular reference detected at symbol=%s path=%s", symbol, _path)
+            return None
+        _visited.add(obj_id)
+        items = [
+            sanitize_for_json(v, symbol=symbol, scan_id=scan_id, component=component,
+                              _path=f"{_path}{{set}}", _visited=_visited)
+            for v in obj
+        ]
+        _visited.discard(obj_id)
+        return items
+
+    # All other primitives (str, int, bool, None) — pass through
+    return obj
+
+
+def verify_json_nan_prevention():
+    """Startup verification: ensure sanitizer and allow_nan=False work correctly.
+
+    Non-fatal: logs CRITICAL on failure but does NOT crash the application.
+    """
+    try:
+        # Test 1: sanitize_for_json replaces NaN
+        test_obj = {"price": float("nan"), "rsi": float("inf"), "atr": float("-inf"), "name": "TEST"}
+        sanitized = sanitize_for_json(test_obj, symbol="STARTUP_TEST", scan_id="startup", component="verify")
+        assert sanitized["price"] is None, "NaN was not replaced"
+        assert sanitized["rsi"] is None, "inf was not replaced"
+        assert sanitized["atr"] is None, "-inf was not replaced"
+        assert sanitized["name"] == "TEST", "Normal value was corrupted"
+
+        # Test 2: json.dumps with allow_nan=False passes on sanitized data
+        json.dumps(sanitized, allow_nan=False)
+
+        # Test 3: json.dumps with allow_nan=False rejects raw NaN
+        try:
+            json.dumps({"bad": float("nan")}, allow_nan=False)
+            assert False, "json.dumps should have raised ValueError"
+        except ValueError:
+            pass  # Expected
+
+        # Test 4: circular reference guard
+        circular = {}
+        circular["self"] = circular
+        result = sanitize_for_json(circular, symbol="CIRCULAR_TEST")
+        assert result is not None, "Top-level should not be None"
+
+        log.info("[JSON_STARTUP_VERIFY] Startup JSON sanitizer check passed successfully.")
+    except Exception as exc:
+        log.critical("[JSON_STARTUP_VERIFY] Startup validation failed, but continuing: %s", exc)
 
 DB_PATH = Path(__file__).parent / "cache" / "screener.db"
 
@@ -146,7 +347,10 @@ def _build_slim(r: dict) -> str:
         }
         # Keep compact: drop None values
         slim["trade_summary"] = {k: v for k, v in trade_summary.items() if v is not None}
-    return json.dumps(slim)
+    # P0: Sanitize slim payload and serialize with allow_nan=False
+    sym = r.get("symbol", "?")
+    slim = sanitize_for_json(slim, symbol=sym, component="slim_data")
+    return json.dumps(slim, default=str, allow_nan=False)
 
 
 def is_postgresql() -> bool:
@@ -410,6 +614,8 @@ def init_db():
         try:
             _run_init_db_logic()
             _db_initialized = True
+            # P0: Non-fatal startup verification of JSON sanitizer
+            verify_json_nan_prevention()
         except Exception:
             _db_initialized = False
             raise
@@ -2603,7 +2809,9 @@ def _save_results_raw(results: list):
     scan_date = datetime.now().strftime("%Y-%m-%d")
     for r in results:
         sym = r["symbol"]
-        slim = _build_slim(r) if _DB_USE_SLIM else None
+        # P0: Sanitize before serialization
+        r_sanitized = sanitize_for_json(r, symbol=sym, component="_save_results_raw")
+        slim = _build_slim(r_sanitized) if _DB_USE_SLIM else None
         execute_db("""
             INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -2612,8 +2820,8 @@ def _save_results_raw(results: list):
                 high_conviction=excluded.high_conviction, sector=excluded.sector,
                 scan_date=excluded.scan_date, updated_at=excluded.updated_at,
                 slim_data=excluded.slim_data
-        """, (sym, json.dumps(r), r.get("score", 0), 1 if r.get("high_conviction") else 0,
-              r.get("sector", ""), scan_date, now, slim))
+        """, (sym, json.dumps(r_sanitized, default=str, allow_nan=False), r_sanitized.get("score", 0), 1 if r_sanitized.get("high_conviction") else 0,
+              r_sanitized.get("sector", ""), scan_date, now, slim))
 
 
 def _move_to_dlq(batch: DeferredBatch):
@@ -2778,37 +2986,48 @@ def save_results(results: list[dict], meta: dict = None):
                     except (ValueError, TypeError):
                         return None
 
+                rejected_symbols = []
                 for r in to_save:
                     sym = r["symbol"]
-                    f = r.get("fundamentals", {})
+
+                    # P0: Sanitize the full result dict before serialization
+                    try:
+                        r_sanitized = sanitize_for_json(r, symbol=sym, scan_id=get_meta("scan_id"), component="save_results")
+                        data_json = json.dumps(r_sanitized, default=str, allow_nan=False)
+                        increment_mem_counter("json_processed_count")
+                    except (ValueError, OverflowError) as json_err:
+                        log.error("[JSON_REJECTED] symbol=%s error=%s — skipping from batch", sym, json_err)
+                        increment_mem_counter("json_rejected_count")
+                        rejected_symbols.append(sym)
+                        continue
+
+                    f = r_sanitized.get("fundamentals", {})
 
                     # 1. scan_results (+ slim_data for Phase 1C)
-                    # We pass default=str to json.dumps to avoid TypeError on np types
-                    import json as _json
-                    slim = _build_slim(r) if _DB_USE_SLIM else None
+                    slim = _build_slim(r_sanitized) if _DB_USE_SLIM else None
                     scan_results_rows.append((
-                        sym, _json.dumps(r, default=str), _sf(r.get("score")),
-                        1 if r.get("high_conviction") else 0,
-                        r.get("sector", ""), scan_date, now, slim
+                        sym, data_json, _sf(r_sanitized.get("score")),
+                        1 if r_sanitized.get("high_conviction") else 0,
+                        r_sanitized.get("sector", ""), scan_date, now, slim
                     ))
 
                     # 2. score_history
                     score_history_rows.append((
-                        sym, _sf(r.get("score")), _sf(r.get("price")),
-                        _sf(r.get("rsi")), scan_date
+                        sym, _sf(r_sanitized.get("score")), _sf(r_sanitized.get("price")),
+                        _sf(r_sanitized.get("rsi")), scan_date
                     ))
 
                     # 3. stocks
                     stocks_rows.append((
-                        sym, r.get("name", sym), r.get("sector", "Other"),
+                        sym, r_sanitized.get("name", sym), r_sanitized.get("sector", "Other"),
                         f.get("industry", ""), now
                     ))
 
                     # 4. news — collect symbols and articles
                     all_news_symbols.append(sym)
-                    gdelt_data = r.get("gdelt", {})
+                    gdelt_data = r_sanitized.get("gdelt", {})
                     articles = list(gdelt_data.get("articles", []))
-                    news_s = r.get("news_sentiment", {})
+                    news_s = r_sanitized.get("news_sentiment", {})
                     for item in news_s.get("items", []):
                         if item.get("source") == "marketaux":
                             articles.append({
@@ -2828,23 +3047,23 @@ def save_results(results: list[dict], meta: dict = None):
                     sentiment_rows.append((
                         sym, scan_date, _sf(gdelt_data.get("sentiment", 0.0)),
                         _sf(gdelt_data.get("spike", 1.0)), _sf(gdelt_data.get("freshness", 0.0)),
-                        _sf(r.get("news_sentiment_score", 0.0)), now
+                        _sf(r_sanitized.get("news_sentiment_score", 0.0)), now
                     ))
 
                     # 6. technical_indicators
                     technical_rows.append((
-                        sym, scan_date, r.get("rsi"), r.get("adx"),
-                        r.get("macd_signal"), r.get("volume_ratio"),
-                        r.get("atr_pct"), r.get("stoch_k"), r.get("stoch_d"),
-                        r.get("pct_1w"), r.get("pct_2w"), r.get("pct_1m"),
-                        r.get("bb_position"), r.get("dist_from_high"),
-                        r.get("rs_vs_nifty"), r.get("vwap_position"),
-                        True if r.get("is_breakout") else False,
-                        True if r.get("vp_divergence") else False,
-                        r.get("weekly_trend", "flat"),
-                        True if r.get("below_ema200") else False,
-                        r.get("high_52w"), r.get("low_52w"),
-                        r.get("pullback_pct"), now
+                        sym, scan_date, r_sanitized.get("rsi"), r_sanitized.get("adx"),
+                        r_sanitized.get("macd_signal"), r_sanitized.get("volume_ratio"),
+                        r_sanitized.get("atr_pct"), r_sanitized.get("stoch_k"), r_sanitized.get("stoch_d"),
+                        r_sanitized.get("pct_1w"), r_sanitized.get("pct_2w"), r_sanitized.get("pct_1m"),
+                        r_sanitized.get("bb_position"), r_sanitized.get("dist_from_high"),
+                        r_sanitized.get("rs_vs_nifty"), r_sanitized.get("vwap_position"),
+                        True if r_sanitized.get("is_breakout") else False,
+                        True if r_sanitized.get("vp_divergence") else False,
+                        r_sanitized.get("weekly_trend", "flat"),
+                        True if r_sanitized.get("below_ema200") else False,
+                        r_sanitized.get("high_52w"), r_sanitized.get("low_52w"),
+                        r_sanitized.get("pullback_pct"), now
                     ))
 
                     # 7. fundamentals
@@ -2860,15 +3079,26 @@ def save_results(results: list[dict], meta: dict = None):
 
                     # 8. final_scores
                     final_scores_rows.append((
-                        sym, scan_date, r.get("news_sentiment_score", 0.0),
-                        r.get("news_spike_score", 0.0), r.get("technical_score", 0.0),
-                        r.get("fundamental_score", 0.0), r.get("macro_score", 0.0),
-                        r.get("marketaux_catalyst_score", 0.0),
-                        r.get("score", 0), r.get("grade", ""),
-                        True if r.get("high_conviction") else False,
-                        True if r.get("bear_play") else False,
-                        True if r.get("is_golden") else False, now
+                        sym, scan_date, r_sanitized.get("news_sentiment_score", 0.0),
+                        r_sanitized.get("news_spike_score", 0.0), r_sanitized.get("technical_score", 0.0),
+                        r_sanitized.get("fundamental_score", 0.0), r_sanitized.get("macro_score", 0.0),
+                        r_sanitized.get("marketaux_catalyst_score", 0.0),
+                        r_sanitized.get("score", 0), r_sanitized.get("grade", ""),
+                        True if r_sanitized.get("high_conviction") else False,
+                        True if r_sanitized.get("bear_play") else False,
+                        True if r_sanitized.get("is_golden") else False, now
                     ))
+
+                # P0: Dual rejection threshold — abort if >=25 AND >25% rejected
+                if rejected_symbols:
+                    total = len(to_save)
+                    rejected_count = len(rejected_symbols)
+                    log.warning("[JSON_REJECTION_SUMMARY] rejected=%d/%d symbols=%s",
+                                rejected_count, total, rejected_symbols[:10])
+                    if rejected_count >= 25 and rejected_count / total > 0.25:
+                        log.critical("[JSON_REJECTION_ABORT] Rejecting entire batch: %d/%d (%.0f%%) symbols had invalid JSON",
+                                     rejected_count, total, (rejected_count / total) * 100)
+                        raise ValueError(f"JSON rejection threshold exceeded: {rejected_count}/{total}")
 
                 # ── Execute bulk UPSERTs ──
 
@@ -2993,15 +3223,31 @@ def save_results(results: list[dict], meta: dict = None):
                 # ── Pool health ──
                 log_pool_health()
 
-                # ── Meta ──
-                if meta:
-                    for k, v in meta.items():
-                        set_meta(k, v)
+                # P0: Flush metrics after successful PG commit
+                flush_metrics_to_db()
 
                 return  # PG bulk path succeeded
 
+            except ValueError as json_exc:
+                # P0: JSON rejection threshold or serialization error — do NOT fall back to SQLite
+                # The data itself is bad; SQLite won't fix it.
+                log.error("[PG_BULK_JSON_ERROR] %s — NOT falling back to SQLite (data issue, not connection)", json_exc)
+                if conn:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                # Do NOT fall through — return after logging
+                save_duration = (time.perf_counter() - save_start) * 1000
+                log.info("[SAVE_RESULTS] rows=0 duration=%sms (json_rejection)", round(save_duration))
+                if meta:
+                    for k, v in meta.items():
+                        set_meta(k, v)
+                return
+
             except Exception as exc:
-                log.error("Bulk UPSERT failed: %s — falling back to per-row SQLite", exc)
+                log.error("[SQLITE_FALLBACK_TRIGGERED] reason=pg_bulk_upsert_failed error=%s", exc)
+                increment_mem_counter("sqlite_fallback_count")
                 if conn:
                     try:
                         conn.rollback()
@@ -3017,136 +3263,164 @@ def save_results(results: list[dict], meta: dict = None):
                         pass
 
     # ── SQLite fallback path (per-row, kept as emergency parachute) ──
+    # P0: Use single transaction for atomicity and rollback protection
     saved_count = 0
-    for r in to_save:
-        sym = r["symbol"]
-        try:
-            # 1. scan_results (+ slim_data)
-            slim = _build_slim(r) if _DB_USE_SLIM else None
-            execute_db("""
-                INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(symbol) DO UPDATE SET
-                    data=excluded.data, score=excluded.score,
-                    high_conviction=excluded.high_conviction, sector=excluded.sector,
-                    scan_date=excluded.scan_date, updated_at=excluded.updated_at,
-                    slim_data=excluded.slim_data
-            """, (sym, json.dumps(r), r.get("score", 0), 1 if r.get("high_conviction") else 0, r.get("sector", ""), scan_date, now, slim))
+    sqlite_conn = None
+    try:
+        sqlite_conn = sqlite3.connect(str(DB_PATH))
+        sqlite_conn.execute("PRAGMA journal_mode=WAL")
+        sqlite_conn.execute("BEGIN")
 
-            # 2. score_history
-            execute_db("""
-                INSERT INTO score_history (symbol, score, price, rsi, scan_date)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(symbol, scan_date) DO UPDATE SET
-                    score=excluded.score, price=excluded.price, rsi=excluded.rsi
-            """, (sym, r.get("score", 0), r.get("price", 0.0), r.get("rsi"), scan_date))
+        for r in to_save:
+            sym = r["symbol"]
+            try:
+                # P0: Sanitize before SQLite serialization too
+                r_sanitized = sanitize_for_json(r, symbol=sym, component="sqlite_fallback")
+                data_json = json.dumps(r_sanitized, default=str, allow_nan=False)
 
-            # 3. stocks
-            f = r.get("fundamentals", {})
-            execute_db("""
-                INSERT INTO stocks (symbol, name, sector, industry, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(symbol) DO UPDATE SET
-                    name=excluded.name, sector=excluded.sector, industry=excluded.industry, updated_at=excluded.updated_at
-            """, (sym, r.get("name", sym), r.get("sector", "Other"), f.get("industry", ""), now))
+                # 1. scan_results (+ slim_data)
+                slim = _build_slim(r_sanitized) if _DB_USE_SLIM else None
+                sqlite_conn.execute("""
+                    INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol) DO UPDATE SET
+                        data=excluded.data, score=excluded.score,
+                        high_conviction=excluded.high_conviction, sector=excluded.sector,
+                        scan_date=excluded.scan_date, updated_at=excluded.updated_at,
+                        slim_data=excluded.slim_data
+                """, (sym, data_json, r_sanitized.get("score", 0), 1 if r_sanitized.get("high_conviction") else 0, r_sanitized.get("sector", ""), scan_date, now, slim))
 
-            # 4. news_articles
-            execute_db("DELETE FROM news_articles WHERE symbol=?", (sym,))
-            gdelt_data = r.get("gdelt", {})
-            articles = list(gdelt_data.get("articles", []))
-            news_s = r.get("news_sentiment", {})
-            for item in news_s.get("items", []):
-                if item.get("source") == "marketaux":
-                    articles.append({
-                        "title": item.get("title", ""),
-                        "score": item.get("score", 0.0),
-                        "source": "marketaux",
-                        "age_h": 1.0
-                    })
-            for art in articles[:10]:
-                execute_db("""
-                    INSERT INTO news_articles (symbol, title, url, source, age_hours, raw_score, scanned_at)
+                # 2. score_history
+                sqlite_conn.execute("""
+                    INSERT INTO score_history (symbol, score, price, rsi, scan_date)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, scan_date) DO UPDATE SET
+                        score=excluded.score, price=excluded.price, rsi=excluded.rsi
+                """, (sym, r_sanitized.get("score", 0), r_sanitized.get("price", 0.0), r_sanitized.get("rsi"), scan_date))
+
+                # 3. stocks
+                f = r_sanitized.get("fundamentals", {})
+                sqlite_conn.execute("""
+                    INSERT INTO stocks (symbol, name, sector, industry, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol) DO UPDATE SET
+                        name=excluded.name, sector=excluded.sector, industry=excluded.industry, updated_at=excluded.updated_at
+                """, (sym, r_sanitized.get("name", sym), r_sanitized.get("sector", "Other"), f.get("industry", ""), now))
+
+                # 4. news_articles
+                sqlite_conn.execute("DELETE FROM news_articles WHERE symbol=?", (sym,))
+                gdelt_data = r_sanitized.get("gdelt", {})
+                articles = list(gdelt_data.get("articles", []))
+                news_s = r_sanitized.get("news_sentiment", {})
+                for item in news_s.get("items", []):
+                    if item.get("source") == "marketaux":
+                        articles.append({
+                            "title": item.get("title", ""),
+                            "score": item.get("score", 0.0),
+                            "source": "marketaux",
+                            "age_h": 1.0
+                        })
+                for art in articles[:10]:
+                    sqlite_conn.execute("""
+                        INSERT INTO news_articles (symbol, title, url, source, age_hours, raw_score, scanned_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (sym, art.get("title", ""), art.get("url", ""), art.get("source", "GDELT"), art.get("age_h", 12.0), art.get("score", 0.0), now))
+
+                # 5. sentiment_scores
+                sqlite_conn.execute("""
+                    INSERT INTO sentiment_scores (symbol, scan_date, gdelt_sentiment, gdelt_spike, gdelt_freshness, final_sentiment_score, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (sym, art.get("title", ""), art.get("url", ""), art.get("source", "GDELT"), art.get("age_h", 12.0), art.get("score", 0.0), now))
+                    ON CONFLICT(symbol, scan_date) DO UPDATE SET
+                        gdelt_sentiment=excluded.gdelt_sentiment, gdelt_spike=excluded.gdelt_spike,
+                        gdelt_freshness=excluded.gdelt_freshness, final_sentiment_score=excluded.final_sentiment_score,
+                        updated_at=excluded.updated_at
+                """, (sym, scan_date, gdelt_data.get("sentiment", 0.0), gdelt_data.get("spike", 1.0), gdelt_data.get("freshness", 0.0), r_sanitized.get("news_sentiment_score", 0.0), now))
 
-            # 5. sentiment_scores
-            execute_db("""
-                INSERT INTO sentiment_scores (symbol, scan_date, gdelt_sentiment, gdelt_spike, gdelt_freshness, final_sentiment_score, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(symbol, scan_date) DO UPDATE SET
-                    gdelt_sentiment=excluded.gdelt_sentiment, gdelt_spike=excluded.gdelt_spike,
-                    gdelt_freshness=excluded.gdelt_freshness, final_sentiment_score=excluded.final_sentiment_score,
-                    updated_at=excluded.updated_at
-            """, (sym, scan_date, gdelt_data.get("sentiment", 0.0), gdelt_data.get("spike", 1.0), gdelt_data.get("freshness", 0.0), r.get("news_sentiment_score", 0.0), now))
+                # 6. technical_indicators
+                sqlite_conn.execute("""
+                    INSERT INTO technical_indicators (
+                        symbol, scan_date, rsi, adx, macd_signal, volume_ratio, atr_pct, stoch_k, stoch_d,
+                        pct_1w, pct_2w, pct_1m, bb_position, dist_from_high, rs_vs_nifty, vwap_position,
+                        is_breakout, vp_divergence, weekly_trend, below_ema200, high_52w, low_52w, pullback_pct, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, scan_date) DO UPDATE SET
+                        rsi=excluded.rsi, adx=excluded.adx, macd_signal=excluded.macd_signal,
+                        volume_ratio=excluded.volume_ratio, atr_pct=excluded.atr_pct, stoch_k=excluded.stoch_k,
+                        stoch_d=excluded.stoch_d, pct_1w=excluded.pct_1w, pct_2w=excluded.pct_2w, pct_1m=excluded.pct_1m,
+                        bb_position=excluded.bb_position, dist_from_high=excluded.dist_from_high, rs_vs_nifty=excluded.rs_vs_nifty,
+                        vwap_position=excluded.vwap_position, is_breakout=excluded.is_breakout, vp_divergence=excluded.vp_divergence,
+                        weekly_trend=excluded.weekly_trend, below_ema200=excluded.below_ema200, high_52w=excluded.high_52w,
+                        low_52w=excluded.low_52w, pullback_pct=excluded.pullback_pct, updated_at=excluded.updated_at
+                """, (
+                    sym, scan_date, r_sanitized.get("rsi"), r_sanitized.get("adx"), r_sanitized.get("macd_signal"), r_sanitized.get("volume_ratio"), r_sanitized.get("atr_pct"),
+                    r_sanitized.get("stoch_k"), r_sanitized.get("stoch_d"), r_sanitized.get("pct_1w"), r_sanitized.get("pct_2w"), r_sanitized.get("pct_1m"), r_sanitized.get("bb_position"),
+                    r_sanitized.get("dist_from_high"), r_sanitized.get("rs_vs_nifty"), r_sanitized.get("vwap_position"),
+                    True if r_sanitized.get("is_breakout") else False, True if r_sanitized.get("vp_divergence") else False, r_sanitized.get("weekly_trend", "flat"),
+                    True if r_sanitized.get("below_ema200") else False, r_sanitized.get("high_52w"), r_sanitized.get("low_52w"), r_sanitized.get("pullback_pct"), now
+                ))
 
-            # 6. technical_indicators
-            execute_db("""
-                INSERT INTO technical_indicators (
-                    symbol, scan_date, rsi, adx, macd_signal, volume_ratio, atr_pct, stoch_k, stoch_d,
-                    pct_1w, pct_2w, pct_1m, bb_position, dist_from_high, rs_vs_nifty, vwap_position,
-                    is_breakout, vp_divergence, weekly_trend, below_ema200, high_52w, low_52w, pullback_pct, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(symbol, scan_date) DO UPDATE SET
-                    rsi=excluded.rsi, adx=excluded.adx, macd_signal=excluded.macd_signal,
-                    volume_ratio=excluded.volume_ratio, atr_pct=excluded.atr_pct, stoch_k=excluded.stoch_k,
-                    stoch_d=excluded.stoch_d, pct_1w=excluded.pct_1w, pct_2w=excluded.pct_2w, pct_1m=excluded.pct_1m,
-                    bb_position=excluded.bb_position, dist_from_high=excluded.dist_from_high, rs_vs_nifty=excluded.rs_vs_nifty,
-                    vwap_position=excluded.vwap_position, is_breakout=excluded.is_breakout, vp_divergence=excluded.vp_divergence,
-                    weekly_trend=excluded.weekly_trend, below_ema200=excluded.below_ema200, high_52w=excluded.high_52w,
-                    low_52w=excluded.low_52w, pullback_pct=excluded.pullback_pct, updated_at=excluded.updated_at
-            """, (
-                sym, scan_date, r.get("rsi"), r.get("adx"), r.get("macd_signal"), r.get("volume_ratio"), r.get("atr_pct"),
-                r.get("stoch_k"), r.get("stoch_d"), r.get("pct_1w"), r.get("pct_2w"), r.get("pct_1m"), r.get("bb_position"),
-                r.get("dist_from_high"), r.get("rs_vs_nifty"), r.get("vwap_position"),
-                True if r.get("is_breakout") else False, True if r.get("vp_divergence") else False, r.get("weekly_trend", "flat"),
-                True if r.get("below_ema200") else False, r.get("high_52w"), r.get("low_52w"), r.get("pullback_pct"), now
-            ))
+                # 7. fundamentals
+                f = r_sanitized.get("fundamentals", {})
+                sqlite_conn.execute("""
+                    INSERT INTO fundamentals (
+                        symbol, pe, pb, fwd_pe, roe, roa, revenue_growth, earnings_growth,
+                        debt_to_equity, promoter_pct, market_cap, free_cash_flow, total_revenue, capex, eps_fwd, eps_trail, fund_score, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol) DO UPDATE SET
+                        pe=excluded.pe, pb=excluded.pb, fwd_pe=excluded.fwd_pe, roe=excluded.roe, roa=excluded.roa,
+                        revenue_growth=excluded.revenue_growth, earnings_growth=excluded.earnings_growth,
+                        debt_to_equity=excluded.debt_to_equity, promoter_pct=excluded.promoter_pct,
+                        market_cap=excluded.market_cap, free_cash_flow=excluded.free_cash_flow,
+                        total_revenue=excluded.total_revenue, capex=excluded.capex, eps_fwd=excluded.eps_fwd,
+                        eps_trail=excluded.eps_trail, fund_score=excluded.fund_score, updated_at=excluded.updated_at
+                """, (
+                    sym, f.get("pe"), f.get("pb"), f.get("fwd_pe"), f.get("roe"), f.get("roa"), f.get("revenue_growth"),
+                    f.get("earnings_growth"), f.get("debt_to_equity"), f.get("promoter_pct"), f.get("market_cap"),
+                    f.get("free_cash_flow"), f.get("total_revenue"), f.get("capex"), f.get("eps_fwd"), f.get("eps_trail"),
+                    f.get("fund_score", 0), now
+                ))
 
-            # 7. fundamentals
-            f = r.get("fundamentals", {})
-            execute_db("""
-                INSERT INTO fundamentals (
-                    symbol, pe, pb, fwd_pe, roe, roa, revenue_growth, earnings_growth,
-                    debt_to_equity, promoter_pct, market_cap, free_cash_flow, total_revenue, capex, eps_fwd, eps_trail, fund_score, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(symbol) DO UPDATE SET
-                    pe=excluded.pe, pb=excluded.pb, fwd_pe=excluded.fwd_pe, roe=excluded.roe, roa=excluded.roa,
-                    revenue_growth=excluded.revenue_growth, earnings_growth=excluded.earnings_growth,
-                    debt_to_equity=excluded.debt_to_equity, promoter_pct=excluded.promoter_pct,
-                    market_cap=excluded.market_cap, free_cash_flow=excluded.free_cash_flow,
-                    total_revenue=excluded.total_revenue, capex=excluded.capex, eps_fwd=excluded.eps_fwd,
-                    eps_trail=excluded.eps_trail, fund_score=excluded.fund_score, updated_at=excluded.updated_at
-            """, (
-                sym, f.get("pe"), f.get("pb"), f.get("fwd_pe"), f.get("roe"), f.get("roa"), f.get("revenue_growth"),
-                f.get("earnings_growth"), f.get("debt_to_equity"), f.get("promoter_pct"), f.get("market_cap"),
-                f.get("free_cash_flow"), f.get("total_revenue"), f.get("capex"), f.get("eps_fwd"), f.get("eps_trail"),
-                f.get("fund_score", 0), now
-            ))
+                # 8. final_scores
+                sqlite_conn.execute("""
+                    INSERT INTO final_scores (
+                        symbol, scan_date, news_sentiment_score, news_spike_score, technical_score,
+                        fundamental_score, macro_score, marketaux_score, final_score, grade, high_conviction, bear_play, is_golden, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, scan_date) DO UPDATE SET
+                        news_sentiment_score=excluded.news_sentiment_score, news_spike_score=excluded.news_spike_score,
+                        technical_score=excluded.technical_score, fundamental_score=excluded.fundamental_score,
+                        macro_score=excluded.macro_score, marketaux_score=excluded.marketaux_score,
+                        final_score=excluded.final_score, grade=excluded.grade,
+                        high_conviction=excluded.high_conviction, bear_play=excluded.bear_play,
+                        is_golden=excluded.is_golden, updated_at=excluded.updated_at
+                """, (
+                    sym, scan_date, r_sanitized.get("news_sentiment_score", 0.0), r_sanitized.get("news_spike_score", 0.0), r_sanitized.get("technical_score", 0.0),
+                    r_sanitized.get("fundamental_score", 0.0), r_sanitized.get("macro_score", 0.0), r_sanitized.get("marketaux_catalyst_score", 0.0),
+                    r_sanitized.get("score", 0), r_sanitized.get("grade", ""), True if r_sanitized.get("high_conviction") else False, True if r_sanitized.get("bear_play") else False,
+                    True if r_sanitized.get("is_golden") else False, now
+                ))
 
-            # 8. final_scores
-            execute_db("""
-                INSERT INTO final_scores (
-                    symbol, scan_date, news_sentiment_score, news_spike_score, technical_score,
-                    fundamental_score, macro_score, marketaux_score, final_score, grade, high_conviction, bear_play, is_golden, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(symbol, scan_date) DO UPDATE SET
-                    news_sentiment_score=excluded.news_sentiment_score, news_spike_score=excluded.news_spike_score,
-                    technical_score=excluded.technical_score, fundamental_score=excluded.fundamental_score,
-                    macro_score=excluded.macro_score, marketaux_score=excluded.marketaux_score,
-                    final_score=excluded.final_score, grade=excluded.grade,
-                    high_conviction=excluded.high_conviction, bear_play=excluded.bear_play,
-                    is_golden=excluded.is_golden, updated_at=excluded.updated_at
-            """, (
-                sym, scan_date, r.get("news_sentiment_score", 0.0), r.get("news_spike_score", 0.0), r.get("technical_score", 0.0),
-                r.get("fundamental_score", 0.0), r.get("macro_score", 0.0), r.get("marketaux_catalyst_score", 0.0),
-                r.get("score", 0), r.get("grade", ""), True if r.get("high_conviction") else False, True if r.get("bear_play") else False,
-                True if r.get("is_golden") else False, now
-            ))
+                saved_count += 1
+            except Exception as exc:
+                log.warning("SQLite write failed for %s: %s -- queueing to DLQ", sym, exc)
+                queue_deferred_write([r])
 
-            saved_count += 1
-        except Exception as exc:
-            log.warning("DB write failed for %s: %s -- queueing to DLQ", sym, exc)
-            queue_deferred_write([r])
+        # P0: Commit entire batch atomically
+        sqlite_conn.execute("COMMIT")
+    except Exception as txn_exc:
+        log.error("[SQLITE_FALLBACK_TXN_FAILED] Rolling back entire batch: %s", txn_exc)
+        if sqlite_conn:
+            try:
+                sqlite_conn.execute("ROLLBACK")
+            except Exception:
+                pass
+        saved_count = 0
+    finally:
+        if sqlite_conn:
+            try:
+                sqlite_conn.close()
+            except Exception:
+                pass
 
     # ── Transaction timing (SQLite path) ──
     save_duration = (time.perf_counter() - save_start) * 1000
@@ -3687,7 +3961,12 @@ def resolve_symbol(symbol: str) -> str:
 def set_meta(key: str, value):
     """Set a metadata value. Write-through to memory cache."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    v = json.dumps(value) if not isinstance(value, str) else value
+    # P0: Sanitize non-string values before serialization
+    if not isinstance(value, str):
+        value = sanitize_for_json(value, component="set_meta")
+        v = json.dumps(value, default=str, allow_nan=False)
+    else:
+        v = value
     execute_db("""
         INSERT INTO scan_meta (key, value, updated_at) VALUES (?, ?, ?)
         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
@@ -3729,8 +4008,9 @@ def save_score_audit(results: list, scan_id: str, scan_version: str):
             _breakdown_json = None
             if _breakdown:
                 try:
-                    import json as _json
-                    _breakdown_json = _json.dumps(_breakdown, default=str)
+                    # P0: Sanitize score breakdown before serialization
+                    _breakdown = sanitize_for_json(_breakdown, symbol=r.get("symbol"), component="score_audit")
+                    _breakdown_json = json.dumps(_breakdown, default=str, allow_nan=False)
                 except Exception:
                     pass
             execute_db("""
@@ -3836,7 +4116,9 @@ def get_stock(symbol: str) -> dict | None:
 def save_detailed_fundamentals(symbol: str, data: dict):
     """Save processed detailed financials JSON to fundamentals table."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    v = json.dumps(data)
+    # P0: Sanitize detailed fundamentals before serialization
+    data = sanitize_for_json(data, symbol=symbol, component="detailed_fundamentals")
+    v = json.dumps(data, default=str, allow_nan=False)
     execute_db("""
         INSERT INTO fundamentals (symbol, detailed_json, updated_at)
         VALUES (?, ?, ?)

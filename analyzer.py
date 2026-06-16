@@ -50,9 +50,52 @@ from intelligence.fundamentals import get_fundamentals_yf
 from intelligence.yf_guard import yf_status as yf_guard_status
 
 import time
+import math
 from metrics.timer import timed, _record as record_timing
 
 log = logging.getLogger("screener")
+
+
+# ── P0: NaN Source Tracing ──────────────────────────────────────────────
+# Walks the result dict to find and log any remaining NaN/inf values
+# with their full dotted path. This is the root-cause finder that tells
+# us which analyzer component is producing bad data.
+
+def trace_nan_sources(result: dict, symbol: str = "?", scan_id: str = "?"):
+    """Walk result dict and log every NaN/inf field with full dotted path.
+
+    Purpose: identify which analyzer component produces NaN so the
+    source can be fixed. Runs after _safe() has already cleaned known
+    spots, catching anything _safe() missed.
+    """
+    nan_fields = []
+
+    def _walk(obj, path=""):
+        if isinstance(obj, float):
+            if math.isnan(obj) or math.isinf(obj):
+                nan_fields.append(path or "root")
+        elif hasattr(obj, "item"):
+            try:
+                native = obj.item()
+                if isinstance(native, float) and (math.isnan(native) or math.isinf(native)):
+                    nan_fields.append(path or "root")
+            except Exception:
+                pass
+        elif isinstance(obj, dict):
+            for k, v in obj.items():
+                _walk(v, f"{path}.{k}" if path else k)
+        elif isinstance(obj, (list, tuple)):
+            for i, v in enumerate(obj):
+                _walk(v, f"{path}[{i}]")
+
+    _walk(result)
+
+    if nan_fields:
+        log.warning(
+            "[NAN_TRACE] symbol=%s scan_id=%s nan_count=%d fields=%s",
+            symbol, scan_id, len(nan_fields), nan_fields[:20]
+        )
+    return nan_fields
 
 
 # ===================================================================
@@ -1109,7 +1152,7 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
                 return default
             return v
 
-        return {
+        _result = {
             # Core — R2: updated sub-scores with earnings momentum
             "model_version": "R2.1",  # Track for outcome comparison across releases
             "symbol": clean, "name": clean, "sector": fundamentals.get("sector", sector),
@@ -1247,6 +1290,10 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
                 (time.time() - df["DATE"].iloc[-1].timestamp()) / 3600, 1
             ) if hasattr(df["DATE"].iloc[-1], "timestamp") else None,
         }
+
+        # P0: Trace NaN sources for root-cause analysis before returning
+        trace_nan_sources(_result, symbol=clean, scan_id=scan_mode)
+        return _result
 
     except (KeyError, ValueError, IndexError, TypeError) as exc:
         log.debug("Analysis failed for %s: %s", symbol, exc)

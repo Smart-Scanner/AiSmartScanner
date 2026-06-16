@@ -101,6 +101,55 @@ def get_dynamic_rest_gap() -> float:
     else:
         return 2.0
 
+# ── P0: Angel Reauth Storm Lock ─────────────────────────────────────────
+# When AG8001 (Invalid Token) is detected by multiple threads simultaneously,
+# they must NOT all call _login(). This lock + cooldown prevents login storms.
+_reauth_lock = threading.Lock()
+_last_reauth_time = 0.0
+_last_reauth_success = False
+_REAUTH_COOLDOWN_SECS = 60  # Minimum seconds between re-auth attempts
+
+
+def force_reauth(reason: str = "unknown") -> bool:
+    """Force a re-authentication with storm prevention.
+
+    Only one thread can re-auth at a time. If another reauth happened
+    within the last 60 seconds, the current request is skipped.
+    Tracks success state for observability.
+
+    Returns True if reauth succeeded, False otherwise.
+    """
+    global _last_reauth_time, _last_reauth_success
+    with _reauth_lock:
+        now = time.time()
+        if now - _last_reauth_time < _REAUTH_COOLDOWN_SECS:
+            log.info("[REAUTH_SKIP] reason=%s — last reauth was %.0fs ago (cooldown=%ds, last_success=%s)",
+                     reason, now - _last_reauth_time, _REAUTH_COOLDOWN_SECS, _last_reauth_success)
+            return _last_reauth_success
+
+        log.warning("[REAUTH_START] reason=%s — initiating forced re-login", reason)
+        _last_reauth_time = now
+
+        # Increment reauth counter
+        try:
+            import db
+            db.increment_mem_counter("angel_reauth_count")
+        except Exception:
+            pass
+
+        # Force fresh login by clearing existing session
+        global _smart_api, _auth_token, _feed_token, _last_login
+        _smart_api = None
+        _auth_token = None
+        _feed_token = None
+        _last_login = 0
+
+        success = _login()
+        _last_reauth_success = success
+
+        log.info("[REAUTH_COMPLETE] reason=%s success=%s", reason, success)
+        return success
+
 _IST = timezone(timedelta(hours=5, minutes=30))
 
 def _load_env():
@@ -507,6 +556,7 @@ def fetch_ltp_bulk(symbols: list[str]) -> dict:
     if not ensure_session():
         return {}
     results = {}
+    _reauth_attempted = False  # P0: Only attempt reauth once per batch
     for sym in symbols:
         _rest_gap()
         clean = sym.upper().replace(".NS", "")
@@ -515,6 +565,15 @@ def fetch_ltp_bulk(symbols: list[str]) -> dict:
             continue
         try:
             data = _smart_api.ltpData("NSE", f"{clean}-EQ", token)
+
+            # P0: AG8001 detection — reauth once per batch, then retry
+            if not _reauth_attempted and data and data.get("errorcode") == "AG8001":
+                log.warning("[AG8001] Invalid Token in LTP for %s — forcing reauth", clean)
+                _reauth_attempted = True
+                if force_reauth(reason=f"AG8001_fetch_ltp_{clean}"):
+                    _rest_gap()
+                    data = _smart_api.ltpData("NSE", f"{clean}-EQ", token)
+
             if data.get("status") and data.get("data"):
                 d = data["data"]
                 ltp = float(d.get("ltp", 0))
@@ -590,6 +649,15 @@ def fetch_historical(symbol: str, days: int = 365):
             time.sleep(_backoff)
             _rest_gap()
             result = _smart_api.getCandleData(params)
+
+        # P0: AG8001 (Invalid Token) detection — reauth + single retry
+        if result and result.get("errorcode") == "AG8001":
+            log.warning("[AG8001] Invalid Token for %s — forcing reauth", clean)
+            if force_reauth(reason=f"AG8001_fetch_historical_{clean}"):
+                _rest_gap()
+                result = _smart_api.getCandleData(params)
+            else:
+                log.error("[AG8001] Reauth failed for %s — falling back", clean)
 
         if not result or not result.get("status") or not result.get("data"):
             log.warning("Candle query fail for %s. Trying yfinance fallback...", clean)
