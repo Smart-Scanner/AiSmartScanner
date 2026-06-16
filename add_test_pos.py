@@ -7,7 +7,7 @@ headers = {'Content-Type': 'application/json'}
 positions = [
     {'symbol': 'RELIANCE', 'buy_price': 2500, 'quantity': 10, 'side': 'LONG', 'strategy': 'CORE'},
     {'symbol': 'TCS', 'buy_price': 3500, 'quantity': 15, 'side': 'LONG', 'strategy': 'CORE'},
-    {'symbol': 'HDFC', 'buy_price': 1500, 'quantity': 20, 'side': 'LONG', 'strategy': 'CORE'},
+    {'symbol': 'HDFCBANK', 'buy_price': 1500, 'quantity': 20, 'side': 'LONG', 'strategy': 'CORE'},
     {'symbol': 'INFY', 'buy_price': 1400, 'quantity': 25, 'side': 'LONG', 'strategy': 'CORE'},
     {'symbol': 'WIPRO', 'buy_price': 400, 'quantity': 30, 'side': 'LONG', 'strategy': 'CORE'}
 ]

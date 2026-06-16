@@ -157,7 +157,9 @@ def refresh_token_map():
         log.error("Token refresh failed: %s", exc)
 
 def get_token(symbol: str):
-    return _token_map.get(symbol.upper().replace(".NS", ""))
+    import db
+    resolved = db.resolve_symbol(symbol)
+    return _token_map.get(resolved.upper().replace(".NS", ""))
 
 def get_symbol(token: str):
     return _reverse_map.get(str(token))
@@ -306,17 +308,29 @@ def is_market_open():
     return 555 <= mins <= 930
 
 def get_live_prices(symbols=None):
+    import db
     with _prices_lock:
         if symbols:
-            return {s: _live_prices[s].copy() for s in symbols if s in _live_prices}
+            res = {}
+            for s in symbols:
+                resolved = db.resolve_symbol(s)
+                clean = resolved.upper().replace(".NS", "")
+                if clean in _live_prices:
+                    res[s] = _live_prices[clean].copy()
+                    res[s]["symbol"] = s.upper()
+            return res
         return {s: d.copy() for s, d in _live_prices.items()}
 
 def get_live_price(symbol):
-    clean = symbol.upper().replace(".NS", "")
+    import db
+    resolved = db.resolve_symbol(symbol)
+    clean = resolved.upper().replace(".NS", "")
     with _prices_lock:
         data = _live_prices.get(clean)
         if data:
-            return data.copy()
+            tick = data.copy()
+            tick["symbol"] = symbol.upper()
+            return tick
 
     # Fallback to yfinance if not in WebSocket cache
     if not yf_is_available():
@@ -329,7 +343,7 @@ def get_live_price(symbol):
         ltp = info.get("lastPrice") or info.get("last_price")
         if ltp:
             tick = {
-                "symbol": clean,
+                "symbol": symbol.upper(),
                 "ltp": round(float(ltp), 2),
                 "open": round(float(info.get("open", ltp)), 2),
                 "high": round(float(info.get("high", ltp)), 2),
@@ -341,9 +355,9 @@ def get_live_price(symbol):
                 "last_update": datetime.now().isoformat(timespec="seconds"),
             }
             with _prices_lock:
-                _live_prices[clean] = tick
+                _live_prices[clean] = tick.copy()
             yf_record_success()
-            return tick.copy()
+            return tick
     except Exception as exc:
         log.debug("yfinance live fallback failed for %s: %s", clean, exc)
         yf_record_failure()
@@ -427,10 +441,12 @@ def _subscribe_symbols(symbols):
         log.error("Subscribe error: %s", exc)
 
 def subscribe(symbols):
+    import db
     global _subscribers
     new_syms = set()
     for s in symbols:
-        clean = s.upper().replace(".NS", "")
+        resolved = db.resolve_symbol(s)
+        clean = resolved.upper().replace(".NS", "")
         if clean not in _subscribers and get_token(clean):
             _subscribers.add(clean)
             new_syms.add(clean)

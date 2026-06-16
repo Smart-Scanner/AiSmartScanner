@@ -470,6 +470,10 @@ def mission_control_universe_status():
         # Phase 5.6B/C: Coverage & exclusion metrics
         "permanent_exclusions": int(db.get_meta("liquidity_permanent_exclusions") or 0),
         "liquidity_coverage_pct": float(db.get_meta("liquidity_progress_pct") or 0),
+        # P0: Provider unavailable skips
+        "provider_unavailable_skips": int(db.get_meta("master_sync_skipped_provider_unavailable") or 0),
+        # P2: Slim-data feature flag
+        "use_slim_results": db.is_slim_results_enabled(),
         # Phase A: Cache observability metrics
         # NOTE: metrics are process-local; each Gunicorn worker tracks independently
         "cache_metrics": {

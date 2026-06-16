@@ -399,7 +399,22 @@ def execute_db(query: str, params=None, fetch: str = None):
 
 # ─── Database Initialisation ───
 
+_db_initialized = False
+_db_init_lock = threading.Lock()
+
 def init_db():
+    global _db_initialized
+    with _db_init_lock:
+        if _db_initialized:
+            return
+        try:
+            _run_init_db_logic()
+            _db_initialized = True
+        except Exception:
+            _db_initialized = False
+            raise
+
+def _run_init_db_logic():
     """Create tables if they don't exist.
     
     Uses an explicit temporary connection rather than the pool so that
@@ -602,6 +617,25 @@ def init_db():
                     log.info("Performance indexes verified")
                 except Exception as e:
                     log.warning("Index creation failed (non-fatal): %s", e)
+
+                # PG Symbol Aliases System
+                try:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS symbol_aliases (
+                            old_symbol TEXT PRIMARY KEY,
+                            new_symbol TEXT NOT NULL,
+                            reason TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+                    cur.execute("""
+                        INSERT INTO symbol_aliases (old_symbol, new_symbol, reason)
+                        VALUES ('HDFC', 'HDFCBANK', 'HDFC-HDFCBANK merger (July 2023)'),
+                               ('HDFC.NS', 'HDFCBANK.NS', 'HDFC-HDFCBANK merger (July 2023)')
+                        ON CONFLICT (old_symbol) DO NOTHING;
+                    """)
+                except Exception as e:
+                    log.warning("PG symbol_aliases migration failed: %s", e)
 
                 # Phase 6: scan state tables
                 cur.execute("""
@@ -1152,6 +1186,22 @@ def init_db():
 
     # ── Phase A: Index Verification ──────────────────────────────────────
     verify_indexes_startup()
+
+    # ── HDFC Legacy Cleanup (transient cache and catalog inactive status only)
+    migrate_legacy_hdfc_ticker()
+
+
+def migrate_legacy_hdfc_ticker():
+    """Clean up legacy HDFC scan results and catalog entries (transient cache only)."""
+    try:
+        # Safe to delete from scan_results since it is only a temporary scan cache
+        execute_db("DELETE FROM scan_results WHERE symbol IN ('HDFC', 'HDFC.NS')")
+        
+        # Mark inactive in universe catalog
+        execute_db("UPDATE universe_catalog SET is_active = FALSE WHERE symbol IN ('HDFC', 'HDFC.NS')")
+        log.info("[HDFC_MIGRATION] Cleaned up scan_results and universe_catalog for legacy symbol HDFC")
+    except Exception as exc:
+        log.warning("[HDFC_MIGRATION] Migration warning: %s", exc)
 
 
 def verify_indexes_startup():
@@ -1876,6 +1926,19 @@ def _init_sqlite():
                 liquidity_coverage_pct REAL DEFAULT 0,
                 build_timestamp TEXT DEFAULT (datetime('now'))
             );
+        """)
+
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS symbol_aliases (
+                old_symbol TEXT PRIMARY KEY,
+                new_symbol TEXT NOT NULL,
+                reason TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            INSERT INTO symbol_aliases (old_symbol, new_symbol, reason) 
+            VALUES ('HDFC', 'HDFCBANK', 'HDFC-HDFCBANK merger (July 2023)'),
+                   ('HDFC.NS', 'HDFCBANK.NS', 'HDFC-HDFCBANK merger (July 2023)')
+            ON CONFLICT (old_symbol) DO NOTHING;
         """)
 
         log.info("SQLite Database initialized: %s", DB_PATH)
@@ -3322,11 +3385,12 @@ def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
     for rows where slim_data IS NULL.
     """
     global _DB_USE_SLIM
+    use_slim = slim and is_slim_results_enabled() and _DB_USE_SLIM
     t0 = time.perf_counter()
     rows = []
     fallback_rows = []
     
-    if slim and _DB_USE_SLIM:
+    if use_slim:
         # Sprint 1: Two-pass approach — first try slim-only, then fallback
         try:
             rows = execute_db(
@@ -3402,8 +3466,16 @@ def load_golden_results(limit: int = 100) -> list[dict]:
     Uses PG JSONB syntax when PostgreSQL is active, with automatic
     fallback to SQLite json_extract if PG connection fails mid-request.
     """
-    pg_query = "SELECT data FROM scan_results WHERE (data->>'is_golden')::text = 'true' OR (data->>'is_golden')::text = '1' ORDER BY score DESC LIMIT ?"
-    sqlite_query = "SELECT data FROM scan_results WHERE json_extract(data, '$.is_golden') = 1 OR json_extract(data, '$.is_golden') = 'true' ORDER BY score DESC LIMIT ?"
+    global _DB_USE_SLIM
+    use_slim = is_slim_results_enabled() and _DB_USE_SLIM
+
+    if use_slim:
+        pg_query = "SELECT slim_data FROM scan_results WHERE ((slim_data->>'is_golden')::text = 'true' OR (slim_data->>'is_golden')::text = '1') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
+        sqlite_query = "SELECT slim_data FROM scan_results WHERE (json_extract(slim_data, '$.is_golden') = 1 OR json_extract(slim_data, '$.is_golden') = 'true') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
+    else:
+        pg_query = "SELECT data FROM scan_results WHERE (data->>'is_golden')::text = 'true' OR (data->>'is_golden')::text = '1' ORDER BY score DESC LIMIT ?"
+        sqlite_query = "SELECT data FROM scan_results WHERE json_extract(data, '$.is_golden') = 1 OR json_extract(data, '$.is_golden') = 'true' ORDER BY score DESC LIMIT ?"
+
     try:
         query = pg_query if is_postgresql() and not pg_cooldown_active() else sqlite_query
         rows = execute_db(query, (limit,), fetch="all")
@@ -3412,12 +3484,33 @@ def load_golden_results(limit: int = 100) -> list[dict]:
     results = []
     for row in (rows or []):
         try:
-            r = _parse_data_column(row["data"])
+            raw = row.get("slim_data") if use_slim else row.get("data")
+            if not raw:
+                continue
+            r = _parse_data_column(raw)
             if r:
                 _ensure_trade_populated(r)
                 results.append(r)
         except Exception:
             pass
+
+    if use_slim and len(results) < limit:
+        remaining = limit - len(results)
+        fallback_pg = "SELECT data FROM scan_results WHERE ((data->>'is_golden')::text = 'true' OR (data->>'is_golden')::text = '1') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
+        fallback_sqlite = "SELECT data FROM scan_results WHERE (json_extract(data, '$.is_golden') = 1 OR json_extract(data, '$.is_golden') = 'true') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
+        try:
+            f_query = fallback_pg if is_postgresql() and not pg_cooldown_active() else fallback_sqlite
+            f_rows = execute_db(f_query, (remaining,), fetch="all")
+        except Exception:
+            f_rows = _execute_sqlite(fallback_sqlite, (remaining,), "all")
+        for row in (f_rows or []):
+            try:
+                r = _parse_data_column(row.get("data"))
+                if r:
+                    _ensure_trade_populated(r)
+                    results.append(r)
+            except Exception:
+                pass
     return results
 
 
@@ -3427,8 +3520,16 @@ def load_breakout_results(limit: int = 100) -> list[dict]:
     Uses PG JSONB syntax when PostgreSQL is active, with automatic
     fallback to SQLite json_extract if PG connection fails mid-request.
     """
-    pg_query = "SELECT data FROM scan_results WHERE (data->>'is_breakout')::text = 'true' OR (data->>'is_breakout')::text = '1' ORDER BY score DESC LIMIT ?"
-    sqlite_query = "SELECT data FROM scan_results WHERE json_extract(data, '$.is_breakout') = 1 OR json_extract(data, '$.is_breakout') = 'true' ORDER BY score DESC LIMIT ?"
+    global _DB_USE_SLIM
+    use_slim = is_slim_results_enabled() and _DB_USE_SLIM
+
+    if use_slim:
+        pg_query = "SELECT slim_data FROM scan_results WHERE ((slim_data->>'is_breakout')::text = 'true' OR (slim_data->>'is_breakout')::text = '1') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
+        sqlite_query = "SELECT slim_data FROM scan_results WHERE (json_extract(slim_data, '$.is_breakout') = 1 OR json_extract(slim_data, '$.is_breakout') = 'true') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
+    else:
+        pg_query = "SELECT data FROM scan_results WHERE (data->>'is_breakout')::text = 'true' OR (data->>'is_breakout')::text = '1' ORDER BY score DESC LIMIT ?"
+        sqlite_query = "SELECT data FROM scan_results WHERE json_extract(data, '$.is_breakout') = 1 OR json_extract(data, '$.is_breakout') = 'true' ORDER BY score DESC LIMIT ?"
+
     try:
         query = pg_query if is_postgresql() and not pg_cooldown_active() else sqlite_query
         rows = execute_db(query, (limit,), fetch="all")
@@ -3437,28 +3538,72 @@ def load_breakout_results(limit: int = 100) -> list[dict]:
     results = []
     for row in (rows or []):
         try:
-            r = _parse_data_column(row["data"])
+            raw = row.get("slim_data") if use_slim else row.get("data")
+            if not raw:
+                continue
+            r = _parse_data_column(raw)
             if r:
                 _ensure_trade_populated(r)
                 results.append(r)
         except Exception:
             pass
+
+    if use_slim and len(results) < limit:
+        remaining = limit - len(results)
+        fallback_pg = "SELECT data FROM scan_results WHERE ((data->>'is_breakout')::text = 'true' OR (data->>'is_breakout')::text = '1') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
+        fallback_sqlite = "SELECT data FROM scan_results WHERE (json_extract(data, '$.is_breakout') = 1 OR json_extract(data, '$.is_breakout') = 'true') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
+        try:
+            f_query = fallback_pg if is_postgresql() and not pg_cooldown_active() else fallback_sqlite
+            f_rows = execute_db(f_query, (remaining,), fetch="all")
+        except Exception:
+            f_rows = _execute_sqlite(fallback_sqlite, (remaining,), "all")
+        for row in (f_rows or []):
+            try:
+                r = _parse_data_column(row.get("data"))
+                if r:
+                    _ensure_trade_populated(r)
+                    results.append(r)
+            except Exception:
+                pass
     return results
 
 
 def load_high_conviction_results(limit: int = 100) -> list[dict]:
     """Load High Conviction stocks from DB, ordered by score."""
-    query = "SELECT data FROM scan_results WHERE high_conviction = 1 ORDER BY score DESC LIMIT ?"
+    global _DB_USE_SLIM
+    use_slim = is_slim_results_enabled() and _DB_USE_SLIM
+
+    if use_slim:
+        query = "SELECT slim_data FROM scan_results WHERE high_conviction = 1 AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
+    else:
+        query = "SELECT data FROM scan_results WHERE high_conviction = 1 ORDER BY score DESC LIMIT ?"
+
     rows = execute_db(query, (limit,), fetch="all")
     results = []
-    for row in rows:
+    for row in (rows or []):
         try:
-            r = _parse_data_column(row["data"])
+            raw = row.get("slim_data") if use_slim else row.get("data")
+            if not raw:
+                continue
+            r = _parse_data_column(raw)
             if r:
                 _ensure_trade_populated(r)
                 results.append(r)
         except Exception:
             pass
+
+    if use_slim and len(results) < limit:
+        remaining = limit - len(results)
+        fallback_query = "SELECT data FROM scan_results WHERE high_conviction = 1 AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
+        f_rows = execute_db(fallback_query, (remaining,), fetch="all")
+        for row in (f_rows or []):
+            try:
+                r = _parse_data_column(row.get("data"))
+                if r:
+                    _ensure_trade_populated(r)
+                    results.append(r)
+            except Exception:
+                pass
     return results
 
 def get_result_count() -> int:
@@ -3488,6 +3633,56 @@ def get_meta(key: str, default=None):
     if _META_CACHE_ENABLED:
         _meta_cache[key] = (default, time.time())
     return default
+
+
+def is_slim_results_enabled() -> bool:
+    """Check if slim results feature flag is enabled."""
+    env_val = os.getenv("USE_SLIM_RESULTS")
+    if env_val is not None:
+        return env_val.lower() == "true"
+    try:
+        meta_val = get_meta("USE_SLIM_RESULTS")
+        if meta_val is not None:
+            return str(meta_val).lower() == "true"
+    except Exception:
+        pass
+    return True
+
+
+_symbol_aliases_cache = {}
+_aliases_loaded = False
+_aliases_lock = threading.Lock()
+
+def resolve_symbol(symbol: str) -> str:
+    """Resolve a legacy or merged symbol to its active alias (e.g. HDFC -> HDFCBANK)."""
+    global _aliases_loaded
+    if not symbol:
+        return symbol
+    upper_symbol = symbol.upper().strip()
+    
+    if not _aliases_loaded:
+        with _aliases_lock:
+            if not _aliases_loaded:
+                try:
+                    rows = execute_db("SELECT old_symbol, new_symbol FROM symbol_aliases", fetch="all")
+                    for row in (rows or []):
+                        _symbol_aliases_cache[row["old_symbol"].upper()] = row["new_symbol"]
+                    _aliases_loaded = True
+                except Exception:
+                    pass
+                    
+    if upper_symbol in _symbol_aliases_cache:
+        return _symbol_aliases_cache[upper_symbol]
+        
+    has_ns = upper_symbol.endswith(".NS")
+    clean = upper_symbol.replace(".NS", "")
+    if clean in _symbol_aliases_cache:
+        resolved = _symbol_aliases_cache[clean]
+        return f"{resolved}.NS" if has_ns and not resolved.endswith(".NS") else resolved
+        
+    return symbol
+
+
 
 def set_meta(key: str, value):
     """Set a metadata value. Write-through to memory cache."""
@@ -3626,7 +3821,8 @@ def update_chunk_progress(chunk_run_id: int, symbol: str, symbols_processed: int
 
 def get_stock(symbol: str) -> dict | None:
     """Get a single stock's scan data."""
-    row = execute_db("SELECT data FROM scan_results WHERE symbol=?", (symbol.upper(),), fetch="one")
+    resolved = resolve_symbol(symbol)
+    row = execute_db("SELECT data FROM scan_results WHERE symbol=?", (resolved.upper(),), fetch="one")
     if row:
         try:
             r = _parse_data_column(row["data"])
@@ -3649,7 +3845,8 @@ def save_detailed_fundamentals(symbol: str, data: dict):
 
 def get_detailed_fundamentals(symbol: str) -> dict | None:
     """Get stored detailed financials JSON from fundamentals table."""
-    row = execute_db("SELECT detailed_json FROM fundamentals WHERE symbol=?", (symbol.upper(),), fetch="one")
+    resolved = resolve_symbol(symbol)
+    row = execute_db("SELECT detailed_json FROM fundamentals WHERE symbol=?", (resolved.upper(),), fetch="one")
     if row and row.get("detailed_json"):
         try:
             return json.loads(row["detailed_json"])
@@ -3661,10 +3858,17 @@ def get_stocks_map(symbols: list[str]) -> dict[str, dict]:
     """Get multiple stocks by symbol in one query."""
     if not symbols:
         return {}
-    placeholders = ",".join("?" * len(symbols))
+    # Map each original symbol to its resolved counterpart
+    resolved_to_orig = {}
+    for s in symbols:
+        res_sym = resolve_symbol(s)
+        resolved_to_orig.setdefault(res_sym.upper(), []).append(s)
+        
+    resolved_symbols = list(resolved_to_orig.keys())
+    placeholders = ",".join("?" * len(resolved_symbols))
     rows = execute_db(
         f"SELECT symbol, data FROM scan_results WHERE symbol IN ({placeholders})",
-        [s.upper() for s in symbols],
+        resolved_symbols,
         fetch="all"
     )
     res = {}
@@ -3673,7 +3877,9 @@ def get_stocks_map(symbols: list[str]) -> dict[str, dict]:
             r = _parse_data_column(row["data"])
             if r:
                 _ensure_trade_populated(r)
-                res[row["symbol"]] = r
+                # Map back to original queried symbols
+                for orig_sym in resolved_to_orig.get(row["symbol"].upper(), []):
+                    res[orig_sym] = r
         except Exception:
             pass
     return res
@@ -3699,11 +3905,12 @@ def get_all_results() -> list[dict]:
 
 def get_score_history(symbol: str, days: int = 30) -> list[dict]:
     """Get score history for a stock."""
+    resolved = resolve_symbol(symbol)
     rows = execute_db("""
         SELECT symbol, score, price, rsi, scan_date
         FROM score_history WHERE symbol=?
         ORDER BY scan_date DESC LIMIT ?
-    """, (symbol.upper(), days), fetch="all")
+    """, (resolved.upper(), days), fetch="all")
     return rows
 
 def get_sector_stats() -> list[dict]:
@@ -4318,6 +4525,7 @@ def get_research_history(symbol: str) -> list[dict]:
     """
     Retrieve the full timeline of research snapshots for a symbol.
     """
+    resolved = resolve_symbol(symbol)
     rows = execute_db("""
         SELECT version, status, outcome_status, recommendation,
                entry_low, entry_high, stop_loss, target_1, target_2, target_3,
@@ -4326,7 +4534,7 @@ def get_research_history(symbol: str) -> list[dict]:
         FROM research_snapshots_v2
         WHERE symbol = ?
         ORDER BY version DESC
-    """, (symbol,), fetch="all")
+    """, (resolved,), fetch="all")
     
     import json
     history = []
@@ -4356,8 +4564,9 @@ def get_research_advisories(symbol: str = None, active_only: bool = True) -> lis
     params = []
     
     if symbol:
+        resolved = resolve_symbol(symbol)
         query += " AND symbol = ?"
-        params.append(symbol)
+        params.append(resolved)
         
     if active_only:
         query += " AND is_active = TRUE AND (valid_until IS NULL OR valid_until >= CURRENT_TIMESTAMP)"

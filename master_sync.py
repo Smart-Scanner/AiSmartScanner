@@ -156,6 +156,7 @@ def run_master_sync():
         # in batches of MASTER_SYNC_DAILY_BATCH_SIZE until none remain.
         synced = 0
         failed = 0
+        skipped_provider_unavailable = 0
         total_stale_processed = 0
         batch_round = 0
         batch_size = 20  # yfinance batch size
@@ -182,6 +183,12 @@ def run_master_sync():
                 symbols_data = []
 
                 for sym in batch:
+                    from intelligence.yf_guard import yf_is_available
+                    if not yf_is_available():
+                        skipped_provider_unavailable += 1
+                        log.warning("[MasterSync] yfinance circuit breaker is OPEN. Skipping %s without recording failure.", sym)
+                        continue
+
                     try:
                         meta = _fetch_symbol_metadata(sym)
                         if meta:
@@ -261,10 +268,11 @@ def run_master_sync():
         db.set_meta("master_sync_last_completed", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         db.set_meta("master_sync_synced_count", str(synced))
         db.set_meta("master_sync_failed_count", str(failed))
+        db.set_meta("master_sync_skipped_provider_unavailable", str(skipped_provider_unavailable))
         db.set_meta("master_sync_duration_s", str(round(duration)))
         db.set_meta("master_sync_stale_count", str(total_stale_processed))
         db.log_scan_event(scan_id, "MASTER_SYNC_COMPLETED",
-                          f"synced={synced} failed={failed} rounds={batch_round} "
+                          f"synced={synced} failed={failed} skipped={skipped_provider_unavailable} rounds={batch_round} "
                           f"stale={total_stale_processed} duration={round(duration)}s")
 
         return {"synced": synced, "failed": failed, "duration_s": round(duration)}
