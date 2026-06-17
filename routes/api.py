@@ -21,6 +21,8 @@ from ta.volume import OnBalanceVolumeIndicator
 from jugaad_data.nse import stock_df
 import math
 
+from metrics import counters
+
 # ── Logger Initialization ──
 log = logging.getLogger("api")
 log.info("API logger initialized")
@@ -50,7 +52,18 @@ def _slim_result(stock: dict) -> dict:
     Keeps all card-essential fields (~65 lightweight fields) like symbol, score,
     price, sector, risk_reward, confidence sub-scores, etc.
     """
-    return {k: v for k, v in stock.items() if k not in _HEAVY_FIELDS}
+    slim = {k: v for k, v in stock.items() if k not in _HEAVY_FIELDS}
+    trade = stock.get("trade")
+    if isinstance(trade, dict):
+        slim["trade_summary"] = {
+            "entry_low": trade.get("entry_low"),
+            "entry_high": trade.get("entry_high"),
+            "stop_loss": trade.get("stop_loss"),
+            "target1": trade.get("target1"),
+            "target2": trade.get("target2"),
+            "target3": trade.get("target3"),
+        }
+    return slim
 
 
 def _slim_results(results: list) -> list:
@@ -93,6 +106,7 @@ from metrics.timer import timed
 import live_feed
 import db
 import cache_layer
+from target_utils import resolve_targets
 
 api_bp = Blueprint("api", __name__)
 
@@ -359,7 +373,15 @@ def get_results():
         sorted_results = sorted(slim["results"], key=lambda x: x.get(sort_by) or 0, reverse=(order == "desc"))
         res_dict = {**slim, "results": sorted_results}
     else:
-        res_dict = slim
+        res_dict = dict(slim)
+
+    res_dict["metrics"] = {
+        "target_resolved_trade": counters.get("target_resolved_trade"),
+        "target_resolved_scan": counters.get("target_resolved_scan"),
+        "target_missing": counters.get("target_missing"),
+        "signal_compare_match": counters.get("signal_compare_match"),
+        "signal_compare_mismatch": counters.get("signal_compare_mismatch"),
+    }
     t_sort_ms = round((time.perf_counter() - t_sort_start) * 1000, 2)
 
     t_serialize_start = time.perf_counter()
@@ -422,10 +444,15 @@ def stock_data(symbol):
     Phase 10: Uses indicator series cache (15min TTL, scan-invalidated).
     Financials split to /api/stock/<symbol>/financials for async loading.
     """
-    clean = symbol.upper().replace(".NS", "")
+    import urllib.parse
+    clean = urllib.parse.unquote(symbol).strip().upper().replace(".NS", "")
     cached_db = db.get_stock(clean)
 
     # Phase 10: Try indicator series cache first
+    # P0-3: Inject data_unavailable flag
+    from symbol_utils import check_symbol_exists
+    _data_unavailable = not check_symbol_exists(clean)
+
     series_cache = get_cached_indicator_series(clean)
     if series_cache is not None:
         # Warm cache hit — serve directly, add scan data
@@ -433,6 +460,9 @@ def stock_data(symbol):
         result.pop("_last_scan_at", None)
         if cached_db:
             result["scan"] = _build_scan_dict(cached_db)
+        # D1-A: Inject normalized targets from single source of truth
+        result["targets"] = resolve_targets(cached_db, symbol=clean)
+        result["contracts"] = {"targets_contract_version": 2}
         # Phase 10: financials loaded async
         result["financials_detailed"] = {
             "loading": True,
@@ -440,6 +470,7 @@ def stock_data(symbol):
         }
         _freshness = time.time() - Path(DETAIL_CACHE_DIR / f"{clean}.json").stat().st_mtime
         result["data_freshness_seconds"] = round(_freshness)
+        result["data_unavailable"] = _data_unavailable
         resp = make_response(jsonify(sanitize_nan(result)))
         resp.headers["Cache-Control"] = "max-age=900"
         return resp
@@ -539,12 +570,17 @@ def stock_data(symbol):
         if cached_db:
             result["scan"] = _build_scan_dict(cached_db)
 
+        # D1-A: Inject normalized targets from single source of truth
+        result["targets"] = resolve_targets(cached_db, symbol=clean)
+        result["contracts"] = {"targets_contract_version": 2}
+
         # Phase 10: Financials loaded async via separate endpoint
         result["financials_detailed"] = {
             "loading": True,
             "endpoint": f"/api/stock/{clean}/financials"
         }
         result["data_freshness_seconds"] = 0
+        result["data_unavailable"] = _data_unavailable
 
         resp = make_response(jsonify(sanitize_nan(result)))
         resp.headers["Cache-Control"] = "max-age=900"
@@ -609,7 +645,8 @@ def _build_scan_dict(cached: dict) -> dict:
 @timed("financial_detail_response")
 def stock_financials(symbol):
     """Phase 10: Separate financial endpoint for async loading."""
-    clean = symbol.upper().replace(".NS", "")
+    import urllib.parse
+    clean = urllib.parse.unquote(symbol).strip().upper().replace(".NS", "")
     try:
         cached_db = db.get_stock(clean)
         recent_news_titles = []
@@ -1100,7 +1137,7 @@ def get_market_overview():
 
 @api_bp.route("/api/paper-trades")
 def get_paper_trades():
-    """Return all paper trades (open + closed) with live P&L for open positions."""
+    """Return all paper trades (open + closed) with live P&L and stats."""
     try:
         limit = request.args.get("limit", 200, type=int)
         trades = db.get_all_paper_trades(limit)
@@ -1120,26 +1157,35 @@ def get_paper_trades():
                         trade["day_change_pct"] = live.get("change_pct", 0)
 
         open_count = sum(1 for t in trades if t.get("status") == "OPEN")
+
+        # P0-5: Failure Isolation for Stats
+        stats = {"ok": False}
+        try:
+            def _get_stats():
+                try:
+                    return {"ok": True, **db.get_paper_trade_stats()}
+                except Exception as exc:
+                    return {"error": str(exc), "ok": False}
+            stats = cache_layer.get_or_compute(cache_layer.stats_cache, "stats", _get_stats)
+        except Exception as exc:
+            import logging
+            logging.getLogger("api").exception("[PAPER TRADES API] Failed to fetch stats inline")
+
+        # P0-7: Market & Scan State
+        market_open = live_feed.is_market_open()
+        scan_active, _ = db.is_scan_active()
+
         return jsonify({
             "trades": trades,
             "total": len(trades),
             "open": open_count,
             "closed": len(trades) - open_count,
+            "stats": stats,
+            "market_open": market_open,
+            "scan_running": scan_active
         })
     except Exception as exc:
         return jsonify({"error": str(exc), "trades": []})
-
-
-@api_bp.route("/api/paper-trades/stats")
-def get_paper_trade_stats():
-    """Return aggregated paper trading statistics with model version comparison."""
-    def _compute():
-        try:
-            stats = db.get_paper_trade_stats()
-            return {"ok": True, **stats}
-        except Exception as exc:
-            return {"error": str(exc), "ok": False}
-    return jsonify(cache_layer.get_or_compute(cache_layer.stats_cache, "stats", _compute))
 
 
 _dashboard_loaded = False

@@ -77,6 +77,21 @@
 let globalPtTrades = [];
 let globalPtStats = {};
 
+// P0-11: Rate Limiter & Failure Protection
+let lastFullReload = 0;
+let consecutiveFailures = 0;
+
+// P0-8: In-flight Lock & Versioning
+let paperTradesPollInFlight = false;
+let latestRequestId = 0;
+
+// P0-13: Memory Leak Audit
+if (window.paperTradesTimer) {
+    clearInterval(window.paperTradesTimer);
+}
+window.paperTradesTimer = null;
+window.paperTradesIntervalMs = 3000;
+
 function switchPTTab(tab, btn) {
     document.querySelectorAll('#ptTabs .v3-tab').forEach(t => t.classList.remove('active'));
     btn.classList.add('active');
@@ -93,11 +108,12 @@ function calcConfidence(s) {
 }
 
 function renderTradeRow(t, isOpen) {
-    const entryPrice = t.entry_price || 0;
-    const exitPrice = t.exit_price || entryPrice;
-    const returnPct = t.return_pct || 0;
+    const entryPrice = Number(t.entry_price) || 0;
+    const exitPrice = Number(t.exit_price) || entryPrice;
+    const returnPct = Number(t.return_pct) || 0;
     const pnlClass = returnPct >= 0 ? 'positive' : 'negative';
     const pnlSign = returnPct >= 0 ? '+' : '';
+
     const badges = [];
     if (t.high_conviction) badges.push('<span class="pt-badge hc">HC</span>');
     if (t.is_golden) badges.push('<span class="pt-badge golden">GOLDEN</span>');
@@ -106,12 +122,13 @@ function renderTradeRow(t, isOpen) {
     const sc = (t.score_at_entry||0) >= 80 ? 'excellent' : (t.score_at_entry||0) >= 65 ? 'good' : (t.score_at_entry||0) >= 50 ? 'average' : 'poor';
 
     if (isOpen) {
-        const liveReturn = t.live_return_pct || 0;
+        const liveReturn = Number(t.live_return_pct) || 0;
         const livePnlClass = liveReturn >= 0 ? 'positive' : 'negative';
         const livePnlSign = liveReturn >= 0 ? '+' : '';
-        const currentPrice = t.current_price || 0;
-        const dayChg = t.day_change_pct || 0;
-        return `<div class="pt-trade-row" onclick="openDrawerForSymbol('${t.symbol}')">
+        const currentPrice = Number(t.current_price) || 0;
+        const dayChg = Number(t.day_change_pct) || 0;
+        // P0-10: ID assigned for DOM diffing
+        return `<div class="pt-trade-row" id="trade-row-${t.symbol}" onclick="window.location.href='/symbol/' + encodeURIComponent(('${t.symbol}' || '').toUpperCase())">
             <div>
                 <div class="pt-trade-sym">${t.symbol}</div>
                 <div class="pt-trade-sector">${t.sector || ''}</div>
@@ -119,22 +136,22 @@ function renderTradeRow(t, isOpen) {
             </div>
             <div>
                 <div class="pt-trade-meta-label">Entry</div>
-                <div class="pt-trade-meta">\u20b9${entryPrice.toFixed(2)}</div>
+                <div class="pt-trade-meta">₹${entryPrice.toFixed(2)}</div>
                 <div style="font-size:10px;color:var(--text-muted)">${t.entry_date||''}</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">LTP</div>
-                <div class="pt-trade-meta" style="color:${currentPrice ? (liveReturn >= 0 ? 'var(--success)' : 'var(--danger)') : 'var(--text-muted)'}">${currentPrice ? '\u20b9'+currentPrice.toFixed(2) : '—'}</div>
-                <div style="font-size:10px;color:${dayChg >= 0 ? 'var(--success)' : 'var(--danger)'}">${dayChg ? (dayChg >= 0 ? '+' : '') + dayChg.toFixed(1) + '% today' : ''}</div>
+                <div class="pt-trade-meta live-ltp" style="color:${currentPrice ? (liveReturn >= 0 ? 'var(--success)' : 'var(--danger)') : 'var(--text-muted)'}">${currentPrice ? '₹'+currentPrice.toFixed(2) : '—'}</div>
+                <div class="live-day-chg" style="font-size:10px;color:${dayChg >= 0 ? 'var(--success)' : 'var(--danger)'}">${dayChg ? (dayChg >= 0 ? '+' : '') + dayChg.toFixed(1) + '% today' : ''}</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">Live P&L</div>
-                <div class="pt-pnl ${livePnlClass}" style="font-size:14px;font-weight:700">${currentPrice ? livePnlSign + liveReturn.toFixed(1) + '%' : '—'}</div>
+                <div class="pt-pnl live-pnl ${livePnlClass}" style="font-size:14px;font-weight:700">${currentPrice ? livePnlSign + liveReturn.toFixed(1) + '%' : '—'}</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">Target / Stop</div>
-                <div style="font-size:11px;color:var(--success)">\u20b9${(t.target_price||0).toFixed(0)}</div>
-                <div style="font-size:11px;color:var(--danger)">\u20b9${(t.stop_loss||0).toFixed(0)}</div>
+                <div style="font-size:11px;color:var(--success)">₹${Number(t.target_price||0).toFixed(0)}</div>
+                <div style="font-size:11px;color:var(--danger)">₹${Number(t.stop_loss||0).toFixed(0)}</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">Score</div>
@@ -142,7 +159,7 @@ function renderTradeRow(t, isOpen) {
             </div>
         </div>`;
     } else {
-        return `<div class="pt-trade-row" onclick="openDrawerForSymbol('${t.symbol}')">
+        return `<div class="pt-trade-row" onclick="window.location.href='/symbol/' + encodeURIComponent(('${t.symbol}' || '').toUpperCase())">
             <div>
                 <div class="pt-trade-sym">${t.symbol}</div>
                 <div class="pt-trade-sector">${t.sector || ''}</div>
@@ -161,7 +178,7 @@ function renderTradeRow(t, isOpen) {
             </div>
             <div>
                 <div class="pt-trade-meta-label">Alpha</div>
-                <div class="pt-trade-meta" style="color:${(t.alpha_pct||0) >= 0 ? 'var(--success)' : 'var(--danger)'}">${(t.alpha_pct||0) >= 0 ? '+' : ''}${(t.alpha_pct||0).toFixed(1)}%</div>
+                <div class="pt-trade-meta" style="color:${Number(t.alpha_pct||0) >= 0 ? 'var(--success)' : 'var(--danger)'}">${Number(t.alpha_pct||0) >= 0 ? '+' : ''}${Number(t.alpha_pct||0).toFixed(1)}%</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">Days</div>
@@ -177,60 +194,163 @@ function renderTradeRow(t, isOpen) {
 
 function renderStats(stats) {
     const grid = document.getElementById('ptStats');
-    const wr = stats.win_rate || 0;
+    const wr = Number(stats.win_rate) || 0;
     const wrClass = wr >= 50 ? 'positive' : wr > 0 ? 'negative' : '';
-    const avgRet = stats.avg_return_pct || 0;
-    const avgAlpha = stats.avg_alpha_pct || 0;
+    const avgRet = Number(stats.avg_return_pct) || 0;
+    const avgAlpha = Number(stats.avg_alpha_pct) || 0;
 
     grid.innerHTML = `
         <div class="pt-stat"><div class="pt-stat-label">Total</div><div class="pt-stat-value">${stats.total_trades||0}</div></div>
         <div class="pt-stat"><div class="pt-stat-label">Win Rate</div><div class="pt-stat-value ${wrClass}">${wr.toFixed(1)}%</div></div>
         <div class="pt-stat"><div class="pt-stat-label">Avg Return</div><div class="pt-stat-value ${avgRet >= 0 ? 'positive' : 'negative'}">${avgRet >= 0 ? '+' : ''}${avgRet.toFixed(1)}%</div></div>
         <div class="pt-stat"><div class="pt-stat-label">Avg Alpha</div><div class="pt-stat-value ${avgAlpha >= 0 ? 'positive' : 'negative'}">${avgAlpha >= 0 ? '+' : ''}${avgAlpha.toFixed(1)}%</div></div>
-        <div class="pt-stat"><div class="pt-stat-label">Profit Factor</div><div class="pt-stat-value">${(stats.profit_factor||0).toFixed(2)}</div></div>
-        <div class="pt-stat"><div class="pt-stat-label">Expectancy</div><div class="pt-stat-value ${(stats.expectancy||0) >= 0 ? 'positive' : 'negative'}">${(stats.expectancy||0).toFixed(2)}%</div></div>
-        <div class="pt-stat"><div class="pt-stat-label">Avg Days</div><div class="pt-stat-value">${(stats.avg_days_held||0).toFixed(0)}</div></div>
-        <div class="pt-stat"><div class="pt-stat-label">Max DD</div><div class="pt-stat-value negative">${(stats.max_drawdown_pct||0).toFixed(1)}%</div></div>
+        <div class="pt-stat"><div class="pt-stat-label">Profit Factor</div><div class="pt-stat-value">${Number(stats.profit_factor||0).toFixed(2)}</div></div>
+        <div class="pt-stat"><div class="pt-stat-label">Expectancy</div><div class="pt-stat-value ${Number(stats.expectancy||0) >= 0 ? 'positive' : 'negative'}">${Number(stats.expectancy||0).toFixed(2)}%</div></div>
+        <div class="pt-stat"><div class="pt-stat-label">Avg Days</div><div class="pt-stat-value">${Number(stats.avg_days_held||0).toFixed(0)}</div></div>
+        <div class="pt-stat"><div class="pt-stat-label">Max DD</div><div class="pt-stat-value negative">${Number(stats.max_drawdown_pct||0).toFixed(1)}%</div></div>
     `;
 }
 
-async function loadPaperTrades() {
+// P0-7: Dynamic Interval Handler
+function updatePollInterval(ms) {
+    if (window.paperTradesIntervalMs === ms && window.paperTradesTimer) {
+        return;
+    }
+    window.paperTradesIntervalMs = ms;
+    if (window.paperTradesTimer) {
+        clearInterval(window.paperTradesTimer);
+    }
+    window.paperTradesTimer = setInterval(pollPaperTrades, ms);
+}
+
+// P0-9: Visibility-Based Polling
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+        if (window.paperTradesTimer) {
+            clearInterval(window.paperTradesTimer);
+            window.paperTradesTimer = null;
+        }
+    } else {
+        pollPaperTrades(); // Immediate refresh
+        updatePollInterval(window.paperTradesIntervalMs);
+    }
+});
+
+// P0-13: Memory Leak Audit (Cleanup)
+window.addEventListener("beforeunload", () => {
+    if (window.paperTradesTimer) {
+        clearInterval(window.paperTradesTimer);
+        window.paperTradesTimer = null;
+    }
+});
+
+async function pollPaperTrades() {
+    // P0-8: Paper Trade Polling Race-Proof Request Versioning
+    if (paperTradesPollInFlight) return;
+    paperTradesPollInFlight = true;
+    const requestId = ++latestRequestId;
+
     try {
-        const [tradesResp, statsResp] = await Promise.all([
-            fetch('/api/paper-trades'),
-            fetch('/api/paper-trades/stats')
-        ]);
-        const tradesData = await tradesResp.json();
-        const statsData = await statsResp.json();
+        const resp = await fetch('/api/paper-trades');
+        if (!resp.ok) throw new Error('Network error');
+        
+        if (requestId !== latestRequestId) {
+            return; // Newer request already inflight, discard this stale response
+        }
 
-        globalPtTrades = tradesData.trades || [];
-        globalPtStats = statsData;
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
 
-        document.getElementById('ptLoading').style.display = 'none';
-        document.getElementById('ptContent').style.display = 'block';
+        consecutiveFailures = 0;
+        
+        // P0-7: Update Polling Interval based on Scan/Market State
+        if (data.scan_running) {
+            updatePollInterval(10000);
+        } else if (data.market_open === false) {
+            updatePollInterval(60000);
+        } else {
+            updatePollInterval(3000);
+        }
 
-        renderStats(globalPtStats);
+        // P0-5: Stats Guard
+        if (data.stats && data.stats.ok) {
+            renderStats(data.stats);
+        } else {
+            console.warn("Stats calculations temporarily unavailable");
+        }
 
-        const openTrades = globalPtTrades.filter(t => t.status === 'OPEN');
-        const closedTrades = globalPtTrades.filter(t => t.status === 'CLOSED');
+        // Check if we need full reload (P0-11)
+        const openCount = data.open || 0;
+        const closedCount = data.closed || 0;
+        const currentOpenCount = globalPtTrades.filter(t => t.status === 'OPEN').length;
+        const currentClosedCount = globalPtTrades.filter(t => t.status === 'CLOSED').length;
+        
+        const structuralChange = openCount !== currentOpenCount || closedCount !== currentClosedCount;
 
-        document.getElementById('ptOpen').innerHTML = openTrades.length
-            ? openTrades.map(t => renderTradeRow(t, true)).join('')
-            : '<div class="v3-empty-state" style="min-height:150px;padding:30px"><div class="v3-empty-title">No Open Trades</div><div class="v3-empty-desc">Paper trades are opened automatically during each scan cycle.</div></div>';
+        if (structuralChange || (Date.now() - lastFullReload > 10000)) {
+            // Full reload
+            globalPtTrades = data.trades || [];
+            document.getElementById('ptLoading').style.display = 'none';
+            document.getElementById('ptContent').style.display = 'block';
+            
+            const openTrades = globalPtTrades.filter(t => t.status === 'OPEN');
+            const closedTrades = globalPtTrades.filter(t => t.status === 'CLOSED');
 
-        document.getElementById('ptClosed').innerHTML = closedTrades.length
-            ? closedTrades.map(t => renderTradeRow(t, false)).join('')
-            : '<div class="v3-empty-state" style="min-height:150px;padding:30px"><div class="v3-empty-title">No Closed Trades</div><div class="v3-empty-desc">Closed trades will appear after positions hit targets, stops, or time limits.</div></div>';
+            document.getElementById('ptOpen').innerHTML = openTrades.length
+                ? openTrades.map(t => renderTradeRow(t, true)).join('')
+                : '<div class="v3-empty-state" style="min-height:150px;padding:30px"><div class="v3-empty-title">No Open Trades</div><div class="v3-empty-desc">Paper trades are opened automatically during each scan cycle.</div></div>';
 
-        // Update tab labels
-        document.querySelectorAll('#ptTabs .v3-tab')[0].textContent = `Open (${openTrades.length})`;
-        document.querySelectorAll('#ptTabs .v3-tab')[1].textContent = `Closed (${closedTrades.length})`;
+            document.getElementById('ptClosed').innerHTML = closedTrades.length
+                ? closedTrades.map(t => renderTradeRow(t, false)).join('')
+                : '<div class="v3-empty-state" style="min-height:150px;padding:30px"><div class="v3-empty-title">No Closed Trades</div><div class="v3-empty-desc">Closed trades will appear after positions hit targets, stops, or time limits.</div></div>';
 
+            document.querySelectorAll('#ptTabs .v3-tab')[0].textContent = `Open (${openTrades.length})`;
+            document.querySelectorAll('#ptTabs .v3-tab')[1].textContent = `Closed (${closedTrades.length})`;
+            
+            lastFullReload = Date.now();
+        } else {
+            // P0-10: DOM-Diff Update Safety
+            const openTrades = data.trades.filter(t => t.status === 'OPEN');
+            for (const t of openTrades) {
+                const row = document.getElementById(`trade-row-${t.symbol}`);
+                if (!row) continue;
+                
+                const currentPrice = Number(t.current_price) || 0;
+                const liveReturn = Number(t.live_return_pct) || 0;
+                const dayChg = Number(t.day_change_pct) || 0;
+                
+                const ltpEl = row.querySelector('.live-ltp');
+                if (ltpEl) {
+                    ltpEl.style.color = currentPrice ? (liveReturn >= 0 ? 'var(--success)' : 'var(--danger)') : 'var(--text-muted)';
+                    ltpEl.textContent = currentPrice ? '₹'+currentPrice.toFixed(2) : '—';
+                }
+                
+                const chgEl = row.querySelector('.live-day-chg');
+                if (chgEl) {
+                    chgEl.style.color = dayChg >= 0 ? 'var(--success)' : 'var(--danger)';
+                    chgEl.textContent = dayChg ? (dayChg >= 0 ? '+' : '') + dayChg.toFixed(1) + '% today' : '';
+                }
+                
+                const pnlEl = row.querySelector('.live-pnl');
+                if (pnlEl) {
+                    pnlEl.className = `pt-pnl live-pnl ${liveReturn >= 0 ? 'positive' : 'negative'}`;
+                    pnlEl.textContent = currentPrice ? (liveReturn >= 0 ? '+' : '') + liveReturn.toFixed(1) + '%' : '—';
+                }
+            }
+        }
     } catch (e) {
-        document.getElementById('ptLoading').innerHTML = '<div style="color:var(--danger);text-align:center;padding:30px">Failed to load paper trades</div>';
+        // P0-11 & P0-12: API Failure Protection & Backoff
+        consecutiveFailures++;
+        if (consecutiveFailures >= 3) {
+            console.warn("Live updates delayed due to network issues.");
+            updatePollInterval(10000);
+        }
+    } finally {
+        paperTradesPollInFlight = false;
     }
 }
 
-loadPaperTrades();
+// Initial trigger
+pollPaperTrades();
 </script>
 {% endblock %}

@@ -1,6 +1,38 @@
 {% extends "_app_base.html" %}
 {% set active_page = "high_conviction" %}
 {% block title %}High Conviction{% endblock %}
+
+{% block head %}
+<style>
+    .tp-why-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+        margin-bottom: 4px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+    }
+    .tp-why-tag {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 4px;
+        background: rgba(16, 185, 129, 0.08);
+        color: var(--success);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-family: 'Inter', sans-serif;
+        letter-spacing: -0.01em;
+    }
+    .tp-why-tag-check {
+        font-size: 10px;
+        color: var(--success);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="v3-page-header">
     <div style="display:flex;align-items:center;gap:10px">
@@ -44,16 +76,96 @@ async function loadHC() {
         document.getElementById('hcCount').style.display = 'block';
         document.getElementById('hcGrid').style.display = 'grid';
 
+        function calcEntryRR(ts) {
+            if (!ts) return null;
+            const entryLow = parseFloat(ts.entry_low);
+            const entryHigh = parseFloat(ts.entry_high);
+            const sl = parseFloat(ts.stop_loss);
+            const t1 = parseFloat(ts.target1);
+            
+            if (isNaN(entryLow) || isNaN(entryHigh) || isNaN(sl) || isNaN(t1)) return null;
+            
+            const entryMid = (entryLow + entryHigh) / 2.0;
+            const risk = entryMid - sl;
+            if (risk <= 0) return null;
+            
+            return parseFloat(((t1 - entryMid) / risk).toFixed(1));
+        }
+
+        const THESIS_RULES = [
+            {
+                reason: "Strong Earnings Momentum",
+                source: "earnings_momentum_score",
+                evaluate: (s) => (s.earnings_momentum_score || 0) >= 10 || (s.earnings_momentum_100 || 0) > 70
+            },
+            {
+                reason: "Smart Money Accumulation",
+                source: "smart_money_score",
+                evaluate: (s) => (s.smart_money_score || 0) >= 7 || (s.smart_money_100 || 0) > 70
+            },
+            {
+                reason: "Sector Leadership",
+                source: "sector_rotation_score",
+                evaluate: (s) => (s.sector_rotation_score || 0) >= 75
+            },
+            {
+                reason: "Weekly Uptrend",
+                source: "weekly_trend",
+                evaluate: (s) => s.weekly_trend && String(s.weekly_trend).toLowerCase().includes('bull')
+            },
+            {
+                reason: "Volume Expansion",
+                source: "volume_ratio",
+                evaluate: (s) => (s.volume_ratio || 0) >= 1.5
+            },
+            {
+                reason: "Breakout Pattern",
+                source: "is_breakout",
+                evaluate: (s) => !!s.is_breakout
+            }
+        ];
+
+        function getWhyReasons(s) {
+            const reasons = [];
+            
+            // 1. HC Reasons (dynamic, highest priority)
+            if (s.hc_reasons) {
+                if (Array.isArray(s.hc_reasons)) {
+                    reasons.push(...s.hc_reasons);
+                } else if (typeof s.hc_reasons === 'string' && s.hc_reasons.trim()) {
+                    reasons.push(s.hc_reasons);
+                }
+            }
+            
+            // 2. Evaluate rules mapping
+            for (const rule of THESIS_RULES) {
+                if (rule.evaluate(s)) {
+                    reasons.push(rule.reason);
+                }
+            }
+            
+            return [...new Set(reasons)].slice(0, 3);
+        }
+
+        function renderWhyTags(s) {
+            const reasons = getWhyReasons(s);
+            if (!reasons || reasons.length === 0) return '';
+            return `<div class="tp-why-container">
+                ${reasons.map(r => `<span class="tp-why-tag"><span class="tp-why-tag-check">✓</span> ${r}</span>`).join('')}
+            </div>`;
+        }
+
         document.getElementById('hcGrid').innerHTML = results.map((s, i) => {
             const conf = calcConf(s);
             const cl = conf >= 80 ? 'high' : conf >= 50 ? 'medium' : 'low';
             const clLabel = conf >= 80 ? 'HIGH' : conf >= 50 ? 'MED' : 'LOW';
             const sc = (s.score||0) >= 80 ? 'excellent' : (s.score||0) >= 65 ? 'good' : (s.score||0) >= 50 ? 'average' : 'poor';
-            const rr = (s.risk_reward||0) > 0 ? '1:' + (s.risk_reward||0).toFixed(1) : '--';
+            const entryRRVal = calcEntryRR(s.trade_summary);
+            const rr = entryRRVal !== null ? '1:' + entryRRVal.toFixed(1) : ((s.risk_reward||0) > 0 ? '1:' + (s.risk_reward||0).toFixed(1) : '--');
             const target = s.target_price ? '\u20b9' + s.target_price.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
             const sl = s.stop_loss ? '\u20b9' + s.stop_loss.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
 
-            // Signal tags
+            // Signal badges
             const badges = [];
             const e100 = Math.min(100, ((s.earnings_momentum_score||0)/15)*100);
             const sm100 = s.smart_money_100 || Math.min(100, ((s.smart_money_score||0)/10)*100);
@@ -61,7 +173,7 @@ async function loadHC() {
             if (sm100 > 70) badges.push('<span class="tp-opp-badge smart-money">SMART MONEY</span>');
             if (s.is_breakout) badges.push('<span class="tp-opp-badge breakout">BREAKOUT</span>');
 
-            return `<div class="tp-card" onclick="openDrawerForSymbol('${s.symbol}')">
+            return `<div class="tp-card" onclick="window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())">
                 <div class="tp-card-top">
                     <div class="tp-card-info">
                         <div class="tp-card-rank" style="color:var(--accent-cyan)">#${i+1} HC</div>
@@ -72,13 +184,14 @@ async function loadHC() {
                     <div class="tp-score-arc ${sc}" style="--pct:${s.score}"><div class="inner">${s.score}</div></div>
                 </div>
                 <div class="tp-card-badges">${badges.join('')}</div>
+                ${renderWhyTags(s)}
                 <div class="tp-card-metrics">
                     <div class="tp-card-metric"><div class="tp-card-metric-label">R:R</div><div class="tp-card-metric-value">${rr}</div></div>
                     <div class="tp-card-metric"><div class="tp-card-metric-label">Target</div><div class="tp-card-metric-value" style="color:var(--success)">${target}</div></div>
                     <div class="tp-card-metric"><div class="tp-card-metric-label">Stop</div><div class="tp-card-metric-value" style="color:var(--danger)">${sl}</div></div>
                 </div>
                 <div class="tp-card-actions">
-                    <button class="tp-btn-analyze" onclick="event.stopPropagation(); openDrawerForSymbol('${s.symbol}')">Analyze</button>
+                    <button class="tp-btn-analyze" onclick="event.stopPropagation(); window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())">Analyze</button>
                 </div>
             </div>`;
         }).join('');

@@ -1,6 +1,38 @@
 {% extends "_app_base.html" %}
 {% set active_page = "top_picks" %}
 {% block title %}Top Picks{% endblock %}
+
+{% block head %}
+<style>
+    .tp-why-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+        margin-bottom: 4px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+    }
+    .tp-why-tag {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 4px;
+        background: rgba(16, 185, 129, 0.08);
+        color: var(--success);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-family: 'Inter', sans-serif;
+        letter-spacing: -0.01em;
+    }
+    .tp-why-tag-check {
+        font-size: 10px;
+        color: var(--success);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="v3-page-header">
     <div class="v3-page-title">Top Picks</div>
@@ -72,6 +104,7 @@
 
 <!-- Compact Table -->
 <div id="compactView" class="tp-compact-wrap" style="display:none">
+    <div class="table-responsive">
     <table class="tp-compact-table">
         <thead>
             <tr>
@@ -86,195 +119,10 @@
         </thead>
         <tbody id="compactBody"></tbody>
     </table>
+    </div>
 </div>
 
-<style>
-/* ── Filter Bar ────────────────────────────────────────── */
-.tp-filter-bar {
-    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-    padding: 14px 18px; margin-bottom: 20px;
-    background: var(--card-bg); border: 1px solid var(--border-subtle);
-    border-radius: 12px;
-}
-.tp-filter-group { display: flex; align-items: center; gap: 6px; }
-.tp-filter-label {
-    font-size: 10px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.8px; color: var(--text-muted);
-}
-.tp-filter-select {
-    background: var(--bg-primary); color: var(--text-primary);
-    border: 1px solid var(--border-subtle); border-radius: 8px;
-    padding: 6px 10px; font-size: 12px; font-family: inherit;
-    cursor: pointer; outline: none; min-width: 100px;
-}
-.tp-filter-select:focus { border-color: var(--accent-blue); }
-.tp-view-toggle { display: flex; gap: 4px; margin-left: auto; }
-.tp-view-btn {
-    display: flex; align-items: center; gap: 5px;
-    padding: 6px 12px; font-size: 11px; font-weight: 600;
-    border: 1px solid var(--border-subtle); border-radius: 8px;
-    background: transparent; color: var(--text-muted); cursor: pointer;
-    transition: all 0.2s;
-}
-.tp-view-btn.active { background: var(--accent-blue); color: #fff; border-color: var(--accent-blue); }
-.tp-result-count {
-    font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;
-    white-space: nowrap;
-}
 
-/* ── Hero Card ─────────────────────────────────────────── */
-.tp-hero {
-    background: linear-gradient(135deg, rgba(59,130,246,0.08) 0%, rgba(6,182,212,0.06) 100%);
-    border: 1px solid rgba(59,130,246,0.25); border-radius: 16px;
-    padding: 28px; margin-bottom: 24px; position: relative; overflow: hidden;
-}
-.tp-hero::before {
-    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
-    background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan));
-}
-.tp-hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-.tp-hero-left { flex: 1; }
-.tp-hero-rank {
-    display: inline-flex; align-items: center; gap: 6px;
-    font-size: 10px; font-weight: 800; text-transform: uppercase;
-    letter-spacing: 1.2px; color: var(--accent-cyan); margin-bottom: 8px;
-}
-.tp-hero-symbol {
-    font-size: 28px; font-weight: 900; letter-spacing: -0.5px;
-    color: var(--text-primary); margin-bottom: 2px;
-}
-.tp-hero-sector { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
-.tp-hero-percentile {
-    display: inline-block; font-size: 11px; font-weight: 700;
-    color: var(--accent-cyan); background: rgba(6,182,212,0.1);
-    border: 1px solid rgba(6,182,212,0.2); border-radius: 20px;
-    padding: 4px 12px; margin-bottom: 16px;
-}
-.tp-hero-reasons { list-style: none; padding: 0; margin: 0; }
-.tp-hero-reasons li {
-    font-size: 13px; color: var(--text-secondary); padding: 5px 0;
-    display: flex; align-items: center; gap: 8px;
-}
-.tp-hero-reasons li .check { color: var(--success); font-weight: 700; font-size: 14px; }
-.tp-hero-right { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
-.tp-hero-badges { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.tp-hero-actions { display: flex; gap: 8px; margin-top: 8px; }
-
-/* ── Score Arc ──────────────────────────────────────────── */
-.tp-score-arc {
-    width: 60px; height: 60px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 20px; font-weight: 900; font-family: 'JetBrains Mono', monospace;
-    position: relative; color: #fff;
-}
-.tp-score-arc.excellent { background: conic-gradient(var(--success) calc(var(--pct) * 1%), var(--border-subtle) 0); }
-.tp-score-arc.good { background: conic-gradient(var(--accent-blue) calc(var(--pct) * 1%), var(--border-subtle) 0); }
-.tp-score-arc.average { background: conic-gradient(var(--warning) calc(var(--pct) * 1%), var(--border-subtle) 0); }
-.tp-score-arc.poor { background: conic-gradient(var(--danger) calc(var(--pct) * 1%), var(--border-subtle) 0); }
-.tp-score-arc .inner {
-    width: 46px; height: 46px; border-radius: 50%;
-    background: var(--card-bg); display: flex; align-items: center;
-    justify-content: center;
-}
-.tp-score-arc.large { width: 72px; height: 72px; font-size: 24px; }
-.tp-score-arc.large .inner { width: 56px; height: 56px; }
-
-/* ── Confidence Badge ──────────────────────────────────── */
-.tp-conf {
-    display: inline-flex; align-items: center; gap: 5px;
-    font-size: 12px; font-weight: 800; letter-spacing: 0.5px;
-    padding: 4px 10px; border-radius: 20px;
-}
-.tp-conf.high { color: var(--success); background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.25); }
-.tp-conf.medium { color: var(--warning); background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.25); }
-.tp-conf.low { color: var(--danger); background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.25); }
-.tp-conf .dot { width: 6px; height: 6px; border-radius: 50%; }
-.tp-conf.high .dot { background: var(--success); }
-.tp-conf.medium .dot { background: var(--warning); }
-.tp-conf.low .dot { background: var(--danger); }
-
-/* ── Opportunity Badges ────────────────────────────────── */
-.tp-opp-badge {
-    font-size: 9px; font-weight: 800; text-transform: uppercase;
-    letter-spacing: 0.8px; padding: 3px 8px; border-radius: 4px;
-}
-.tp-opp-badge.earnings { color: #a78bfa; background: rgba(167,139,250,0.12); border: 1px solid rgba(167,139,250,0.2); }
-.tp-opp-badge.smart-money { color: var(--accent-cyan); background: rgba(6,182,212,0.12); border: 1px solid rgba(6,182,212,0.2); }
-.tp-opp-badge.breakout { color: var(--accent-blue); background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.2); }
-.tp-opp-badge.sector-leader { color: var(--success); background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.2); }
-.tp-opp-badge.high-conviction { color: var(--golden); background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.2); }
-
-/* ── Cards Grid ────────────────────────────────────────── */
-.tp-cards-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 16px;
-}
-.tp-card {
-    background: var(--card-bg); border: 1px solid var(--border-subtle);
-    border-radius: 12px; padding: 20px; cursor: pointer;
-    transition: all 0.2s ease;
-}
-.tp-card:hover { border-color: var(--accent-blue); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
-.tp-card-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }
-.tp-card-info { flex: 1; }
-.tp-card-rank {
-    font-size: 10px; font-weight: 700; color: var(--text-muted);
-    font-family: 'JetBrains Mono', monospace; margin-bottom: 2px;
-}
-.tp-card-symbol { font-size: 18px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.3px; }
-.tp-card-sector { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
-.tp-card-conf { margin-top: 10px; }
-.tp-card-badges { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0; }
-.tp-card-metrics {
-    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;
-    padding-top: 12px; border-top: 1px solid var(--border-subtle); margin-top: 12px;
-}
-.tp-card-metric { text-align: center; }
-.tp-card-metric-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; }
-.tp-card-metric-value { font-size: 13px; font-weight: 700; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
-.tp-card-actions { display: flex; gap: 8px; margin-top: 14px; }
-.tp-btn-analyze {
-    flex: 1; padding: 8px 12px; font-size: 11px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.8px;
-    background: rgba(59,130,246,0.1); color: var(--accent-blue);
-    border: 1px solid rgba(59,130,246,0.25); border-radius: 8px;
-    cursor: pointer; transition: all 0.2s; text-align: center;
-}
-.tp-btn-analyze:hover { background: rgba(59,130,246,0.2); }
-.tp-btn-star {
-    width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
-    border: 1px solid var(--border-subtle); border-radius: 8px;
-    background: transparent; color: var(--text-muted); cursor: pointer;
-    font-size: 16px; transition: all 0.2s;
-}
-.tp-btn-star:hover { color: var(--golden); border-color: var(--golden); }
-.tp-btn-star.active { color: var(--golden); background: rgba(251,191,36,0.1); border-color: var(--golden); }
-
-/* ── Compact Table ─────────────────────────────────────── */
-.tp-compact-wrap { overflow-x: auto; }
-.tp-compact-table {
-    width: 100%; border-collapse: collapse;
-    background: var(--card-bg); border-radius: 12px; overflow: hidden;
-}
-.tp-compact-table thead th {
-    font-size: 10px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.8px; color: var(--text-muted);
-    padding: 12px 16px; text-align: left;
-    background: var(--bg-secondary); border-bottom: 1px solid var(--border-subtle);
-}
-.tp-compact-table tbody tr {
-    cursor: pointer; transition: background 0.15s;
-    border-bottom: 1px solid var(--border-subtle);
-}
-.tp-compact-table tbody tr:hover { background: rgba(59,130,246,0.05); }
-.tp-compact-table td {
-    padding: 12px 16px; font-size: 13px; color: var(--text-secondary);
-}
-.tp-compact-table td:nth-child(1) { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--text-muted); width: 40px; }
-.tp-compact-table td:nth-child(2) { font-weight: 800; color: var(--text-primary); }
-.tp-compact-table td:nth-child(3) { font-weight: 700; font-family: 'JetBrains Mono', monospace; }
-.tp-compact-table td:nth-child(6) { font-family: 'JetBrains Mono', monospace; }
-</style>
 
 <script>
 let allResults = [];
@@ -337,6 +185,85 @@ function getRankReasons(s) {
     return reasons.length ? reasons : ['Highest composite score across all research factors'];
 }
 
+function calcEntryRR(ts) {
+    if (!ts) return null;
+    const entryLow = parseFloat(ts.entry_low);
+    const entryHigh = parseFloat(ts.entry_high);
+    const sl = parseFloat(ts.stop_loss);
+    const t1 = parseFloat(ts.target1);
+    
+    if (isNaN(entryLow) || isNaN(entryHigh) || isNaN(sl) || isNaN(t1)) return null;
+    
+    const entryMid = (entryLow + entryHigh) / 2.0;
+    const risk = entryMid - sl;
+    if (risk <= 0) return null;
+    
+    return parseFloat(((t1 - entryMid) / risk).toFixed(1));
+}
+
+const THESIS_RULES = [
+    {
+        reason: "Strong Earnings Momentum",
+        source: "earnings_momentum_score",
+        evaluate: (s) => (s.earnings_momentum_score || 0) >= 10 || (s.earnings_momentum_100 || 0) > 70
+    },
+    {
+        reason: "Smart Money Accumulation",
+        source: "smart_money_score",
+        evaluate: (s) => (s.smart_money_score || 0) >= 7 || (s.smart_money_100 || 0) > 70
+    },
+    {
+        reason: "Sector Leadership",
+        source: "sector_rotation_score",
+        evaluate: (s) => (s.sector_rotation_score || 0) >= 75
+    },
+    {
+        reason: "Weekly Uptrend",
+        source: "weekly_trend",
+        evaluate: (s) => s.weekly_trend && String(s.weekly_trend).toLowerCase().includes('bull')
+    },
+    {
+        reason: "Volume Expansion",
+        source: "volume_ratio",
+        evaluate: (s) => (s.volume_ratio || 0) >= 1.5
+    },
+    {
+        reason: "Breakout Pattern",
+        source: "is_breakout",
+        evaluate: (s) => !!s.is_breakout
+    }
+];
+
+function getWhyReasons(s) {
+    const reasons = [];
+    
+    // 1. HC Reasons (dynamic, highest priority)
+    if (s.hc_reasons) {
+        if (Array.isArray(s.hc_reasons)) {
+            reasons.push(...s.hc_reasons);
+        } else if (typeof s.hc_reasons === 'string' && s.hc_reasons.trim()) {
+            reasons.push(s.hc_reasons);
+        }
+    }
+    
+    // 2. Evaluate rules mapping
+    for (const rule of THESIS_RULES) {
+        if (rule.evaluate(s)) {
+            reasons.push(rule.reason);
+        }
+    }
+    
+    return [...new Set(reasons)].slice(0, 3);
+}
+
+function renderWhyTags(s) {
+    const reasons = getWhyReasons(s);
+    if (!reasons || reasons.length === 0) return '';
+    return `<div class="tp-why-container">
+        ${reasons.map(r => `<span class="tp-why-tag"><span class="tp-why-tag-check">✓</span> ${r}</span>`).join('')}
+    </div>`;
+}
+
 // ── Watchlist Helpers (via MarketOS Repository) ──────────
 function getWatchlist() {
     try { return JSON.parse(MarketOS.SystemRepository.getPreference('v3_watchlist', null) || '[]'); } catch { return []; }
@@ -361,7 +288,7 @@ function renderHero(s, rank) {
     const pctile = totalUniverse > 0 ? ((rank / totalUniverse) * 100).toFixed(1) : '0.1';
     const inWL = isInWatchlist(s.symbol);
 
-    return `<div class="tp-hero">
+    return `<div class="tp-hero" onclick="window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())" style="cursor: pointer;">
         <div class="tp-hero-top">
             <div class="tp-hero-left">
                 <div class="tp-hero-rank">\u2605 WHY RANKED #${rank}</div>
@@ -381,7 +308,7 @@ function renderHero(s, rank) {
                     ${badges.map(b => `<span class="tp-opp-badge ${b.cls}">${b.label}</span>`).join('')}
                 </div>
                 <div class="tp-hero-actions">
-                    <button class="tp-btn-analyze" onclick="openDrawerForSymbol('${s.symbol}')">Analyze</button>
+                    <button class="tp-btn-analyze" onclick="event.stopPropagation(); window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())">Analyze</button>
                     <button class="tp-btn-star ${inWL ? 'active' : ''}" onclick="toggleWatchlist('${s.symbol}', ${s.score}, event)">\u2605</button>
                 </div>
             </div>
@@ -395,11 +322,12 @@ function renderCard(s, rank) {
     const cl = confLevel(conf);
     const badges = getOpportunityBadges(s);
     const inWL = isInWatchlist(s.symbol);
-    const rr = (s.risk_reward || 0) > 0 ? '1:' + (s.risk_reward || 0).toFixed(1) : '--';
+    const entryRRVal = calcEntryRR(s.trade_summary);
+    const rr = entryRRVal !== null ? '1:' + entryRRVal.toFixed(1) : ((s.risk_reward || 0) > 0 ? '1:' + (s.risk_reward || 0).toFixed(1) : '--');
     const target = s.target_price ? '\u20b9' + s.target_price.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
     const sl = s.stop_loss ? '\u20b9' + s.stop_loss.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
 
-    return `<div class="tp-card" onclick="openDrawerForSymbol('${s.symbol}')">
+    return `<div class="tp-card" onclick="window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())">
         <div class="tp-card-top">
             <div class="tp-card-info">
                 <div class="tp-card-rank">#${rank}</div>
@@ -416,6 +344,7 @@ function renderCard(s, rank) {
         <div class="tp-card-badges">
             ${badges.map(b => `<span class="tp-opp-badge ${b.cls}">${b.label}</span>`).join('')}
         </div>
+        ${renderWhyTags(s)}
         <div class="tp-card-metrics">
             <div class="tp-card-metric">
                 <div class="tp-card-metric-label">R:R</div>
@@ -431,7 +360,7 @@ function renderCard(s, rank) {
             </div>
         </div>
         <div class="tp-card-actions">
-            <button class="tp-btn-analyze" onclick="event.stopPropagation(); openDrawerForSymbol('${s.symbol}')">Analyze</button>
+            <button class="tp-btn-analyze" onclick="event.stopPropagation(); window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())">Analyze</button>
             <button class="tp-btn-star ${inWL ? 'active' : ''}" onclick="toggleWatchlist('${s.symbol}', ${s.score}, event)">\u2605</button>
         </div>
     </div>`;
@@ -441,12 +370,14 @@ function renderCard(s, rank) {
 function renderCompactRow(s, rank) {
     const conf = calcConfidence(s);
     const cl = confLevel(conf);
-    return `<tr onclick="openDrawerForSymbol('${s.symbol}')">
+    const entryRRVal = calcEntryRR(s.trade_summary);
+    const rr = entryRRVal !== null ? '1:' + entryRRVal.toFixed(1) : ((s.risk_reward || 0) > 0 ? '1:' + (s.risk_reward || 0).toFixed(1) : '--');
+    return `<tr onclick="window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())">
         <td>${rank}</td>
         <td>${s.symbol}</td>
         <td><span class="v3-score ${scoreClass(s.score)}" style="font-size:12px;padding:2px 8px">${s.score}</span></td>
         <td><span class="tp-conf ${cl}" style="font-size:10px;padding:2px 8px"><span class="dot"></span> ${conf}% ${confLabel(conf)}</span></td>
-        <td style="font-family:'JetBrains Mono',monospace">${(s.risk_reward || 0) > 0 ? '1:' + (s.risk_reward || 0).toFixed(1) : '--'}</td>
+        <td style="font-family:'JetBrains Mono',monospace">${rr}</td>
         <td style="font-family:'JetBrains Mono',monospace">\u20b9${(s.price || 0).toLocaleString('en-IN', {maximumFractionDigits:2})}</td>
         <td>${s.sector || 'Other'}</td>
     </tr>`;

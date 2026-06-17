@@ -311,13 +311,34 @@ def submit_payment():
 @subscribed_required
 def symbol_workspace(symbol):
     """MarketOS Symbol Workspace — the canonical route for symbol analysis."""
+    import re
+    import urllib.parse
+    from symbol_utils import check_symbol_exists
+
+    # P0-1: Decode URL-encoded symbols (M%26M → M&M, L%26T → L&T)
+    normalized_symbol = urllib.parse.unquote(symbol).strip().upper()
+    log.info("[SYMBOL_ROUTE] requested=%s normalized=%s", symbol, normalized_symbol)
+
+    # P0-3: Hard malformed validation — redirect to /top-picks
+    is_malformed = not re.match(r"^[A-Za-z0-9\-\&\.]+$", normalized_symbol)
+    if not normalized_symbol or len(normalized_symbol) > 20 or is_malformed:
+        from flask import flash
+        flash("Invalid symbol format")
+        return redirect(url_for("pages.top_picks"))
+
+    # P0-3: Soft existence validation — show warning, don't block
+    data_unavailable = not check_symbol_exists(normalized_symbol)
+    if data_unavailable:
+        log.info("[SYMBOL_ROUTE] Symbol %s not found in scan results or active universe", normalized_symbol)
+
     user = auth_db.get_user_by_id(session["user_id"])
     return render_template(
         "symbol_workspace.html",
-        symbol=symbol.upper(),
+        symbol=normalized_symbol,
         user=user,
         is_admin=bool(user["is_admin"]),
         active_page="symbol_workspace",
+        data_unavailable=data_unavailable,
     )
 
 
@@ -325,7 +346,8 @@ def symbol_workspace(symbol):
 @subscribed_required
 def stock_detail(symbol):
     """Backward-compatible redirect to the canonical Symbol Workspace route."""
-    return redirect(url_for("pages.symbol_workspace", symbol=symbol.upper()), code=301)
+    import urllib.parse
+    return redirect(url_for("pages.symbol_workspace", symbol=urllib.parse.unquote(symbol).strip().upper()), code=301)
 
 
 @pages_bp.route("/portfolio")

@@ -5081,7 +5081,7 @@ def get_paper_trade_stats() -> dict:
     log.info("[DB PERF] get_paper_trade_stats V2 | total_queries=5 | t_agg=%s ms | t_best_worst=%s ms | t_factor=%s ms | t_groups=%s ms | total=%s ms", t_agg, t_best_worst, t_factor, t_groups, total_ms)
     print(f"[DB PERF] get_paper_trade_stats V2 | total_queries=5 | t_agg={t_agg} ms | t_best_worst={t_best_worst} ms | t_factor={t_factor} ms | t_groups={t_groups} ms | total={total_ms} ms", flush=True)
 
-    def _r(v): return round(v or 0, 2)
+    def _r(v): return float(round(v or 0, 2))
 
     return {
         "total_trades": total_cnt,
@@ -5089,7 +5089,7 @@ def get_paper_trade_stats() -> dict:
         "closed_trades": closed_cnt,
         "win_rate": round((win_cnt / closed_cnt * 100), 1) if closed_cnt > 0 else 0,
         "avg_return_pct": _r(agg.get("avg_ret")),
-        "avg_days_held": round((agg.get("avg_days") or 0), 1),
+        "avg_days_held": float(round((agg.get("avg_days") or 0), 1)),
         "avg_drawdown_pct": _r(agg.get("avg_dd")),
         "max_drawdown_pct": _r(agg.get("max_dd")),
         "avg_alpha_pct": _r(agg.get("avg_alpha")),
@@ -5229,7 +5229,7 @@ def _get_paper_trade_stats_v1() -> dict:
     total_ms = round((time.perf_counter() - t_start) * 1000, 2)
     log.info("[DB PERF] get_paper_trade_stats V1 | total_queries=21 | t_basic=%s ms | t_expectancy=%s ms | t_conviction=%s ms | t_factor=%s ms | t_groups=%s ms | total=%s ms", t_basic, t_expectancy, t_conviction, t_factor, t_groups, total_ms)
 
-    def _r(v): return round(v or 0, 2)
+    def _r(v): return float(round(v or 0, 2))
 
     return {
         "total_trades": total_cnt,
@@ -5237,7 +5237,7 @@ def _get_paper_trade_stats_v1() -> dict:
         "closed_trades": closed_cnt,
         "win_rate": round((win_cnt / closed_cnt * 100), 1) if closed_cnt > 0 else 0,
         "avg_return_pct": _r((avg_ret or {}).get("avg")),
-        "avg_days_held": round((avg_days or {}).get("avg") or 0, 1),
+        "avg_days_held": float(round((avg_days or {}).get("avg") or 0, 1)),
         "avg_drawdown_pct": _r((avg_dd or {}).get("avg")),
         "max_drawdown_pct": _r((max_dd or {}).get("dd")),
         "avg_alpha_pct": _r((avg_alpha or {}).get("avg")),

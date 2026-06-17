@@ -158,7 +158,7 @@ function renderWatchlist() {
                 <textarea class="wl-note-input" rows="2" placeholder="Add research notes..." onclick="event.stopPropagation()" onblur="updateNote('${w.symbol}', this.value)">${w.notes || ''}</textarea>
             </div>
             <div class="wl-card-actions">
-                <button class="wl-btn primary" onclick="event.stopPropagation(); openDrawerForSymbol('${w.symbol}')">Analyze</button>
+                <button class="wl-btn primary" onclick="event.stopPropagation(); window.location.href='/symbol/' + encodeURIComponent(('${w.symbol}' || '').toUpperCase())">Analyze</button>
                 <button class="wl-btn danger" onclick="event.stopPropagation(); removeFromWatchlist('${w.symbol}')">Remove</button>
             </div>
         </div>`;

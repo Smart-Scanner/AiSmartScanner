@@ -68,6 +68,14 @@
         <!-- ── Main Panel ────────────────────────────────────── -->
         <div class="sw-main" id="swMain">
 
+            <!-- P0-3: Data Unavailable Warning Banner -->
+            <div class="sw-alert sw-alert-warning" id="swDataUnavailableAlert" style="display: {% if data_unavailable %}flex{% else %}none{% endif %}; background: rgba(245,158,11,0.1); border: 1px solid var(--warning); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; align-items: center; gap: 10px; color: var(--warning);">
+                <span style="font-size: 16px;">⚠️</span>
+                <div style="font-size: 13px; font-weight: 500;">
+                    Symbol data is not fully scanned or cached. Showing historical data if available.
+                </div>
+            </div>
+
             <!-- Loading State -->
             <div class="sw-loading" id="swLoading">
                 <div class="sw-spinner"></div>
@@ -371,17 +379,17 @@ function buildResearchForm() {
                 <option value="HYBRID">Hybrid</option>
             </select>
             <div class="sw-form-row">
-                <div><label class="sw-label">Entry Low</label><input class="sw-input" id="rfEntryLow" type="number" step="0.01" value="${scan.stop_loss ? (scan.stop_loss * 1.02).toFixed(2) : ''}"></div>
-                <div><label class="sw-label">Entry High</label><input class="sw-input" id="rfEntryHigh" type="number" step="0.01" value="${stockData?.price || ''}"></div>
+                <div><label class="sw-label">Entry Low</label><input class="sw-input" id="rfEntryLow" type="number" step="0.01" value="${stockData?.targets?.entry_low || (scan.stop_loss ? (scan.stop_loss * 1.02).toFixed(2) : '')}"></div>
+                <div><label class="sw-label">Entry High</label><input class="sw-input" id="rfEntryHigh" type="number" step="0.01" value="${stockData?.targets?.entry_high || stockData?.price || ''}"></div>
             </div>
             <label class="sw-label">Stop Loss</label>
             <input class="sw-input" id="rfStopLoss" type="number" step="0.01" value="${scan.stop_loss || ''}">
             <div class="sw-form-row">
-                <div><label class="sw-label">Target 1</label><input class="sw-input" id="rfTarget1" type="number" step="0.01" value="${scan.target_price || ''}"></div>
-                <div><label class="sw-label">Target 2</label><input class="sw-input" id="rfTarget2" type="number" step="0.01" value="${scan.target_price ? (scan.target_price * 1.1).toFixed(2) : ''}"></div>
+                <div><label class="sw-label">Target 1</label><input class="sw-input" id="rfTarget1" type="number" step="0.01" value="${stockData?.targets?.t1 || scan.target_price || ''}"></div>
+                <div><label class="sw-label">Target 2</label><input class="sw-input" id="rfTarget2" type="number" step="0.01" value="${stockData?.targets?.t2 || (scan.target_price ? (scan.target_price * 1.1).toFixed(2) : '')}"></div>
             </div>
             <label class="sw-label">Target 3</label>
-            <input class="sw-input" id="rfTarget3" type="number" step="0.01" value="${scan.target_price ? (scan.target_price * 1.2).toFixed(2) : ''}">
+            <input class="sw-input" id="rfTarget3" type="number" step="0.01" value="${stockData?.targets?.t3 || (scan.target_price ? (scan.target_price * 1.2).toFixed(2) : '')}">
             <label class="sw-label">Thesis / Notes</label>
             <textarea class="sw-textarea" id="rfThesis" rows="3" placeholder="Why are you taking this trade?">${scan.explain_positive ? scan.explain_positive.join('. ') : ''}</textarea>
             <div class="sw-form-rr" id="rfRR"></div>
@@ -409,9 +417,9 @@ function buildPaperTradeForm() {
                 <div><label class="sw-label">Quantity</label><input class="sw-input" id="ptQty" type="number" value="1" min="1"></div>
             </div>
             <label class="sw-label">Stop Loss <span class="sw-required">*</span></label>
-            <input class="sw-input" id="ptStopLoss" type="number" step="0.01" value="${scan.stop_loss || ''}">
+            <input class="sw-input" id="ptStopLoss" type="number" step="0.01" value="${stockData?.targets?.sl || scan.stop_loss || ''}">
             <label class="sw-label">Target Price</label>
-            <input class="sw-input" id="ptTarget" type="number" step="0.01" value="${scan.target_price || ''}">
+            <input class="sw-input" id="ptTarget" type="number" step="0.01" value="${stockData?.targets?.t1 || scan.target_price || ''}">
             <label class="sw-label">Position Size % of Portfolio</label>
             <input class="sw-input" id="ptSize" type="number" step="0.1" value="5" min="0.1" max="100">
             <div class="sw-form-validation" id="ptValidation"></div>
@@ -712,12 +720,18 @@ function initResearchChart(data) {
     }
 
     // Research Overlay — Research Domain (Entry, Stop, Targets)
-    const scan = data.scan || {};
-    if (scan.stop_loss) {
-        candleSeries.createPriceLine({ price: scan.stop_loss, color: '#ff4b72', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
+    const tgt = data.targets || {};
+    if (tgt.sl) {
+        candleSeries.createPriceLine({ price: tgt.sl, color: '#ff4b72', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
     }
-    if (scan.target_price) {
-        candleSeries.createPriceLine({ price: scan.target_price, color: '#05ffc7', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T1' });
+    if (tgt.t1) {
+        candleSeries.createPriceLine({ price: tgt.t1, color: '#05ffc7', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T1' });
+    }
+    if (tgt.t2) {
+        candleSeries.createPriceLine({ price: tgt.t2, color: '#05ffc799', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T2' });
+    }
+    if (tgt.t3) {
+        candleSeries.createPriceLine({ price: tgt.t3, color: '#05ffc755', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T3' });
     }
 
     chart.timeScale().fitContent();
@@ -779,12 +793,18 @@ function initFullChart(data) {
     }
 
     // Research Overlay — Research Domain
-    const scan = data.scan || {};
-    if (scan.stop_loss) {
-        overlaySeries.sl = candleSeries.createPriceLine({ price: scan.stop_loss, color: '#ff4b72', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
+    const tgtFull = data.targets || {};
+    if (tgtFull.sl) {
+        overlaySeries.sl = candleSeries.createPriceLine({ price: tgtFull.sl, color: '#ff4b72', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
     }
-    if (scan.target_price) {
-        overlaySeries.t1 = candleSeries.createPriceLine({ price: scan.target_price, color: '#05ffc7', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T1' });
+    if (tgtFull.t1) {
+        overlaySeries.t1 = candleSeries.createPriceLine({ price: tgtFull.t1, color: '#05ffc7', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T1' });
+    }
+    if (tgtFull.t2) {
+        overlaySeries.t2 = candleSeries.createPriceLine({ price: tgtFull.t2, color: '#05ffc799', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T2' });
+    }
+    if (tgtFull.t3) {
+        overlaySeries.t3 = candleSeries.createPriceLine({ price: tgtFull.t3, color: '#05ffc755', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T3' });
     }
 
     chart.timeScale().fitContent();
@@ -823,6 +843,14 @@ async function loadWorkspace() {
         if (stockData.error) throw new Error(stockData.error);
 
         document.getElementById('swLoading').style.display = 'none';
+
+        // P0-3: Sync warning banner with API response
+        if (stockData.data_unavailable) {
+            document.getElementById('swDataUnavailableAlert').style.display = 'flex';
+        } else {
+            document.getElementById('swDataUnavailableAlert').style.display = 'none';
+        }
+
         renderHeader(stockData);
         renderScoreStrip(stockData);
         renderResearch(stockData);
@@ -863,24 +891,69 @@ function renderScoreStrip(data) {
         <div class="sw-score-item"><span class="sw-score-label">Score</span><span class="sw-score-value" style="color:${sc}">${scan.score}/100</span></div>
         <div class="sw-score-item"><span class="sw-score-label">Risk</span><span class="sw-score-value" style="color:${rc}">${scan.risk_score}/100</span></div>
         <div class="sw-score-item"><span class="sw-score-label">R:R</span><span class="sw-score-value" style="color:${rrc}">${scan.risk_reward ? '1:' + scan.risk_reward.toFixed(1) : '—'}</span></div>
-        <div class="sw-score-item"><span class="sw-score-label">Target</span><span class="sw-score-value" style="color:var(--success)">${scan.target_price ? '₹' + scan.target_price.toLocaleString() : '—'}</span></div>
-        <div class="sw-score-item"><span class="sw-score-label">Stop Loss</span><span class="sw-score-value" style="color:var(--danger)">${scan.stop_loss ? '₹' + scan.stop_loss.toLocaleString() : '—'}</span></div>`;
+        <div class="sw-score-item"><span class="sw-score-label">Target</span><span class="sw-score-value" style="color:var(--success)">${data.targets?.t1 ? '₹' + data.targets.t1.toLocaleString() : (scan.target_price ? '₹' + scan.target_price.toLocaleString() : '—')}</span></div>
+        <div class="sw-score-item"><span class="sw-score-label">Stop Loss</span><span class="sw-score-value" style="color:var(--danger)">${data.targets?.sl ? '₹' + data.targets.sl.toLocaleString() : (scan.stop_loss ? '₹' + scan.stop_loss.toLocaleString() : '—')}</span></div>`;
+}
+
+// P0-16: Safe value formatter
+function safeVal(v) {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+}
+function fmtPrice(v) {
+    const n = safeVal(v);
+    return n !== null ? '₹' + n.toLocaleString('en-IN', {maximumFractionDigits: 2}) : '—';
 }
 
 function renderResearch(data) {
     const scan = data.scan;
     if (!scan) return;
 
-    // Blueprint
+    // D1-B: Read targets from normalized API payload (single source of truth)
+    const tgt = data.targets || {};
     const trade = scan.trade || {};
-    if (trade.entry || scan.target_price) {
+    const T1 = safeVal(tgt.t1) ?? safeVal(trade.target1) ?? safeVal(scan.target_price) ?? null;
+    const T2 = safeVal(tgt.t2) ?? safeVal(trade.target2) ?? null;
+    const T3 = safeVal(tgt.t3) ?? safeVal(trade.target3) ?? null;
+    const SL = safeVal(tgt.sl) ?? safeVal(scan.stop_loss) ?? null;
+    const entryLow = safeVal(tgt.entry_low) ?? safeVal(trade.entry_low) ?? SL;
+    const entryHigh = safeVal(tgt.entry_high) ?? safeVal(trade.entry_high) ?? data.price;
+    const RR = safeVal(scan.risk_reward);
+
+    // Blueprint with D1-B normalization
+    if (trade.entry || T1 !== null) {
         document.getElementById('swBlueprintCard').style.display = 'block';
+
+        // D1-B: CMP vs Entry Zone Badge
+        let entryBadge = '';
+        const cmp = data.price;
+        if (cmp && entryLow && entryHigh) {
+            if (cmp < entryLow) {
+                entryBadge = '<span class="sw-entry-badge sw-entry-below">CMP BELOW ENTRY</span>';
+            } else if (cmp >= entryLow && cmp <= entryHigh) {
+                entryBadge = '<span class="sw-entry-badge sw-entry-in">CMP IN ENTRY ZONE</span>';
+            } else {
+                entryBadge = '<span class="sw-entry-badge sw-entry-above">CMP ABOVE ENTRY</span>';
+            }
+        }
+
+        const err = tgt.entry_rr || {};
+        const entryRR_t1 = err.t1 !== undefined && err.t1 !== null ? '1:' + err.t1.toFixed(1) : '—';
+        const entryRR_t2 = err.t2 !== undefined && err.t2 !== null ? '1:' + err.t2.toFixed(1) : '—';
+        const entryRR_t3 = err.t3 !== undefined && err.t3 !== null ? '1:' + err.t3.toFixed(1) : '—';
+
         document.getElementById('swBlueprintContent').innerHTML = `
+            ${entryBadge}
             <div class="sw-blueprint-grid">
-                <div class="sw-bp-item"><span class="sw-bp-label">Entry Zone</span><span class="sw-bp-value">₹${trade.entry_low || scan.stop_loss || '—'} — ₹${trade.entry_high || data.price || '—'}</span></div>
-                <div class="sw-bp-item"><span class="sw-bp-label">Stop Loss</span><span class="sw-bp-value sw-danger">₹${scan.stop_loss || '—'}</span></div>
-                <div class="sw-bp-item"><span class="sw-bp-label">Target</span><span class="sw-bp-value sw-success">₹${scan.target_price || '—'}</span></div>
-                <div class="sw-bp-item"><span class="sw-bp-label">R:R</span><span class="sw-bp-value">${scan.risk_reward ? '1:' + scan.risk_reward.toFixed(1) : '—'}</span></div>
+                <div class="sw-bp-item"><span class="sw-bp-label">Entry Zone</span><span class="sw-bp-value">${fmtPrice(entryLow)} — ${fmtPrice(entryHigh)}</span></div>
+                <div class="sw-bp-item"><span class="sw-bp-label">Stop Loss</span><span class="sw-bp-value sw-danger">${fmtPrice(SL)}</span></div>
+                <div class="sw-bp-item"><span class="sw-bp-label">Target 1</span><span class="sw-bp-value sw-success">${fmtPrice(T1)}</span></div>
+                ${T2 !== null ? `<div class="sw-bp-item"><span class="sw-bp-label">Target 2</span><span class="sw-bp-value sw-success">${fmtPrice(T2)}</span></div>` : ''}
+                ${T3 !== null ? `<div class="sw-bp-item"><span class="sw-bp-label">Target 3</span><span class="sw-bp-value sw-success">${fmtPrice(T3)}</span></div>` : ''}
+                <div class="sw-bp-item"><span class="sw-bp-label">Legacy R:R</span><span class="sw-bp-value">${RR !== null ? '1:' + RR.toFixed(1) : '—'}</span></div>
+                <div class="sw-bp-item"><span class="sw-bp-label">Entry R:R (T1)</span><span class="sw-bp-value" style="color:var(--accent-cyan)">${entryRR_t1}</span></div>
+                ${T2 !== null ? `<div class="sw-bp-item"><span class="sw-bp-label">Entry R:R (T2)</span><span class="sw-bp-value" style="color:var(--accent-cyan)">${entryRR_t2}</span></div>` : ''}
+                ${T3 !== null ? `<div class="sw-bp-item"><span class="sw-bp-label">Entry R:R (T3)</span><span class="sw-bp-value" style="color:var(--accent-cyan)">${entryRR_t3}</span></div>` : ''}
             </div>`;
     }
 
@@ -896,7 +969,7 @@ function renderResearch(data) {
     }
 
     // Targets
-    renderTargets(data);
+    renderTargets(data, {T1, T2, T3, SL});
 
     // 12-Layer Audit
     renderLayerAccordion(data);
@@ -932,19 +1005,107 @@ function renderExplainability(data) {
     }
 }
 
-function renderTargets(data) {
+function renderTargets(data, targets) {
     const scan = data.scan || {};
     const sr = scan.support_resistance || {};
-    if (!sr.s1 && !scan.target_price) return;
+    const {T1, T2, T3, SL} = targets || {};
+
+    // P0-14: Collect all points with priority order
+    const PRIORITY = ['S2','SL','S1','PRICE','PIVOT','R1','T1','T2','T3','R2'];
+    const colorMap = {
+        S2: 'var(--danger)', SL: 'var(--danger)', S1: '#ff9f43',
+        PRICE: 'var(--primary)', PIVOT: 'var(--text-muted)',
+        R1: '#48dbfb', T1: 'var(--success)', T2: 'var(--success)', T3: 'var(--success)', R2: '#48dbfb'
+    };
+
+    const rawPoints = [
+        {name: 'S2', val: safeVal(sr.s2)},
+        {name: 'SL', val: SL},
+        {name: 'S1', val: safeVal(sr.s1)},
+        {name: 'PRICE', val: safeVal(data.price)},
+        {name: 'PIVOT', val: safeVal(sr.pivot)},
+        {name: 'R1', val: safeVal(sr.r1)},
+        {name: 'T1', val: T1},
+        {name: 'T2', val: T2},
+        {name: 'T3', val: T3},
+        {name: 'R2', val: safeVal(sr.r2)},
+    ].filter(p => p.val !== null);
+
+    // P0-15: Fail-safe — need at least 2 valid points
+    if (rawPoints.length < 2) {
+        document.getElementById('swTargetsCard').style.display = 'none';
+        return;
+    }
+
+    // Sort by value
+    rawPoints.sort((a, b) => a.val - b.val);
+    const minVal = rawPoints[0].val;
+    const maxVal = rawPoints[rawPoints.length - 1].val;
+
+    // P0-15: Fail-safe — range must be positive
+    if (maxVal <= minVal) {
+        document.getElementById('swTargetsCard').style.display = 'none';
+        console.warn('[TARGETS] Invalid range: max <= min', maxVal, minVal);
+        return;
+    }
+
     document.getElementById('swTargetsCard').style.display = 'block';
 
-    if (sr.s1) {
-        document.getElementById('swSrGrid').innerHTML = `
-            <div class="sw-sr-item"><span class="sw-sr-label">S2</span><span class="sw-sr-value" style="color:var(--danger)">₹${sr.s2 || '—'}</span></div>
-            <div class="sw-sr-item"><span class="sw-sr-label">S1</span><span class="sw-sr-value">₹${sr.s1}</span></div>
-            <div class="sw-sr-item"><span class="sw-sr-label">Pivot</span><span class="sw-sr-value">₹${sr.pivot || '—'}</span></div>
-            <div class="sw-sr-item"><span class="sw-sr-label">R1</span><span class="sw-sr-value">₹${sr.r1 || '—'}</span></div>
-            <div class="sw-sr-item"><span class="sw-sr-label">R2</span><span class="sw-sr-value" style="color:var(--success)">₹${sr.r2 || '—'}</span></div>`;
+    // P0-14: Group markers within 0.25% of each other
+    const groups = [];
+    let currentGroup = [rawPoints[0]];
+    for (let i = 1; i < rawPoints.length; i++) {
+        const prev = currentGroup[currentGroup.length - 1];
+        if ((rawPoints[i].val - prev.val) / prev.val < 0.0025) {
+            currentGroup.push(rawPoints[i]);
+        } else {
+            groups.push(currentGroup);
+            currentGroup = [rawPoints[i]];
+        }
+    }
+    groups.push(currentGroup);
+
+    // Merge groups: label by priority order, position by average
+    const markers = groups.map(g => {
+        g.sort((a, b) => PRIORITY.indexOf(a.name) - PRIORITY.indexOf(b.name));
+        const label = g.map(p => p.name).join('/');
+        const avgVal = g.reduce((s, p) => s + p.val, 0) / g.length;
+        const primaryColor = colorMap[g[0].name] || 'var(--text-primary)';
+        return {label, val: avgVal, color: primaryColor};
+    });
+
+    // Render visual target bar
+    const range = maxVal - minVal;
+    const pad = range * 0.05;
+    const barMin = minVal - pad;
+    const barMax = maxVal + pad;
+    const barRange = barMax - barMin;
+
+    let barHTML = '<div class="sw-target-bar">';
+    barHTML += '<div class="sw-target-bar-track"></div>';
+    markers.forEach(m => {
+        const pct = ((m.val - barMin) / barRange) * 100;
+        barHTML += `<div class="sw-target-marker" style="left:${pct}%">`;
+        barHTML += `<div class="sw-target-line" style="background:${m.color}"></div>`;
+        barHTML += `<div class="sw-target-label" style="color:${m.color}">${m.label}<br>${fmtPrice(m.val)}</div>`;
+        barHTML += `</div>`;
+    });
+    barHTML += '</div>';
+    document.getElementById('swTargetBar').innerHTML = barHTML;
+
+    // S/R Grid (always show what we have)
+    const srItems = [
+        {l: 'S2', v: sr.s2, c: 'var(--danger)'},
+        {l: 'S1', v: sr.s1, c: ''},
+        {l: 'Pivot', v: sr.pivot, c: ''},
+        {l: 'R1', v: sr.r1, c: ''},
+        {l: 'R2', v: sr.r2, c: 'var(--success)'},
+    ].filter(x => safeVal(x.v) !== null);
+
+    if (srItems.length) {
+        document.getElementById('swSrGrid').innerHTML = srItems.map(x =>
+            `<div class="sw-sr-item"><span class="sw-sr-label">${x.l}</span><span class="sw-sr-value" ${x.c ? 'style="color:'+x.c+'"' : ''}>₹${safeVal(x.v).toLocaleString('en-IN', {maximumFractionDigits:2})}</span></div>`
+        ).join('');
     }
 }
 

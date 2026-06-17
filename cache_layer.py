@@ -31,7 +31,7 @@ log = logging.getLogger("cache")
 # results: 1h, dashboard: 1h, sector: 1h, stats: 1h, search: 30m, news: 15m.
 results_cache = TTLCache(maxsize=5, ttl=int(os.getenv("RESULTS_CACHE_TTL", "3600")))
 sector_cache = TTLCache(maxsize=5, ttl=int(os.getenv("SECTOR_CACHE_TTL", "3600")))
-stats_cache = TTLCache(maxsize=5, ttl=int(os.getenv("STATS_CACHE_TTL", "3600")))
+stats_cache = TTLCache(maxsize=5, ttl=int(os.getenv("STATS_CACHE_TTL", "5")))
 dashboard_cache = TTLCache(maxsize=5, ttl=int(os.getenv("DASHBOARD_CACHE_TTL", "3600")))
 search_cache = TTLCache(maxsize=5, ttl=int(os.getenv("SEARCH_CACHE_TTL", "1800")))
 news_cache = TTLCache(maxsize=5, ttl=int(os.getenv("NEWS_CACHE_TTL", "900")))

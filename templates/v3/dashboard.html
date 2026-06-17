@@ -210,6 +210,22 @@ function setLoadStep(step) {
     }
 }
 
+function calcEntryRR(ts) {
+    if (!ts) return null;
+    const entryLow = parseFloat(ts.entry_low);
+    const entryHigh = parseFloat(ts.entry_high);
+    const sl = parseFloat(ts.stop_loss);
+    const t1 = parseFloat(ts.target1);
+    
+    if (isNaN(entryLow) || isNaN(entryHigh) || isNaN(sl) || isNaN(t1)) return null;
+    
+    const entryMid = (entryLow + entryHigh) / 2.0;
+    const risk = entryMid - sl;
+    if (risk <= 0) return null;
+    
+    return parseFloat(((t1 - entryMid) / risk).toFixed(1));
+}
+
 function confBadge(score) {
     const level = score >= 80 ? 'high' : score >= 50 ? 'medium' : 'low';
     const label = level.toUpperCase();
@@ -306,7 +322,9 @@ async function loadPageData() {
 
             document.getElementById('researchPriorities').innerHTML = priorities.map(c => {
                 const s = c.stock; const conf = calcConfidence(s);
-                return `<div class="v3-opportunity-card" onclick="openDrawerForSymbol('${s.symbol}')">
+                const entryRRVal = calcEntryRR(s.trade_summary);
+                const rrStr = entryRRVal !== null ? '1:' + entryRRVal.toFixed(1) : (s.risk_reward ? '1:' + s.risk_reward.toFixed(1) : '');
+                return `<div class="v3-opportunity-card" onclick="window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())">
                     <div class="v3-opportunity-type">${c.type}</div>
                     <div style="display:flex;justify-content:space-between;align-items:flex-start">
                         <div><div class="v3-opportunity-symbol">${s.symbol}</div><div class="v3-opportunity-detail">${s.sector || ''}</div></div>
@@ -314,7 +332,7 @@ async function loadPageData() {
                     </div>
                     <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
                         ${s.target_price ? `<span style="font-size:11px;color:var(--text-muted)">Target \u20B9${s.target_price.toFixed(0)}</span>` : ''}
-                        ${s.risk_reward ? `<span style="font-size:11px;color:var(--text-muted)">R:R 1:${s.risk_reward.toFixed(1)}</span>` : ''}
+                        ${rrStr ? `<span style="font-size:11px;color:var(--text-muted)">R:R ${rrStr}</span>` : ''}
                         ${s.is_golden ? '<span class="v3-signal-pill golden" style="font-size:10px;padding:1px 6px">&#9733; Golden</span>' : ''}
                         ${s.high_conviction ? '<span class="v3-signal-pill hc" style="font-size:10px;padding:1px 6px">&#9889; HC</span>' : ''}
                     </div></div>`;

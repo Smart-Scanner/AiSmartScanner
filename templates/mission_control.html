@@ -44,9 +44,9 @@
         border-radius: 20px;
         font-family: 'JetBrains Mono', monospace;
     }
-    .mc-badge-live { background: rgba(16, 185, 129, 0.15); color: #10b981; }
-    .mc-badge-warn { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
-    .mc-badge-error { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+    .mc-badge-live { background: var(--success-soft); color: var(--success); }
+    .mc-badge-warn { background: var(--warning-soft); color: var(--warning); }
+    .mc-badge-error { background: var(--danger-soft); color: var(--danger); }
     .mc-badge-muted { background: var(--surface-hover); color: var(--text-muted); }
 
     /* Severity cards */
@@ -78,18 +78,18 @@
         margin-top: 4px;
         text-transform: uppercase;
     }
-    .mc-sev-critical { background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.25); }
-    .mc-sev-critical .mc-sev-count { color: #ef4444; }
-    .mc-sev-critical .mc-sev-label { color: #ef4444; }
-    .mc-sev-high { background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.25); }
-    .mc-sev-high .mc-sev-count { color: #f59e0b; }
-    .mc-sev-high .mc-sev-label { color: #f59e0b; }
-    .mc-sev-medium { background: rgba(59, 130, 246, 0.08); border-color: rgba(59, 130, 246, 0.25); }
-    .mc-sev-medium .mc-sev-count { color: #3b82f6; }
-    .mc-sev-medium .mc-sev-label { color: #3b82f6; }
+    .mc-sev-critical { background: var(--danger-soft); border-color: var(--danger-border); }
+    .mc-sev-critical .mc-sev-count { color: var(--danger); }
+    .mc-sev-critical .mc-sev-label { color: var(--danger); }
+    .mc-sev-high { background: var(--warning-soft); border-color: var(--warning-border); }
+    .mc-sev-high .mc-sev-count { color: var(--warning); }
+    .mc-sev-high .mc-sev-label { color: var(--warning); }
+    .mc-sev-medium { background: var(--accent-blue-soft); border-color: rgba(59, 130, 246, 0.25); }
+    .mc-sev-medium .mc-sev-count { color: var(--accent-blue); }
+    .mc-sev-medium .mc-sev-label { color: var(--accent-blue); }
     .mc-sev-low { background: rgba(107, 114, 128, 0.08); border-color: rgba(107, 114, 128, 0.25); }
-    .mc-sev-low .mc-sev-count { color: #6b7280; }
-    .mc-sev-low .mc-sev-label { color: #6b7280; }
+    .mc-sev-low .mc-sev-count { color: var(--text-muted); }
+    .mc-sev-low .mc-sev-label { color: var(--text-muted); }
 
     /* Broker health row */
     .mc-broker-item {
@@ -106,9 +106,9 @@
         border-radius: 50%;
         flex-shrink: 0;
     }
-    .mc-dot-active { background: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.5); }
-    .mc-dot-disconnected { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.4); }
-    .mc-dot-idle { background: #6b7280; }
+    .mc-dot-active { background: var(--success); box-shadow: 0 0 6px rgba(16, 185, 129, 0.5); }
+    .mc-dot-disconnected { background: var(--danger); box-shadow: 0 0 6px rgba(239, 68, 68, 0.4); }
+    .mc-dot-idle { background: var(--text-muted); }
     .mc-broker-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
     .mc-broker-meta { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
 
@@ -152,11 +152,11 @@
         font-family: 'Inter', sans-serif;
     }
     .mc-action-btn:hover { background: var(--text-primary); color: var(--card-bg); }
-    .mc-action-btn.mc-btn-resolve { border-color: rgba(16, 185, 129, 0.4); color: #10b981; }
-    .mc-action-btn.mc-btn-resolve:hover { background: #10b981; color: #fff; }
-    .mc-action-btn.mc-btn-ignore { border-color: rgba(107, 114, 128, 0.4); color: #6b7280; }
-    .mc-action-btn.mc-btn-ack { border-color: rgba(59, 130, 246, 0.4); color: #3b82f6; }
-    .mc-action-btn.mc-btn-ack:hover { background: #3b82f6; color: #fff; }
+    .mc-action-btn.mc-btn-resolve { border-color: rgba(16, 185, 129, 0.4); color: var(--success); }
+    .mc-action-btn.mc-btn-resolve:hover { background: var(--success); color: #fff; }
+    .mc-action-btn.mc-btn-ignore { border-color: rgba(107, 114, 128, 0.4); color: var(--text-muted); }
+    .mc-action-btn.mc-btn-ack { border-color: rgba(59, 130, 246, 0.4); color: var(--accent-blue); }
+    .mc-action-btn.mc-btn-ack:hover { background: var(--accent-blue); color: #fff; }
     .mc-actions-group { display: flex; gap: 6px; }
 
     /* Status pill */
@@ -169,15 +169,15 @@
         text-transform: uppercase;
         letter-spacing: 0.04em;
     }
-    .mc-status-open { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
-    .mc-status-resolved { background: rgba(16, 185, 129, 0.15); color: #10b981; }
-    .mc-status-ignored { background: rgba(107, 114, 128, 0.15); color: #6b7280; }
-    .mc-status-investigating { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
-    .mc-status-unmanaged { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
-    .mc-status-adopted { background: rgba(16, 185, 129, 0.15); color: #10b981; }
-    .mc-status-success { background: rgba(16, 185, 129, 0.1); color: #10b981; }
-    .mc-status-rejected { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
-    .mc-status-error { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+    .mc-status-open { background: var(--warning-soft); color: var(--warning); }
+    .mc-status-resolved { background: var(--success-soft); color: var(--success); }
+    .mc-status-ignored { background: rgba(107, 114, 128, 0.15); color: var(--text-muted); }
+    .mc-status-investigating { background: var(--accent-blue-soft); color: var(--accent-blue); }
+    .mc-status-unmanaged { background: var(--warning-soft); color: var(--warning); }
+    .mc-status-adopted { background: var(--success-soft); color: var(--success); }
+    .mc-status-success { background: var(--success-soft); color: var(--success); }
+    .mc-status-rejected { background: var(--danger-soft); color: var(--danger); }
+    .mc-status-error { background: var(--danger-soft); color: var(--danger); }
 
     /* Cash recon */
     .mc-cash-grid {
@@ -675,6 +675,80 @@
         </div>
         <div class="mc-panel-body" id="mcShadowTracker">
             <div class="mc-empty">Loading shadow session data...</div>
+        </div>
+    <!-- ═══ R:R AUDIT & DRIFT OBSERVATION PANEL ════════════════════ -->
+    <div class="mc-panel mc-grid-full">
+        <div class="mc-panel-header">
+            <div class="mc-panel-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                R:R Audit & Drift Observation Panel
+            </div>
+            <div style="display:flex; gap:8px;">
+                <span class="mc-panel-badge mc-badge-muted" id="mcRrCoverageBadge">Coverage: —</span>
+                <span class="mc-panel-badge mc-badge-muted" id="mcResolverVerBadge">Resolver Version: 2</span>
+            </div>
+        </div>
+        <div class="mc-panel-body">
+            <!-- Summary Stats Container -->
+            <div style="display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 20px;">
+                
+                <!-- 1. Coverage Monitoring & Sample Size -->
+                <div style="flex: 1; min-width: 220px; padding: 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px;">
+                    <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; font-weight: 600;">Coverage &amp; Sample Size</div>
+                    <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px;">
+                        <div>Sample Size: <strong id="mcRrSampleSize" style="color: var(--text-primary)">—</strong></div>
+                        <div>Valid R:R: <strong id="mcRrValid" style="color: #10b981">—</strong></div>
+                        <div>Invalid R:R: <strong id="mcRrInvalid" style="color: #ef4444">—</strong></div>
+                        <div>Coverage: <span id="mcRrCoveragePct" style="padding: 2px 6px; border-radius: 4px; font-weight: bold; font-family: monospace;">—</span></div>
+                    </div>
+                </div>
+
+                <!-- 2. Target Resolver Health Dashboard -->
+                <div style="flex: 1; min-width: 240px; padding: 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px;">
+                    <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; font-weight: 600;">Target Resolver Health</div>
+                    <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px;">
+                        <div>Trade Source %: <strong id="mcTgtTradePct">—</strong> <span style="font-size: 11px; color: var(--text-muted)" id="mcTgtTradeCount"></span></div>
+                        <div>Scan Source %: <strong id="mcTgtScanPct">—</strong> <span style="font-size: 11px; color: var(--text-muted)" id="mcTgtScanCount"></span></div>
+                        <div>Missing %: <strong id="mcTgtMissingPct">—</strong> <span style="font-size: 11px; color: var(--text-muted)" id="mcTgtMissingCount"></span></div>
+                    </div>
+                </div>
+
+                <!-- 3. R:R Drift Distribution -->
+                <div style="flex: 1; min-width: 200px; padding: 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px;">
+                    <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; font-weight: 600;">R:R Drift Distribution</div>
+                    <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px;">
+                        <div>0-20% drift: <strong id="mcDrift020" style="color: #10b981">—</strong></div>
+                        <div>20-50% drift: <strong id="mcDrift2050" style="color: #f59e0b">—</strong></div>
+                        <div>50%+ drift: <strong id="mcDrift50" style="color: #ef4444">—</strong></div>
+                    </div>
+                </div>
+
+                <!-- 4. Portfolio Signal Comparison -->
+                <div style="flex: 1; min-width: 220px; padding: 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px;">
+                    <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; font-weight: 600;">Portfolio Signal Observability</div>
+                    <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px;">
+                        <div>Signal Match %: <strong id="mcSignalMatchPct" style="color: #10b981">—</strong> <span style="font-size: 11px; color: var(--text-muted)" id="mcSignalMatchCount"></span></div>
+                        <div>Signal Mismatch %: <strong id="mcSignalMismatchPct" style="color: #ef4444">—</strong> <span style="font-size: 11px; color: var(--text-muted)" id="mcSignalMismatchCount"></span></div>
+                    </div>
+                </div>
+
+            </div>
+            <div style="max-height: 400px; overflow-y: auto;">
+                <table class="mc-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Legacy R:R (CMP)</th>
+                            <th>Entry R:R (Mid)</th>
+                            <th>Drift %</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mcRrAuditBody">
+                        <tr><td colspan="5" class="mc-empty">Loading audit metrics...</td></tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
@@ -1510,8 +1584,210 @@
         renderCommandAudit();
         renderCashRecon();
         renderShadowTracker();
+        renderRrAudit();
         document.getElementById('mcLastRefresh').textContent = 'Updated: ' + new Date().toLocaleTimeString();
     };
+
+    function calcEntryRR(ts) {
+        if (!ts) return null;
+        const entryLow = parseFloat(ts.entry_low);
+        const entryHigh = parseFloat(ts.entry_high);
+        const sl = parseFloat(ts.stop_loss);
+        const t1 = parseFloat(ts.target1);
+        
+        if (isNaN(entryLow) || isNaN(entryHigh) || isNaN(sl) || isNaN(t1)) return null;
+        
+        const entryMid = (entryLow + entryHigh) / 2.0;
+        const risk = entryMid - sl;
+        if (risk <= 0) return null;
+        
+        return parseFloat(((t1 - entryMid) / risk).toFixed(1));
+    }
+
+    function calcDrift(legacyRR, entryRR) {
+        if (legacyRR === null || legacyRR === undefined || legacyRR <= 0 || isNaN(legacyRR)) return null;
+        if (entryRR === null || entryRR === undefined || isNaN(entryRR)) return null;
+        return Math.round(((entryRR - legacyRR) / legacyRR) * 100);
+    }
+
+    async function renderRrAudit() {
+        const bodyEl = document.getElementById('mcRrAuditBody');
+        if (!bodyEl) return;
+        try {
+            const resp = await fetch('/api/results');
+            if (!resp.ok) throw new Error('API error');
+            const data = await resp.json();
+            const results = data.results || [];
+            if (results.length === 0) {
+                bodyEl.innerHTML = '<tr><td colspan="5" class="mc-empty">No scan results found</td></tr>';
+                return;
+            }
+            
+            let total = results.length;
+            let valid = 0;
+            let drift020 = 0;
+            let drift2050 = 0;
+            let drift50 = 0;
+
+            results.forEach(s => {
+                const ts = s.trade_summary;
+                const entryRR = calcEntryRR(ts);
+                if (entryRR !== null) {
+                    valid++;
+                }
+
+                const legacyRR = parseFloat(s.risk_reward);
+                const drift = calcDrift(legacyRR, entryRR);
+                if (drift !== null) {
+                    const absDrift = Math.abs(drift);
+                    if (absDrift < 20) {
+                        drift020++;
+                    } else if (absDrift < 50) {
+                        drift2050++;
+                    } else {
+                        drift50++;
+                    }
+                }
+            });
+
+            const coveragePct = total > 0 ? ((valid / total) * 100).toFixed(1) : '0.0';
+            const pct = parseFloat(coveragePct);
+            let badgeColor = '#10b981';
+            let badgeBg = 'rgba(16, 185, 129, 0.15)';
+            if (pct < 80.0) {
+                badgeColor = '#ef4444';
+                badgeBg = 'rgba(239, 68, 68, 0.15)';
+            } else if (pct < 90.0) {
+                badgeColor = '#f59e0b';
+                badgeBg = 'rgba(245, 158, 11, 0.15)';
+            }
+
+            const coverageEl = document.getElementById('mcRrCoverageBadge');
+            if (coverageEl) {
+                coverageEl.textContent = `Coverage: ${valid} / ${total} (${coveragePct}%)`;
+                coverageEl.style.color = badgeColor;
+                coverageEl.style.background = badgeBg;
+            }
+
+            const sampleSizeEl = document.getElementById('mcRrSampleSize');
+            const validEl = document.getElementById('mcRrValid');
+            const invalidEl = document.getElementById('mcRrInvalid');
+            const coveragePctEl = document.getElementById('mcRrCoveragePct');
+
+            if (sampleSizeEl) sampleSizeEl.textContent = total;
+            if (validEl) validEl.textContent = valid;
+            if (invalidEl) invalidEl.textContent = total - valid;
+            if (coveragePctEl) {
+                coveragePctEl.textContent = `${valid} / ${total} (${coveragePct}%)`;
+                coveragePctEl.style.color = badgeColor;
+                coveragePctEl.style.background = badgeBg;
+            }
+
+            // Populate Drift Distribution
+            const d020El = document.getElementById('mcDrift020');
+            const d2050El = document.getElementById('mcDrift2050');
+            const d50El = document.getElementById('mcDrift50');
+            if (d020El) d020El.textContent = drift020;
+            if (d2050El) d2050El.textContent = drift2050;
+            if (d50El) d50El.textContent = drift50;
+
+            // Populate Target Resolver Health Dashboard
+            const m = data.metrics || {};
+            const tTrade = m.target_resolved_trade || 0;
+            const tScan = m.target_resolved_scan || 0;
+            const tMissing = m.target_missing || 0;
+            const tTotal = tTrade + tScan + tMissing;
+
+            const tradePct = tTotal > 0 ? ((tTrade / tTotal) * 100).toFixed(0) : '0';
+            const scanPct = tTotal > 0 ? ((tScan / tTotal) * 100).toFixed(0) : '0';
+            const missingPct = tTotal > 0 ? ((tMissing / tTotal) * 100).toFixed(0) : '0';
+
+            const tgtTradePctEl = document.getElementById('mcTgtTradePct');
+            const tgtTradeCountEl = document.getElementById('mcTgtTradeCount');
+            const tgtScanPctEl = document.getElementById('mcTgtScanPct');
+            const tgtScanCountEl = document.getElementById('mcTgtScanCount');
+            const tgtMissingPctEl = document.getElementById('mcTgtMissingPct');
+            const tgtMissingCountEl = document.getElementById('mcTgtMissingCount');
+
+            if (tgtTradePctEl) tgtTradePctEl.textContent = `${tradePct}%`;
+            if (tgtTradeCountEl) tgtTradeCountEl.textContent = `(${tTrade} fields)`;
+            if (tgtScanPctEl) tgtScanPctEl.textContent = `${scanPct}%`;
+            if (tgtScanCountEl) tgtScanCountEl.textContent = `(${tScan} fields)`;
+            if (tgtMissingPctEl) {
+                tgtMissingPctEl.textContent = `${missingPct}%`;
+                tgtMissingPctEl.style.color = tMissing > 0 ? '#ef4444' : 'inherit';
+            }
+            if (tgtMissingCountEl) tgtMissingCountEl.textContent = `(${tMissing} fields)`;
+
+            // Populate Portfolio Signal Comparison
+            const sigMatch = m.signal_compare_match || 0;
+            const sigMismatch = m.signal_compare_mismatch || 0;
+            const sigTotal = sigMatch + sigMismatch;
+
+            const matchPct = sigTotal > 0 ? ((sigMatch / sigTotal) * 100).toFixed(1) : '0.0';
+            const mismatchPct = sigTotal > 0 ? ((sigMismatch / sigTotal) * 100).toFixed(1) : '0.0';
+
+            const sigMatchPctEl = document.getElementById('mcSignalMatchPct');
+            const sigMatchCountEl = document.getElementById('mcSignalMatchCount');
+            const sigMismatchPctEl = document.getElementById('mcSignalMismatchPct');
+            const sigMismatchCountEl = document.getElementById('mcSignalMismatchCount');
+
+            if (sigMatchPctEl) sigMatchPctEl.textContent = `${matchPct}%`;
+            if (sigMatchCountEl) sigMatchCountEl.textContent = `(${sigMatch} matches)`;
+            if (sigMismatchPctEl) {
+                sigMismatchPctEl.textContent = `${mismatchPct}%`;
+                sigMismatchPctEl.style.color = sigMismatch > 0 ? '#ef4444' : 'inherit';
+            }
+            if (sigMismatchCountEl) sigMismatchCountEl.textContent = `(${sigMismatch} mismatches)`;
+            
+            bodyEl.innerHTML = results.map(s => {
+                const legacyRR = parseFloat(s.risk_reward);
+                const ts = s.trade_summary;
+                const entryRR = calcEntryRR(ts);
+                
+                let legacyStr = legacyRR ? '1:' + legacyRR.toFixed(1) : '—';
+                let entryStr = entryRR !== null ? '1:' + entryRR.toFixed(1) : '—';
+                
+                const drift = calcDrift(legacyRR, entryRR);
+                let driftStr = '—';
+                let driftColor = 'var(--text-muted)';
+                let statusStr = 'OK';
+                let statusBg = 'rgba(16, 185, 129, 0.15)';
+                let statusColor = '#10b981';
+                
+                if (drift !== null) {
+                    driftStr = (drift >= 0 ? '+' : '') + drift + '%';
+                    if (Math.abs(drift) >= 50) {
+                        driftColor = '#ef4444';
+                        statusStr = 'HUGE DRIFT';
+                        statusBg = 'rgba(239, 68, 68, 0.15)';
+                        statusColor = '#ef4444';
+                    } else if (Math.abs(drift) >= 20) {
+                        driftColor = '#f59e0b';
+                        statusStr = 'MODERATE';
+                        statusBg = 'rgba(245, 158, 11, 0.15)';
+                        statusColor = '#f59e0b';
+                    }
+                }
+                
+                return `
+                    <tr>
+                        <td style="font-weight:700; color:var(--text-primary)">
+                            <a href="/symbol/${encodeURIComponent(s.symbol)}" style="color:var(--text-primary); text-decoration:none;">${s.symbol}</a>
+                        </td>
+                        <td>${legacyStr}</td>
+                        <td style="color:var(--accent-cyan)">${entryStr}</td>
+                        <td style="color:${driftColor}; font-weight:700">${driftStr}</td>
+                        <td>
+                            <span class="mc-status-pill" style="background:${statusBg}; color:${statusColor}">${statusStr}</span>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        } catch (e) {
+            bodyEl.innerHTML = `<tr><td colspan="5" class="mc-empty" style="color:var(--danger)">Failed to load: ${e.message}</td></tr>`;
+        }
+    }
 
     // Initial render
     mcRefreshAll();

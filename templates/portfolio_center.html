@@ -87,6 +87,46 @@
         <div class="poc-panel-header">
             <h3>Open Positions</h3>
             <span class="poc-panel-count" id="posCount">0 positions</span>
+            <button class="poc-add-pos-btn" id="addPosToggle" onclick="toggleAddPositionForm()" title="Add Position">+ Add Position</button>
+        </div>
+        <!-- D1-C: Add Position Form (hidden by default) -->
+        <div id="addPosForm" class="poc-add-form" style="display:none">
+            <div class="poc-add-form-grid">
+                <div class="poc-add-field">
+                    <label class="poc-add-label">Symbol <span style="color:var(--danger)">*</span></label>
+                    <input class="poc-add-input" id="addPosSymbol" type="text" placeholder="e.g. RELIANCE, M&amp;M" autocomplete="off" oninput="onAddPosSymbolInput(this)">
+                    <div class="poc-add-suggest" id="addPosSuggest"></div>
+                </div>
+                <div class="poc-add-field">
+                    <label class="poc-add-label">Quantity <span style="color:var(--danger)">*</span></label>
+                    <input class="poc-add-input" id="addPosQty" type="number" min="1" value="1">
+                </div>
+                <div class="poc-add-field">
+                    <label class="poc-add-label">Buy Price <span style="color:var(--danger)">*</span></label>
+                    <input class="poc-add-input" id="addPosPrice" type="number" step="0.01" placeholder="Entry price">
+                </div>
+                <div class="poc-add-field">
+                    <label class="poc-add-label">Buy Date</label>
+                    <input class="poc-add-input" id="addPosDate" type="date">
+                </div>
+                <div class="poc-add-field">
+                    <label class="poc-add-label">Stop Loss</label>
+                    <input class="poc-add-input" id="addPosSL" type="number" step="0.01" placeholder="Auto from scan">
+                </div>
+                <div class="poc-add-field">
+                    <label class="poc-add-label">Target</label>
+                    <input class="poc-add-input" id="addPosTarget" type="number" step="0.01" placeholder="Auto from scan">
+                </div>
+            </div>
+            <div class="poc-add-field" style="margin-top:6px">
+                <label class="poc-add-label">Notes</label>
+                <textarea class="poc-add-input" id="addPosNotes" rows="2" placeholder="Trade rationale..."></textarea>
+            </div>
+            <div id="addPosError" style="color:var(--danger);font-size:11px;min-height:16px;margin-top:4px"></div>
+            <div class="poc-add-actions">
+                <button class="poc-add-cancel" onclick="toggleAddPositionForm()">Cancel</button>
+                <button class="poc-add-submit" id="addPosSubmit" onclick="submitAddPosition()">Add Position</button>
+            </div>
         </div>
         <div class="poc-table-wrap">
             <table class="poc-table" id="positionsTable">
@@ -111,7 +151,7 @@
         <div class="poc-empty-state" id="posEmpty" style="display:none">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/><path d="M9 10h.01M15 10h.01M9.5 15.5c.83.67 1.94 1 3.12.92 1.01-.07 1.96-.53 2.68-1.22"/></svg>
             <p>No open positions</p>
-            <span>Create a position from the Symbol Workspace to get started.</span>
+            <span>Click "+ Add Position" above or create from the Symbol Workspace.</span>
         </div>
     </div>
 </div>
@@ -579,6 +619,67 @@
     font-family: 'JetBrains Mono', monospace;
 }
 .poc-chart-wrap { display: flex; align-items: center; justify-content: center; min-height: 220px; }
+
+/* D1-C: Add Position Button & Form */
+.poc-add-pos-btn {
+    padding: 5px 14px; font-size: 11px; font-weight: 700;
+    background: rgba(0,200,255,0.08); color: var(--primary, #00c8ff);
+    border: 1px solid rgba(0,200,255,0.25); border-radius: 6px;
+    cursor: pointer; transition: all 0.15s; font-family: inherit;
+    letter-spacing: 0.3px; margin-left: auto;
+}
+.poc-add-pos-btn:hover { background: rgba(0,200,255,0.16); }
+.poc-add-form {
+    padding: 14px 20px; border-bottom: 1px solid var(--border-subtle);
+    background: rgba(0,0,0,0.15);
+}
+.poc-add-form-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+}
+.poc-add-field { display: flex; flex-direction: column; gap: 3px; position: relative; }
+.poc-add-label {
+    font-size: 10px; font-weight: 700; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+}
+.poc-add-input {
+    padding: 7px 10px; background: var(--bg-primary, #06090f);
+    border: 1px solid var(--border-subtle, #1e293b); border-radius: 5px;
+    color: var(--text-primary); font-size: 12px;
+    font-family: 'JetBrains Mono', monospace; transition: border-color 0.15s;
+    width: 100%; box-sizing: border-box;
+}
+.poc-add-input:focus { outline: none; border-color: var(--primary); }
+.poc-add-suggest {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 99;
+    background: var(--bg-secondary, #0d111a); border: 1px solid var(--border-subtle);
+    border-radius: 6px; max-height: 200px; overflow-y: auto;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.poc-suggest-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; cursor: pointer; transition: background 0.1s;
+    font-size: 12px; color: var(--text-secondary);
+}
+.poc-suggest-item:hover { background: rgba(0,200,255,0.06); }
+.poc-suggest-sym { font-weight: 700; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; }
+.poc-suggest-score { font-size: 10px; color: var(--text-muted); }
+.poc-add-actions {
+    display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;
+}
+.poc-add-cancel {
+    padding: 7px 16px; background: none; border: 1px solid var(--border-subtle);
+    border-radius: 6px; color: var(--text-muted); font-size: 12px;
+    font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.poc-add-cancel:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.poc-add-submit {
+    padding: 7px 18px; background: rgba(0,200,255,0.12);
+    border: 1px solid rgba(0,200,255,0.3); border-radius: 6px;
+    color: var(--primary); font-size: 12px; font-weight: 700;
+    cursor: pointer; font-family: inherit; transition: all 0.15s;
+}
+.poc-add-submit:hover:not(:disabled) { background: rgba(0,200,255,0.2); }
+.poc-add-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ═══ RISK METER ══════════════════════════════════════════════ */
 .poc-risk-row {
@@ -2297,6 +2398,107 @@ function completeReview() {
         selectReviewTrade(_reviewPositionId);
     } else {
         showToast('Complete failed: ' + result.error, 'error');
+    }
+}
+
+// ── D1-C: Add Position Form ──────────────────────────────────────────
+function toggleAddPositionForm() {
+    const form = document.getElementById('addPosForm');
+    const isVisible = form.style.display !== 'none';
+    form.style.display = isVisible ? 'none' : 'block';
+    if (!isVisible) {
+        document.getElementById('addPosDate').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('addPosSymbol').focus();
+    }
+}
+
+let _addPosSuggestTimer = null;
+function onAddPosSymbolInput(el) {
+    clearTimeout(_addPosSuggestTimer);
+    const q = el.value.trim().toUpperCase();
+    const suggest = document.getElementById('addPosSuggest');
+    if (q.length < 2) { suggest.innerHTML = ''; return; }
+    _addPosSuggestTimer = setTimeout(async () => {
+        try {
+            const res = await fetch('/api/slim-results');
+            const data = await res.json();
+            const matches = (data.results || [])
+                .filter(s => s.symbol.toUpperCase().includes(q))
+                .slice(0, 8);
+            if (!matches.length) { suggest.innerHTML = ''; return; }
+            suggest.innerHTML = matches.map(s => `
+                <div class="poc-suggest-item" onclick="selectAddPosSymbol('${s.symbol}', ${s.target_price || 0}, ${s.stop_loss || 0})">
+                    <span class="poc-suggest-sym">${s.symbol}</span>
+                    <span class="poc-suggest-score">${s.score || 0}/100</span>
+                </div>
+            `).join('');
+        } catch (e) { suggest.innerHTML = ''; }
+    }, 250);
+}
+
+function selectAddPosSymbol(sym, target, sl) {
+    document.getElementById('addPosSymbol').value = sym;
+    document.getElementById('addPosSuggest').innerHTML = '';
+    // Auto-populate resolved targets from API
+    fetch(`/api/stock/${encodeURIComponent(sym)}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.targets) {
+                if (data.targets.sl) document.getElementById('addPosSL').value = data.targets.sl;
+                if (data.targets.t1) document.getElementById('addPosTarget').value = data.targets.t1;
+            }
+            if (data.price) document.getElementById('addPosPrice').value = data.price;
+        })
+        .catch(() => {
+            if (sl) document.getElementById('addPosSL').value = sl;
+            if (target) document.getElementById('addPosTarget').value = target;
+        });
+}
+
+async function submitAddPosition() {
+    const errEl = document.getElementById('addPosError');
+    errEl.textContent = '';
+    const symbol = document.getElementById('addPosSymbol').value.trim();
+    const qty = parseInt(document.getElementById('addPosQty').value);
+    const price = parseFloat(document.getElementById('addPosPrice').value);
+    const date = document.getElementById('addPosDate').value;
+    const sl = document.getElementById('addPosSL').value ? parseFloat(document.getElementById('addPosSL').value) : null;
+    const target = document.getElementById('addPosTarget').value ? parseFloat(document.getElementById('addPosTarget').value) : null;
+    const notes = document.getElementById('addPosNotes').value.trim();
+
+    if (!symbol) { errEl.textContent = 'Symbol is required'; return; }
+    if (!qty || qty <= 0) { errEl.textContent = 'Quantity must be > 0'; return; }
+    if (!price || price <= 0) { errEl.textContent = 'Buy Price must be > 0'; return; }
+
+    const btn = document.getElementById('addPosSubmit');
+    btn.disabled = true;
+    btn.textContent = 'Adding...';
+
+    try {
+        const res = await fetch(`/api/portfolios/${currentPortfolioId}/positions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol, quantity: qty, buy_price: price, buy_date: date, stop_loss: sl, target: target, notes: notes })
+        });
+        const result = await res.json();
+        if (res.ok) {
+            showToast(`${symbol} added to portfolio`, 'success');
+            toggleAddPositionForm();
+            document.getElementById('addPosSymbol').value = '';
+            document.getElementById('addPosQty').value = '1';
+            document.getElementById('addPosPrice').value = '';
+            document.getElementById('addPosSL').value = '';
+            document.getElementById('addPosTarget').value = '';
+            document.getElementById('addPosNotes').value = '';
+            loadPortfolioData(currentPortfolioId);
+        } else {
+            errEl.textContent = result.error || 'Failed to add position';
+        }
+    } catch (e) {
+        errEl.textContent = 'Network error: ' + e.message;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Add Position';
     }
 }
 

@@ -1,10 +1,17 @@
 """Portfolio management API routes."""
 
+import logging
+import urllib.parse
 from datetime import datetime
 from flask import Blueprint, jsonify, request
 
 import live_feed
 import db
+from metrics import counters
+from target_utils import resolve_targets
+from symbol_utils import check_symbol_exists
+
+log = logging.getLogger("portfolio")
 
 portfolio_bp = Blueprint("portfolio", __name__)
 
@@ -104,9 +111,11 @@ def api_get_positions(pid):
                     pos["day_change_pct"] = lp.get("change_pct", 0)
 
                 if scan:
-                    pos["auto_sl"] = scan.get("stop_loss")
+                    # D1-A: Resolve targets from single source of truth
+                    targets = resolve_targets(scan, symbol=sym)
+                    pos["auto_sl"] = targets["sl"]
                     pos["auto_sl_pct"] = scan.get("stop_loss_pct")
-                    pos["auto_target"] = scan.get("target_price")
+                    pos["auto_target"] = targets["t1"]
                     pos["auto_target_pct"] = scan.get("target_pct")
                     pos["rsi"] = scan.get("rsi")
                     pos["adx"] = scan.get("adx")
@@ -121,7 +130,7 @@ def api_get_positions(pid):
                     pos["delivery_pct"] = scan.get("delivery_pct")
                     pos["high_conviction"] = scan.get("high_conviction", False)
 
-                    # Generate HOLD/SELL signal
+                    # ── Legacy signal (active — no behavior change) ──
                     signal = "HOLD"
                     signal_reasons = []
                     cp = current or pos["buy_price"]
@@ -157,6 +166,31 @@ def api_get_positions(pid):
                     pos["signal"] = signal
                     pos["signal_reasons"] = signal_reasons
 
+                    # ── D1-A: Observation Mode — shadow signal comparison ──
+                    new_signal = "HOLD"
+                    if targets.get("sl") is not None and cp <= targets["sl"]:
+                        new_signal = "SELL"
+                    elif targets.get("t1") is not None and cp >= targets["t1"]:
+                        new_signal = "BOOK PROFIT"
+                    elif scan.get("rsi", 0) > 75:
+                        new_signal = "SELL"
+                    elif scan.get("rsi", 0) > 65:
+                        new_signal = "TRAIL SL"
+                    if pnl_pct < -8:
+                        new_signal = "SELL"
+                    elif pnl_pct > 15:
+                        new_signal = "BOOK PROFIT"
+
+                    if signal == new_signal:
+                        counters.inc("signal_compare_match")
+                    else:
+                        counters.inc("signal_compare_mismatch")
+                        log.info(
+                            "[SIGNAL_COMPARE] symbol=%s legacy=%s new=%s cmp=%.2f legacy_target=%s new_target=%s",
+                            sym, signal, new_signal, cp,
+                            scan.get("target_price"), targets.get("t1"),
+                        )
+
             elif pos["status"] == "CLOSED" and pos["sell_price"]:
                 pos["pnl"] = round((pos["sell_price"] - pos["buy_price"]) * pos["quantity"], 2)
                 pos["pnl_pct"] = round(((pos["sell_price"] - pos["buy_price"]) / pos["buy_price"]) * 100, 2)
@@ -181,13 +215,32 @@ def api_get_positions(pid):
 @portfolio_bp.route("/api/portfolios/<int:pid>/positions", methods=["POST"])
 def api_add_position(pid):
     body = request.get_json(silent=True) or {}
-    symbol = body.get("symbol", "").upper().replace("NSE:", "").replace(".NS", "").strip()
-    if not symbol or not body.get("buy_price") or not body.get("quantity"):
-        return jsonify({"error": "symbol, buy_price, quantity required"}), 400
+    # D1-A: Full normalization & URL decoding (handles M%26M, NSE:M&M, M&M.NS)
+    raw_symbol = body.get("symbol", "")
+    symbol = urllib.parse.unquote(raw_symbol).upper().strip().replace("NSE:", "").replace(".NS", "")
+
+    # D1-A: Validation — backend is final authority
+    if not symbol:
+        return jsonify({"error": "symbol is required"}), 400
+    if not check_symbol_exists(symbol):
+        return jsonify({"error": f"Symbol '{symbol}' not found in active universe"}), 400
+    try:
+        qty = int(body.get("quantity", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "quantity must be a valid integer"}), 400
+    if qty <= 0:
+        return jsonify({"error": "quantity must be greater than 0"}), 400
+    try:
+        price = float(body.get("buy_price", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "buy_price must be a valid number"}), 400
+    if price <= 0:
+        return jsonify({"error": "buy_price must be greater than 0"}), 400
+
     pos_id = db.add_position(
         portfolio_id=pid, symbol=symbol,
-        quantity=int(body["quantity"]),
-        buy_price=float(body["buy_price"]),
+        quantity=qty,
+        buy_price=price,
         buy_date=body.get("buy_date", datetime.now().strftime("%Y-%m-%d")),
         stop_loss=float(body["stop_loss"]) if body.get("stop_loss") else None,
         target=float(body["target"]) if body.get("target") else None,

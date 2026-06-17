@@ -85,6 +85,7 @@ Compress(app)
 
 # P4: Browser caches static assets (CSS/JS/fonts) for 24 hours
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 86400
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 # Register blueprints
 app.register_blueprint(auth_bp)
