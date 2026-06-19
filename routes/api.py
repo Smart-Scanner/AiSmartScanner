@@ -250,6 +250,15 @@ def scan_status():
 
         return {
             "scanning": state.get("scanning", False),
+            "status": state.get("status", "IDLE"),
+            "status_source": state.get("status_source", "unknown"),
+            "failed_reason": state.get("failed_reason", ""),
+            "scan_id": state.get("scan_id", ""),
+            "resume_version": state.get("resume_version"),
+            "last_attempt": state.get("last_attempt", ""),
+            "progress_updated_at": state.get("progress_updated_at", ""),
+            "last_successful_scan": state.get("last_successful_scan", ""),
+            "is_terminal": state.get("is_terminal", True),
             "progress": state.get("progress", 0),
             "total": state.get("total", 0),
             "last_scan": db.get_meta("last_scan"),
@@ -1132,7 +1141,7 @@ def get_market_overview():
 
 
 # ═══════════════════════════════════════════════════════════════
-# RELEASE 3 — PAPER TRADE API ENDPOINTS
+# RELEASE 4 — PAPER TRADE & EXECUTION ENGINE API ENDPOINTS
 # ═══════════════════════════════════════════════════════════════
 
 @api_bp.route("/api/paper-trades")
@@ -1175,6 +1184,14 @@ def get_paper_trades():
         market_open = live_feed.is_market_open()
         scan_active, _ = db.is_scan_active()
 
+        # Release 4: Execution Engine stats
+        engine_stats = {}
+        try:
+            from execution_engine import get_engine_stats
+            engine_stats = get_engine_stats()
+        except Exception:
+            pass
+
         return jsonify({
             "trades": trades,
             "total": len(trades),
@@ -1182,10 +1199,65 @@ def get_paper_trades():
             "closed": len(trades) - open_count,
             "stats": stats,
             "market_open": market_open,
-            "scan_running": scan_active
+            "scan_running": scan_active,
+            "engine": engine_stats,
         })
     except Exception as exc:
         return jsonify({"error": str(exc), "trades": []})
+
+
+@api_bp.route("/api/paper-orders")
+def get_paper_orders():
+    """Return all paper orders with full lifecycle status."""
+    try:
+        status_filter = request.args.get("status", None)
+        limit = request.args.get("limit", 100, type=int)
+
+        if status_filter:
+            orders = db.execute_db(
+                "SELECT * FROM paper_orders WHERE status = ? ORDER BY order_created_at DESC LIMIT ?",
+                (status_filter.upper(), limit), fetch="all"
+            ) or []
+        else:
+            orders = db.execute_db(
+                "SELECT * FROM paper_orders ORDER BY order_created_at DESC LIMIT ?",
+                (limit,), fetch="all"
+            ) or []
+
+        # Inject live prices for PENDING orders
+        for order in orders:
+            if order.get("status") == "PENDING":
+                live = live_feed.get_live_price(order.get("symbol", ""))
+                if live:
+                    order["current_price"] = live.get("ltp", 0)
+
+        pending_count = sum(1 for o in orders if o.get("status") == "PENDING")
+        filled_count = sum(1 for o in orders if o.get("status") == "FILLED")
+
+        return jsonify({
+            "orders": orders,
+            "total": len(orders),
+            "pending": pending_count,
+            "filled": filled_count,
+        })
+    except Exception as exc:
+        return jsonify({"error": str(exc), "orders": []})
+
+
+@api_bp.route("/api/paper-trades/engine-stats")
+def get_execution_engine_stats():
+    """Return execution engine real-time telemetry."""
+    try:
+        from execution_engine import get_engine_stats, _pending_orders, _active_positions, _state_lock
+        stats = get_engine_stats()
+        with _state_lock:
+            stats["pending_orders"] = sum(len(v) for v in _pending_orders.values())
+            stats["active_positions"] = sum(len(v) for v in _active_positions.values())
+            stats["pending_symbols"] = list(_pending_orders.keys())[:20]
+            stats["active_symbols"] = list(_active_positions.keys())[:20]
+        return jsonify({"ok": True, **stats})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)})
 
 
 _dashboard_loaded = False

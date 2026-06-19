@@ -4,7 +4,7 @@
 {% block content %}
 <div class="v3-page-header">
     <div class="v3-page-title">Paper Trades</div>
-    <div class="v3-page-subtitle">Automated paper trading engine with outcome-first analytics</div>
+    <div class="v3-page-subtitle">Real-time execution engine with event-driven SL/Target evaluation</div>
 </div>
 
 <div id="ptLoading" class="v3-loading-state">
@@ -14,20 +14,41 @@
 </div>
 
 <div id="ptContent" style="display:none">
+    <!-- Engine Status Banner -->
+    <div id="engineBanner" class="engine-banner"></div>
+
     <!-- Stats Row -->
     <div id="ptStats" class="pt-stats-grid"></div>
 
-    <!-- Tabs: Open | Closed -->
+    <!-- Tabs: Orders | Open | Closed -->
     <div class="v3-tabs" id="ptTabs" style="margin-top:24px">
+        <button class="v3-tab" onclick="switchPTTab('orders',this)">Orders</button>
         <button class="v3-tab active" onclick="switchPTTab('open',this)">Open</button>
         <button class="v3-tab" onclick="switchPTTab('closed',this)">Closed</button>
     </div>
 
+    <div id="ptOrders" class="pt-trades-list" style="display:none"></div>
     <div id="ptOpen" class="pt-trades-list"></div>
     <div id="ptClosed" class="pt-trades-list" style="display:none"></div>
 </div>
 
 <style>
+.engine-banner {
+    background: linear-gradient(135deg, rgba(16,185,129,0.08), rgba(59,130,246,0.08));
+    border: 1px solid rgba(16,185,129,0.2);
+    border-radius: 10px; padding: 12px 20px;
+    display: flex; align-items: center; gap: 16px;
+    margin-bottom: 16px; font-size: 12px;
+    color: var(--text-secondary);
+}
+.engine-banner .engine-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--success); animation: engine-pulse 2s infinite;
+}
+.engine-banner .engine-dot.offline { background: var(--danger); animation: none; }
+@keyframes engine-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+.engine-stat { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--text-primary); }
+
 .pt-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .pt-stat {
     background: var(--card-bg); border: 1px solid var(--border-subtle);
@@ -49,6 +70,18 @@
 }
 .pt-trade-row:hover { border-color: var(--accent-blue); box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
 
+.pt-order-row {
+    background: var(--card-bg); border: 1px solid var(--border-subtle);
+    border-radius: 10px; padding: 16px 20px;
+    display: grid; grid-template-columns: 1.2fr 0.8fr 0.8fr 0.8fr 0.6fr 0.6fr;
+    align-items: center; gap: 12px;
+    transition: all 0.2s;
+}
+.pt-order-row.pending { border-left: 3px solid var(--warning); }
+.pt-order-row.filled { border-left: 3px solid var(--success); }
+.pt-order-row.expired { border-left: 3px solid var(--text-muted); opacity: 0.6; }
+.pt-order-row.cancelled { border-left: 3px solid var(--danger); opacity: 0.6; }
+
 .pt-trade-sym { font-size: 15px; font-weight: 800; color: var(--text-primary); }
 .pt-trade-sector { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
 .pt-trade-meta { font-size: 12px; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; }
@@ -67,15 +100,22 @@
 .pt-badge.golden { color: var(--golden); background: rgba(251,191,36,0.12); }
 .pt-badge.win { color: var(--success); background: rgba(16,185,129,0.1); }
 .pt-badge.loss { color: var(--danger); background: rgba(239,68,68,0.1); }
+.pt-badge.pending-badge { color: var(--warning); background: rgba(245,158,11,0.12); }
+.pt-badge.filled-badge { color: var(--success); background: rgba(16,185,129,0.1); }
+.pt-badge.latency { color: var(--accent-blue); background: rgba(59,130,246,0.1); font-family: 'JetBrains Mono', monospace; }
+
+.pt-timestamp { font-size: 10px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
 
 @media (max-width: 900px) {
     .pt-trade-row { grid-template-columns: 1fr 1fr; }
+    .pt-order-row { grid-template-columns: 1fr 1fr; }
 }
 </style>
 
 <script>
 let globalPtTrades = [];
 let globalPtStats = {};
+let globalPtOrders = [];
 
 // P0-11: Rate Limiter & Failure Protection
 let lastFullReload = 0;
@@ -95,6 +135,7 @@ window.paperTradesIntervalMs = 3000;
 function switchPTTab(tab, btn) {
     document.querySelectorAll('#ptTabs .v3-tab').forEach(t => t.classList.remove('active'));
     btn.classList.add('active');
+    document.getElementById('ptOrders').style.display = tab === 'orders' ? 'flex' : 'none';
     document.getElementById('ptOpen').style.display = tab === 'open' ? 'flex' : 'none';
     document.getElementById('ptClosed').style.display = tab === 'closed' ? 'flex' : 'none';
 }
@@ -107,12 +148,114 @@ function calcConfidence(s) {
     return Math.round(Math.min(100, Math.max(0, tech100 * 0.30 + earn100 * 0.25 + sm100 * 0.25 + fund100 * 0.20)));
 }
 
+// Format timestamp to human-readable (with time if available)
+function fmtTime(ts) {
+    if (!ts) return '—';
+    // If it's a date-only string (YYYY-MM-DD), return as-is
+    if (ts.length <= 10) return ts;
+    try {
+        const d = new Date(ts);
+        if (isNaN(d.getTime())) return ts.substring(0, 10);
+        return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) +
+               ' ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    } catch { return ts.substring(0, 10); }
+}
+
+// Format holding duration
+function fmtDuration(entryTime, exitTime) {
+    if (!entryTime || !exitTime) return '';
+    try {
+        const entry = new Date(entryTime);
+        const exit = new Date(exitTime);
+        const diffMs = exit - entry;
+        if (isNaN(diffMs) || diffMs < 0) return '';
+        const days = Math.floor(diffMs / 86400000);
+        const hours = Math.floor((diffMs % 86400000) / 3600000);
+        const mins = Math.floor((diffMs % 3600000) / 60000);
+        if (days > 0) return `${days}d ${hours}h ${mins}m`;
+        if (hours > 0) return `${hours}h ${mins}m`;
+        return `${mins}m`;
+    } catch { return ''; }
+}
+
+function renderEngineBanner(engine) {
+    const banner = document.getElementById('engineBanner');
+    if (!engine || !engine.ticks_processed && engine.ticks_processed !== 0) {
+        banner.innerHTML = `
+            <div class="engine-dot offline"></div>
+            <span>Execution Engine: <span class="engine-stat">OFFLINE</span></span>
+        `;
+        return;
+    }
+    const ticks = Number(engine.ticks_processed || 0).toLocaleString();
+    const fills = engine.orders_filled || 0;
+    const slHits = engine.sl_hits || 0;
+    const tgtHits = engine.target_hits || 0;
+    const lastTick = engine.last_tick_time ? fmtTime(engine.last_tick_time) : '—';
+    banner.innerHTML = `
+        <div class="engine-dot"></div>
+        <span>Execution Engine: <span class="engine-stat">ACTIVE</span></span>
+        <span>Ticks: <span class="engine-stat">${ticks}</span></span>
+        <span>Fills: <span class="engine-stat">${fills}</span></span>
+        <span>SL Hits: <span class="engine-stat">${slHits}</span></span>
+        <span>Target Hits: <span class="engine-stat">${tgtHits}</span></span>
+        <span>Last Tick: <span class="engine-stat">${lastTick}</span></span>
+    `;
+}
+
+function renderOrderRow(o) {
+    const statusClass = (o.status || 'pending').toLowerCase();
+    const statusBadge = `<span class="pt-badge ${statusClass}-badge">${o.status}</span>`;
+    const ltp = o.current_price ? `₹${Number(o.current_price).toFixed(2)}` : '—';
+    const entryRange = `₹${Number(o.entry_low||0).toFixed(0)} – ₹${Number(o.entry_high||0).toFixed(0)}`;
+
+    return `<div class="pt-order-row ${statusClass}">
+        <div>
+            <div class="pt-trade-sym">${o.symbol}</div>
+            <div class="pt-badges" style="margin-top:4px">
+                ${statusBadge}
+                <span class="pt-badge" style="color:var(--text-muted);background:var(--bg-hover)">Score: ${o.score_at_signal||0}</span>
+            </div>
+        </div>
+        <div>
+            <div class="pt-trade-meta-label">Entry Range</div>
+            <div class="pt-trade-meta">${entryRange}</div>
+        </div>
+        <div>
+            <div class="pt-trade-meta-label">LTP</div>
+            <div class="pt-trade-meta">${ltp}</div>
+        </div>
+        <div>
+            <div class="pt-trade-meta-label">Target / SL</div>
+            <div style="font-size:11px;color:var(--success)">₹${Number(o.target_price||0).toFixed(0)}</div>
+            <div style="font-size:11px;color:var(--danger)">₹${Number(o.stop_loss||0).toFixed(0)}</div>
+        </div>
+        <div>
+            <div class="pt-trade-meta-label">Signal</div>
+            <div class="pt-timestamp">${fmtTime(o.signal_time)}</div>
+        </div>
+        <div>
+            <div class="pt-trade-meta-label">${o.status === 'FILLED' ? 'Filled' : 'Expires'}</div>
+            <div class="pt-timestamp">${fmtTime(o.status === 'FILLED' ? o.filled_at : o.expires_at)}</div>
+        </div>
+    </div>`;
+}
+
 function renderTradeRow(t, isOpen) {
     const entryPrice = Number(t.entry_price) || 0;
     const exitPrice = Number(t.exit_price) || entryPrice;
     const returnPct = Number(t.return_pct) || 0;
     const pnlClass = returnPct >= 0 ? 'positive' : 'negative';
     const pnlSign = returnPct >= 0 ? '+' : '';
+
+    // Use entry_time if available, else fall back to entry_date
+    const entryDisplay = t.entry_time ? fmtTime(t.entry_time) : (t.entry_date || '');
+    const exitDisplay = t.exit_time ? fmtTime(t.exit_time) : (t.exit_date || '');
+
+    // Execution latency badge
+    const latencyBadge = t.execution_latency_ms != null
+        ? `<span class="pt-badge latency">${Number(t.execution_latency_ms).toLocaleString()}ms</span>`
+        : '';
 
     const badges = [];
     if (t.high_conviction) badges.push('<span class="pt-badge hc">HC</span>');
@@ -132,12 +275,12 @@ function renderTradeRow(t, isOpen) {
             <div>
                 <div class="pt-trade-sym">${t.symbol}</div>
                 <div class="pt-trade-sector">${t.sector || ''}</div>
-                <div class="pt-badges" style="margin-top:4px">${badges.join('')}</div>
+                <div class="pt-badges" style="margin-top:4px">${badges.join('')}${latencyBadge}</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">Entry</div>
                 <div class="pt-trade-meta">₹${entryPrice.toFixed(2)}</div>
-                <div style="font-size:10px;color:var(--text-muted)">${t.entry_date||''}</div>
+                <div class="pt-timestamp">${entryDisplay}</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">LTP</div>
@@ -159,6 +302,7 @@ function renderTradeRow(t, isOpen) {
             </div>
         </div>`;
     } else {
+        const duration = fmtDuration(t.entry_time || t.entry_date, t.exit_time || t.exit_date);
         return `<div class="pt-trade-row" onclick="window.location.href='/symbol/' + encodeURIComponent(('${t.symbol}' || '').toUpperCase())">
             <div>
                 <div class="pt-trade-sym">${t.symbol}</div>
@@ -166,6 +310,7 @@ function renderTradeRow(t, isOpen) {
                 <div class="pt-badges" style="margin-top:4px">
                     ${badges.join('')}
                     <span class="pt-badge ${returnPct >= 0 ? 'win' : 'loss'}">${returnPct >= 0 ? 'WIN' : 'LOSS'}</span>
+                    ${latencyBadge}
                 </div>
             </div>
             <div>
@@ -173,20 +318,21 @@ function renderTradeRow(t, isOpen) {
                 <div class="pt-pnl ${pnlClass}">${pnlSign}${returnPct.toFixed(1)}%</div>
             </div>
             <div>
-                <div class="pt-trade-meta-label">Confidence</div>
-                <div><span class="tp-conf ${cl}" style="font-size:10px;padding:2px 6px">${confScore}%</span></div>
+                <div class="pt-trade-meta-label">Duration</div>
+                <div class="pt-trade-meta">${duration || (t.days_held||0)+'d'}</div>
+                <div class="pt-timestamp">${entryDisplay} → ${exitDisplay}</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">Alpha</div>
                 <div class="pt-trade-meta" style="color:${Number(t.alpha_pct||0) >= 0 ? 'var(--success)' : 'var(--danger)'}">${Number(t.alpha_pct||0) >= 0 ? '+' : ''}${Number(t.alpha_pct||0).toFixed(1)}%</div>
             </div>
             <div>
-                <div class="pt-trade-meta-label">Days</div>
-                <div class="pt-trade-meta">${t.days_held||0}d</div>
-            </div>
-            <div>
                 <div class="pt-trade-meta-label">Exit</div>
                 <div style="font-size:10px;color:var(--text-muted)">${t.exit_reason||''}</div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">Confidence</div>
+                <div><span class="tp-conf ${cl}" style="font-size:10px;padding:2px 6px">${confScore}%</span></div>
             </div>
         </div>`;
     }
@@ -251,18 +397,22 @@ async function pollPaperTrades() {
     const requestId = ++latestRequestId;
 
     try {
-        const resp = await fetch('/api/paper-trades');
-        if (!resp.ok) throw new Error('Network error');
-        
-        if (requestId !== latestRequestId) {
-            return; // Newer request already inflight, discard this stale response
-        }
+        // Parallel fetch: trades + orders
+        const [tradeResp, orderResp] = await Promise.all([
+            fetch('/api/paper-trades'),
+            fetch('/api/paper-orders'),
+        ]);
 
-        const data = await resp.json();
+        if (requestId !== latestRequestId) return;
+
+        const data = await tradeResp.json();
         if (data.error) throw new Error(data.error);
 
+        let orderData = { orders: [] };
+        try { orderData = await orderResp.json(); } catch {}
+
         consecutiveFailures = 0;
-        
+
         // P0-7: Update Polling Interval based on Scan/Market State
         if (data.scan_running) {
             updatePollInterval(10000);
@@ -272,19 +422,29 @@ async function pollPaperTrades() {
             updatePollInterval(3000);
         }
 
+        // Render engine banner
+        renderEngineBanner(data.engine);
+
         // P0-5: Stats Guard
         if (data.stats && data.stats.ok) {
             renderStats(data.stats);
-        } else {
-            console.warn("Stats calculations temporarily unavailable");
         }
+
+        // Orders tab
+        globalPtOrders = orderData.orders || [];
+
+        const pendingOrders = globalPtOrders.filter(o => o.status === 'PENDING');
+        const otherOrders = globalPtOrders.filter(o => o.status !== 'PENDING');
+        document.getElementById('ptOrders').innerHTML = globalPtOrders.length
+            ? [...pendingOrders, ...otherOrders].map(o => renderOrderRow(o)).join('')
+            : '<div class="v3-empty-state" style="min-height:150px;padding:30px"><div class="v3-empty-title">No Orders</div><div class="v3-empty-desc">Orders will appear when the scanner generates signals.</div></div>';
 
         // Check if we need full reload (P0-11)
         const openCount = data.open || 0;
         const closedCount = data.closed || 0;
         const currentOpenCount = globalPtTrades.filter(t => t.status === 'OPEN').length;
         const currentClosedCount = globalPtTrades.filter(t => t.status === 'CLOSED').length;
-        
+
         const structuralChange = openCount !== currentOpenCount || closedCount !== currentClosedCount;
 
         if (structuralChange || (Date.now() - lastFullReload > 10000)) {
@@ -292,21 +452,24 @@ async function pollPaperTrades() {
             globalPtTrades = data.trades || [];
             document.getElementById('ptLoading').style.display = 'none';
             document.getElementById('ptContent').style.display = 'block';
-            
+
             const openTrades = globalPtTrades.filter(t => t.status === 'OPEN');
             const closedTrades = globalPtTrades.filter(t => t.status === 'CLOSED');
 
             document.getElementById('ptOpen').innerHTML = openTrades.length
                 ? openTrades.map(t => renderTradeRow(t, true)).join('')
-                : '<div class="v3-empty-state" style="min-height:150px;padding:30px"><div class="v3-empty-title">No Open Trades</div><div class="v3-empty-desc">Paper trades are opened automatically during each scan cycle.</div></div>';
+                : '<div class="v3-empty-state" style="min-height:150px;padding:30px"><div class="v3-empty-title">No Open Trades</div><div class="v3-empty-desc">Paper trades open automatically when pending orders are triggered by live prices.</div></div>';
 
             document.getElementById('ptClosed').innerHTML = closedTrades.length
                 ? closedTrades.map(t => renderTradeRow(t, false)).join('')
                 : '<div class="v3-empty-state" style="min-height:150px;padding:30px"><div class="v3-empty-title">No Closed Trades</div><div class="v3-empty-desc">Closed trades will appear after positions hit targets, stops, or time limits.</div></div>';
 
-            document.querySelectorAll('#ptTabs .v3-tab')[0].textContent = `Open (${openTrades.length})`;
-            document.querySelectorAll('#ptTabs .v3-tab')[1].textContent = `Closed (${closedTrades.length})`;
-            
+            // Update tab counts
+            const tabs = document.querySelectorAll('#ptTabs .v3-tab');
+            tabs[0].textContent = `Orders (${pendingOrders.length})`;
+            tabs[1].textContent = `Open (${openTrades.length})`;
+            tabs[2].textContent = `Closed (${closedTrades.length})`;
+
             lastFullReload = Date.now();
         } else {
             // P0-10: DOM-Diff Update Safety
@@ -314,23 +477,23 @@ async function pollPaperTrades() {
             for (const t of openTrades) {
                 const row = document.getElementById(`trade-row-${t.symbol}`);
                 if (!row) continue;
-                
+
                 const currentPrice = Number(t.current_price) || 0;
                 const liveReturn = Number(t.live_return_pct) || 0;
                 const dayChg = Number(t.day_change_pct) || 0;
-                
+
                 const ltpEl = row.querySelector('.live-ltp');
                 if (ltpEl) {
                     ltpEl.style.color = currentPrice ? (liveReturn >= 0 ? 'var(--success)' : 'var(--danger)') : 'var(--text-muted)';
                     ltpEl.textContent = currentPrice ? '₹'+currentPrice.toFixed(2) : '—';
                 }
-                
+
                 const chgEl = row.querySelector('.live-day-chg');
                 if (chgEl) {
                     chgEl.style.color = dayChg >= 0 ? 'var(--success)' : 'var(--danger)';
                     chgEl.textContent = dayChg ? (dayChg >= 0 ? '+' : '') + dayChg.toFixed(1) + '% today' : '';
                 }
-                
+
                 const pnlEl = row.querySelector('.live-pnl');
                 if (pnlEl) {
                     pnlEl.className = `pt-pnl live-pnl ${liveReturn >= 0 ? 'positive' : 'negative'}`;

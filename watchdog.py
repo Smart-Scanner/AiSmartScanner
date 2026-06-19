@@ -21,7 +21,7 @@ log = logging.getLogger("watchdog")
 
 # ── Configuration ─────────────────────────────────────────────────────
 WATCHDOG_CHECK_INTERVAL_SEC = 60   # How often the watchdog loop runs
-SCAN_TIMEOUT_MIN = 5               # Scans running longer than this without heartbeat are stale
+SCAN_TIMEOUT_MIN = 15              # Scans running longer than this without heartbeat are zombies
 HEARTBEAT_KEY = "watchdog_heartbeat_ts"
 
 # ── Module state ──────────────────────────────────────────────────────
@@ -135,36 +135,58 @@ def _recover_stale_scans(db):
                 continue
 
             try:
-                last_update = datetime.fromisoformat(str(updated_at))
+                if isinstance(updated_at, datetime):
+                    last_update = updated_at
+                else:
+                    last_update = datetime.fromisoformat(str(updated_at))
+                
+                # Make naive for timezone-safe subtraction
+                if last_update.tzinfo is not None:
+                    last_update = last_update.replace(tzinfo=None)
+                
                 age_min = (now - last_update).total_seconds() / 60
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as exc:
+                log.error("[WATCHDOG] Age check parse error: %s", exc)
                 continue
 
             if age_min > SCAN_TIMEOUT_MIN:
                 log.warning(
-                    "[WATCHDOG_STALE_DETECTED] Stale scan detected: scan_id=%s, heartbeat_age=%.1f min. Recovering...",
+                    "[ZOMBIE_DETECTED] Zombie scan detected: scan_id=%s, heartbeat_age=%.1f min. Recovering...",
                     scan_id, age_min
                 )
-                db.log_scan_event(scan_id, "WATCHDOG_STALE_DETECTED", f"No heartbeat received for {age_min:.1f} minutes")
-                db.log_scan_event(scan_id, "WATCHDOG_RECOVERY_STARTED", "Initiating watchdog recovery")
+                db.log_scan_event(scan_id, "ZOMBIE_DETECTED", f"No heartbeat received for {age_min:.1f} minutes")
+                db.log_scan_event(scan_id, "WATCHDOG_RECOVERY_STARTED", "Initiating watchdog recovery via zombie state")
 
-                # Transition: running → failed (via watchdog recovery)
-                # Uses conditional UPDATE to prevent race with a worker that might
-                # still be alive and completing normally.
-                recovered = db.transition_scan_state(
+                # Transition 1: running → zombie_detected
+                zombie_marked = db.transition_scan_state(
                     scan_id=scan_id,
                     from_status="running",
-                    to_status="failed",
-                    reason="watchdog_timeout",
+                    to_status="zombie_detected",
+                    reason="Heartbeat timeout",
+                    error_message="Heartbeat timeout",
                     actor=ACTOR_WATCHDOG,
                 )
 
-                if recovered:
-                    log.warning(
-                        "[WATCHDOG_RECOVERY_COMPLETED] Recovered stale scan: %s (heartbeat dead for %.1f min)",
-                        scan_id, age_min
+                if zombie_marked:
+                    # Transition 2: zombie_detected → failed
+                    recovered = db.transition_scan_state(
+                        scan_id=scan_id,
+                        from_status="zombie_detected",
+                        to_status="failed",
+                        reason="Heartbeat timeout",
+                        error_message="Heartbeat timeout",
+                        actor=ACTOR_WATCHDOG,
                     )
-                    db.log_scan_event(scan_id, "WATCHDOG_RECOVERY_COMPLETED", f"Transitioned to failed after {age_min:.1f}m without heartbeat")
+                    
+                    # Guardrail: Release the scan lock explicitly
+                    db.execute_db("UPDATE scan_lock SET scan_id = NULL, owner_id = NULL, heartbeat = NULL, expires_at = NULL WHERE id = 1 AND scan_id = ?", (scan_id,))
+
+                    if recovered:
+                        log.warning(
+                            "[WATCHDOG_RECOVERY_COMPLETED] Recovered zombie scan: %s (heartbeat dead for %.1f min)",
+                            scan_id, age_min
+                        )
+                        db.log_scan_event(scan_id, "WATCHDOG_RECOVERY_COMPLETED", f"Transitioned to failed after {age_min:.1f}m without heartbeat")
                 else:
                     log.info(
                         "[WATCHDOG] Scan %s already transitioned (race OK)", scan_id

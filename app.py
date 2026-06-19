@@ -496,16 +496,17 @@ def _portfolio_scan_loop():
 
 
 # ---------------------------------------------------------------------------
-# Release 3: Paper Trade Snapshot (11:00 AM IST daily)
+# Release 4: Daily Recommendation Snapshot (keeps top-20 record, no trade creation)
+# Trade creation is now handled by execution_engine.py via scanner signals.
 # ---------------------------------------------------------------------------
 _SNAPSHOT_HOUR = 11  # 11:00 AM IST
-_SNAPSHOT_MINUTE = 0
 
-def _paper_trade_snapshot_loop():
+def _recommendation_snapshot_loop():
     """
     Daily at 11:00 AM IST:
-    1. Save top 20 recommendation snapshot
-    2. Open paper trades for top 5 picks
+    1. Save top 20 recommendation snapshot (for historical record)
+    2. Save daily equity curve
+    NOTE: Paper trade CREATION is now handled by execution_engine.py in real-time.
     """
     time.sleep(180)  # 3 min startup grace
 
@@ -514,31 +515,23 @@ def _paper_trade_snapshot_loop():
             from datetime import datetime as _dt
             now = _dt.now()
 
-            # Only trigger at 11:00 AM (±5 min window)
             if now.hour == _SNAPSHOT_HOUR and now.minute < 10:
                 today = now.strftime("%Y-%m-%d")
 
-                # Check if already snapped today
                 existing = db.execute_db(
                     "SELECT COUNT(*) as cnt FROM recommendation_snapshots WHERE snapshot_date = ?",
                     (today,), fetch="one"
                 )
                 if existing and existing.get("cnt", 0) > 0:
-                    log.debug("[PaperTrade] Snapshot already taken today, skipping")
-                    time.sleep(600)  # sleep 10 min to avoid re-trigger
-                    continue
-
-                # Get current scan results sorted by score
-                all_results = db.get_all_results()
-                if not all_results:
-                    log.info("[PaperTrade] No scan results available for snapshot")
                     time.sleep(600)
                     continue
 
-                # Sort by score descending
-                all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+                all_results = db.get_all_results()
+                if not all_results:
+                    time.sleep(600)
+                    continue
 
-                # Get market context
+                all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
                 regime = db.get_meta("market_regime", "unknown")
                 nifty_price = None
                 try:
@@ -548,50 +541,12 @@ def _paper_trade_snapshot_loop():
                 except Exception:
                     pass
 
-                # 1. Save top 20 recommendation snapshot
                 db.save_recommendation_snapshot(today, all_results, regime)
-
-                # 2. Compute market breadth from scan results
-                advances = sum(1 for s in all_results if (s.get("change_pct") or s.get("price_change_pct") or 0) > 0)
-                declines = sum(1 for s in all_results if (s.get("change_pct") or s.get("price_change_pct") or 0) < 0)
-                breadth_ratio = round(advances / declines, 2) if declines > 0 else (9.99 if advances > 0 else 1.0)
-
-                # 3. Open paper trades for top 5 eligible stocks
-                trades_opened = 0
-                for stock in all_results:
-                    if trades_opened >= 5:
-                        break
-
-                    # Eligibility: HC or score >= 65
-                    score = stock.get("score", 0)
-                    hc = stock.get("high_conviction", False)
-                    if not hc and score < 65:
-                        continue
-
-                    # Must have valid price, target, stop
-                    if not stock.get("price") or stock["price"] <= 0:
-                        continue
-                    if not stock.get("target_price") or not stock.get("stop_loss"):
-                        continue
-
-                    trade_id = db.create_paper_trade(
-                        {**stock,
-                         "_entry_rank": trades_opened + 1,
-                         "_breadth_advances": advances,
-                         "_breadth_declines": declines,
-                         "_breadth_ratio": breadth_ratio},
-                        nifty_price, regime
-                    )
-                    if trade_id:
-                        trades_opened += 1
-
-                # 3. Save daily equity curve
                 db.save_portfolio_daily(nifty_price)
-
-                log.info("[PaperTrade] Daily snapshot: %d trades opened, top 20 saved", trades_opened)
-                time.sleep(600)  # sleep 10 min after snapshot
+                log.info("[PaperTrade] Daily recommendation snapshot saved (top 20)")
+                time.sleep(600)
             else:
-                time.sleep(60)  # check every minute
+                time.sleep(60)
 
         except Exception as exc:
             log.warning("[PaperTrade] Snapshot error: %s", exc)
@@ -599,16 +554,17 @@ def _paper_trade_snapshot_loop():
 
 
 # ---------------------------------------------------------------------------
-# Release 3: Outcome Checker (every 30 min during market hours)
+# Release 4: Research Lifecycle Updater (every 30 min during market hours)
+# NOTE: SL/Target execution is now handled by execution_engine.py in real-time.
+# This loop ONLY handles the Research Lifecycle Engine (Phase 6) updates.
 # ---------------------------------------------------------------------------
 
-def _outcome_checker_loop():
+def _research_lifecycle_loop():
     """
     Every 30 minutes during market hours:
-    1. Get all open paper trades
-    2. Fetch current prices
-    3. Update max drawdown / max runup
-    4. Close trades that hit target, stop, or time limit (20 trading days)
+    1. Update Research Lifecycle Engine (Phase 6) outcomes
+    2. Save daily equity curve
+    NOTE: SL/Target/Time exits are NOW handled by execution_engine.py via WebSocket ticks.
     """
     time.sleep(300)  # 5 min startup grace
 
@@ -618,23 +574,8 @@ def _outcome_checker_loop():
                 time.sleep(300)
                 continue
 
+            # Fetch prices for Research Lifecycle Engine
             open_trades = db.get_open_paper_trades()
-            if not open_trades:
-                time.sleep(1800)
-                continue
-
-            # Get Nifty for alpha calc
-            nifty_price = None
-            try:
-                nifty_meta = db.get_meta("nifty50_price")
-                if nifty_meta:
-                    nifty_price = float(nifty_meta)
-            except Exception:
-                pass
-
-            closed_count = 0
-            
-            # Fetch prices and update Research Lifecycle Engine (Phase 6)
             prices_for_lifecycle = {}
             for trade in open_trades:
                 sym = trade["symbol"]
@@ -643,56 +584,77 @@ def _outcome_checker_loop():
                     ltp = p_data.get("ltp") or p_data.get("price", 0)
                     if ltp and ltp > 0:
                         prices_for_lifecycle[sym] = ltp
-                        
-            # Execute Phase 6 Lifecycle engine
-            db.update_research_lifecycle_outcomes(prices_for_lifecycle)
-            
-            for trade in open_trades:
-                sym = trade["symbol"]
-                trade_id = trade["id"]
 
-                # Use WebSocket cache (instant) instead of REST bulk fetch (0.5s/sym)
-                ltp = prices_for_lifecycle.get(sym)
-                if not ltp:
-                    continue
+            # Execute Phase 6 Lifecycle engine (research_snapshots_v2)
+            if prices_for_lifecycle:
+                db.update_research_lifecycle_outcomes(prices_for_lifecycle)
 
-                # Update extremes
-                db.update_paper_trade_extremes(trade_id, ltp)
+            # Save daily equity curve
+            nifty_price = None
+            try:
+                nifty_meta = db.get_meta("nifty50_price")
+                if nifty_meta:
+                    nifty_price = float(nifty_meta)
+            except Exception:
+                pass
+            db.save_portfolio_daily(nifty_price)
 
-                # Check exit conditions
-                target = trade.get("target_price")
-                stop = trade.get("stop_loss")
-
-                # Days held
-                from datetime import date as _date
-                try:
-                    entry_dt = _date.fromisoformat(trade["entry_date"])
-                    days_held = (_date.today() - entry_dt).days
-                except Exception:
-                    days_held = 0
-
-                exit_reason = None
-
-                if target and ltp >= target:
-                    exit_reason = "TARGET_HIT"
-                elif stop and ltp <= stop:
-                    exit_reason = "STOP_HIT"
-                elif days_held >= 20:  # 20 trading day max hold
-                    exit_reason = "TIME_EXIT"
-
-                if exit_reason:
-                    db.close_paper_trade(trade_id, ltp, exit_reason, nifty_price)
-                    closed_count += 1
-
-            if closed_count > 0:
-                db.save_portfolio_daily(nifty_price)
-
-            log.info("[PaperTrade] Outcome check: %d open, %d closed", len(open_trades), closed_count)
+            log.info("[PaperTrade] Research lifecycle update: %d prices checked", len(prices_for_lifecycle))
 
         except Exception as exc:
-            log.warning("[PaperTrade] Outcome check error: %s", exc)
+            log.warning("[PaperTrade] Research lifecycle error: %s", exc)
 
         time.sleep(1800)  # every 30 mins
+
+
+# ---------------------------------------------------------------------------
+# Release 4: Order Expiry Loop (once daily)
+# ---------------------------------------------------------------------------
+def _order_expiry_loop():
+    """Expire stale PENDING paper orders once per day."""
+    time.sleep(600)  # 10 min startup grace
+    while True:
+        try:
+            from execution_engine import expire_stale_orders
+            expire_stale_orders()
+        except Exception as exc:
+            log.warning("[PaperTrade] Order expiry error: %s", exc)
+        time.sleep(86400)  # once per day
+
+# ---------------------------------------------------------------------------
+# P0.1C: Production Stability Audit Loop (11:55 PM IST daily)
+# ---------------------------------------------------------------------------
+def _stability_audit_loop():
+    """
+    Daily at 11:55 PM IST:
+    Generates the stability scorecard for the day.
+    """
+    time.sleep(60)  # startup grace
+    
+    while True:
+        try:
+            from datetime import datetime as _dt, timezone, timedelta as _td
+            _IST = timezone(_td(hours=5, minutes=30))
+            now = _dt.now(_IST)
+            
+            # Run at 11:55 PM
+            if now.hour == 23 and now.minute >= 55:
+                # Check if we already ran it for today
+                last_run = db.get_meta("last_stability_audit_date")
+                today_str = now.date().isoformat()
+                
+                if last_run != today_str:
+                    from stability_audit import generate_daily_scorecard
+                    generate_daily_scorecard(now.date())
+                    db.set_meta("last_stability_audit_date", today_str)
+                    
+                time.sleep(3600)  # Sleep 1 hr so we don't re-run in the same window
+            else:
+                time.sleep(60)  # Check every minute
+        except Exception as exc:
+            log.warning("[StabilityAudit] Audit loop error: %s", exc)
+            time.sleep(300)
+
 
 
 threading.Thread(target=_auto_scan_loop, daemon=True, name="auto-scan").start()
@@ -701,12 +663,22 @@ log.info("Auto-scan enabled: every %d minutes", AUTO_SCAN_INTERVAL)
 threading.Thread(target=_portfolio_scan_loop, daemon=True, name="portfolio-scan").start()
 log.info("Portfolio-scan enabled: every 30 minutes")
 
-# Release 3: Paper trading threads
-threading.Thread(target=_paper_trade_snapshot_loop, daemon=True, name="paper-trade-snapshot").start()
-log.info("Paper-trade snapshot enabled: daily at 11:00 AM IST")
+# Release 4: Execution Engine + Paper trading threads
+from execution_engine import initialize_engine
+initialize_engine()
+log.info("Execution Engine started: real-time paper trading active")
 
-threading.Thread(target=_outcome_checker_loop, daemon=True, name="outcome-checker").start()
-log.info("Outcome checker enabled: every 30 minutes during market hours")
+threading.Thread(target=_recommendation_snapshot_loop, daemon=True, name="rec-snapshot").start()
+log.info("Recommendation snapshot enabled: daily at 11:00 AM IST")
+
+threading.Thread(target=_research_lifecycle_loop, daemon=True, name="research-lifecycle").start()
+log.info("Research lifecycle updater enabled: every 30 minutes during market hours")
+
+threading.Thread(target=_order_expiry_loop, daemon=True, name="order-expiry").start()
+log.info("Order expiry loop enabled: once daily")
+
+threading.Thread(target=_stability_audit_loop, daemon=True, name="stability-audit").start()
+log.info("P0.1C Stability Audit enabled: daily at 11:55 PM IST")
 
 # Phase 8: Start MarketAux background worker
 from scanner import start_marketaux_worker

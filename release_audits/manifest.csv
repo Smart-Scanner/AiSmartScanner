@@ -39,3 +39,7 @@ Date,Scan ID,Artifact Name,Rows Written
 2026-06-13,scan_auto_1781322911_ba2c24,daily_top20_snapshot.csv,20
 2026-06-13,scan_auto_1781322911_ba2c24,daily_open_trades_mtm.csv,16
 2026-06-13,scan_auto_1781322911_ba2c24,daily_hc_funnel_snapshot.csv,1
+2026-06-18,scan_manual_1781767195_1d0e3c,daily_release1_snapshot.csv,1
+2026-06-18,scan_manual_1781767195_1d0e3c,daily_top20_snapshot.csv,20
+2026-06-18,scan_manual_1781767195_1d0e3c,daily_open_trades_mtm.csv,3
+2026-06-18,scan_manual_1781767195_1d0e3c,daily_hc_funnel_snapshot.csv,1

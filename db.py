@@ -1355,6 +1355,55 @@ def _run_init_db_logic():
                 except Exception as exc:
                     log.warning("Phase 5.6B/C: Schema migration failed (non-fatal): %s", exc)
 
+                # ── Release 4: Execution Engine Schema ──────────────────────
+                try:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS paper_orders (
+                            id SERIAL PRIMARY KEY,
+                            symbol TEXT NOT NULL,
+                            order_type TEXT DEFAULT 'LIMIT',
+                            side TEXT DEFAULT 'BUY',
+                            status TEXT DEFAULT 'PENDING',
+                            entry_low REAL,
+                            entry_high REAL,
+                            target_price REAL,
+                            stop_loss REAL,
+                            virtual_capital REAL DEFAULT 25000,
+                            score_at_signal INTEGER DEFAULT 0,
+                            grade_at_signal TEXT DEFAULT '',
+                            scan_id TEXT,
+                            signal_source TEXT DEFAULT 'scanner',
+                            signal_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            order_created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            triggered_at TIMESTAMP,
+                            filled_at TIMESTAMP,
+                            cancelled_at TIMESTAMP,
+                            expires_at TIMESTAMP,
+                            research_snapshot_id INTEGER,
+                            correlation_id TEXT
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_paper_orders_status ON paper_orders(status);
+                        CREATE INDEX IF NOT EXISTS idx_paper_orders_symbol ON paper_orders(symbol);
+                    """)
+
+                    # Extend paper_trades with full timestamp precision
+                    for col_def in [
+                        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS entry_time TIMESTAMP;",
+                        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS exit_time TIMESTAMP;",
+                        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS order_id INTEGER;",
+                        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS fill_price REAL;",
+                        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;",
+                        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS execution_latency_ms INTEGER;",
+                    ]:
+                        try:
+                            cur.execute(col_def)
+                        except Exception:
+                            pass
+
+                    log.info("Release 4: Execution Engine schema verified (paper_orders + paper_trades timestamps)")
+                except Exception as exc:
+                    log.warning("Release 4: Execution Engine schema migration failed (non-fatal): %s", exc)
+
                 log.info("PostgreSQL tables checked/created.")
             finally:
                 conn.close()
@@ -1781,6 +1830,49 @@ def _init_sqlite():
             CREATE INDEX IF NOT EXISTS idx_news_articles_symbol ON news_articles(symbol);
         """)
 
+        # Release 4: Execution Engine Schema (SQLite parity)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS paper_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                order_type TEXT DEFAULT 'LIMIT',
+                side TEXT DEFAULT 'BUY',
+                status TEXT DEFAULT 'PENDING',
+                entry_low REAL,
+                entry_high REAL,
+                target_price REAL,
+                stop_loss REAL,
+                virtual_capital REAL DEFAULT 25000,
+                score_at_signal INTEGER DEFAULT 0,
+                grade_at_signal TEXT DEFAULT '',
+                scan_id TEXT,
+                signal_source TEXT DEFAULT 'scanner',
+                signal_time TEXT NOT NULL DEFAULT (datetime('now')),
+                order_created_at TEXT DEFAULT (datetime('now')),
+                triggered_at TEXT,
+                filled_at TEXT,
+                cancelled_at TEXT,
+                expires_at TEXT,
+                research_snapshot_id INTEGER,
+                correlation_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_paper_orders_status ON paper_orders(status);
+            CREATE INDEX IF NOT EXISTS idx_paper_orders_symbol ON paper_orders(symbol);
+        """)
+        # Extend paper_trades with timestamp columns (SQLite)
+        for col_sql in [
+            "ALTER TABLE paper_trades ADD COLUMN entry_time TEXT;",
+            "ALTER TABLE paper_trades ADD COLUMN exit_time TEXT;",
+            "ALTER TABLE paper_trades ADD COLUMN order_id INTEGER;",
+            "ALTER TABLE paper_trades ADD COLUMN fill_price REAL;",
+            "ALTER TABLE paper_trades ADD COLUMN updated_at TEXT DEFAULT (datetime('now'));",
+            "ALTER TABLE paper_trades ADD COLUMN execution_latency_ms INTEGER;",
+        ]:
+            try:
+                conn.execute(col_sql)
+            except Exception:
+                pass
+
         # Phase 1C: slim_data column for SQLite
         try:
             conn.execute("ALTER TABLE scan_results ADD COLUMN slim_data TEXT;")
@@ -2190,11 +2282,12 @@ _SCAN_LOCK_TIMEOUT_MIN = 30  # stale scan recovery threshold
 # ═══════════════════════════════════════════════════════════════
 VALID_TRANSITIONS = {
     "created":    {"running", "cancelled", "rejected"},
-    "running":    {"completed", "failed", "cancelled", "stale"},
+    "running":    {"completed", "failed", "cancelled", "stale", "zombie_detected"},
     "completed":  set(),           # Terminal — no transitions allowed
     "failed":     {"recovering"},   # Can retry via new linked scan
     "cancelled":  set(),           # Terminal
     "stale":      {"failed"},      # Watchdog marks stale → failed
+    "zombie_detected": {"failed"}, # Watchdog marks zombie_detected → failed
     "recovering": {"running"},     # Recovery creates new scan
     "rejected":   set(),           # Terminal — client error
     "idle":       {"running"},     # current_scan_state special state
@@ -2520,22 +2613,76 @@ def set_scan_cancel_requested(value: bool):
 
 
 def get_scan_status() -> dict:
-    """Return current scan state as dict. O(1) read.
+    """Return current scan state with explicit priority mapping for P0.1A.
     Note: Stale scan recovery is now handled by the Watchdog (Phase 2),
     not inline during status reads.
     """
     row = execute_db("SELECT * FROM current_scan_state WHERE id=1", fetch="one")
     if not row:
-        return {"scanning": False, "status": "idle", "progress": 0, "total": 0}
+        return {"scanning": False, "status": "IDLE", "progress": 0, "total": 0, "status_source": "default", "is_terminal": True}
+        
+    scan_id = row.get("scan_id")
+    
+    # Deterministic Status State Machine (Absolute RUNNING Priority)
+    status_source = "current_scan_state"
+    final_status = "IDLE"
+    failed_reason = ""
+    is_terminal = True
+    
+    if row.get("status") == "running":
+        final_status = "RUNNING"
+        is_terminal = False
+    else:
+        # ORDER BY created_at DESC LIMIT 1
+        latest_run = execute_db(
+            "SELECT status, error_message FROM scan_runs ORDER BY created_at DESC LIMIT 1", 
+            fetch="one"
+        )
+        if latest_run:
+            if latest_run["status"] == "failed":
+                final_status = "FAILED"
+                failed_reason = latest_run.get("error_message") or row.get("phase") or "Unknown failure"
+                status_source = "scan_runs_latest"
+            elif latest_run["status"] == "completed":
+                final_status = "COMPLETED"
+                status_source = "scan_runs_latest"
+            else:
+                final_status = "IDLE"
+                status_source = "fallback"
+
+    # Resume Metadata Protection
+    resume_version = None
+    try:
+        resume = get_pending_resume()
+        if resume:
+            resume_version = resume.get("universe_version") or None
+    except Exception:
+        pass
+
+    # Timestamps & Progress Age
+    last_successful_scan = get_meta("last_scan") or ""
+    last_attempt = row.get("updated_at", "")
+    if not last_attempt:
+        last_attempt = row.get("start_time", "")
+        
+    progress_updated_at = row.get("updated_at", "")
+
     return {
-        "scanning": row["status"] == "running",
-        "status": row["status"],
+        "scanning": final_status == "RUNNING",
+        "status": final_status,
+        "status_source": status_source,
+        "failed_reason": failed_reason,
+        "scan_id": scan_id or "",
+        "resume_version": resume_version,
+        "last_attempt": last_attempt,
+        "last_successful_scan": last_successful_scan,
+        "progress_updated_at": progress_updated_at,
+        "is_terminal": is_terminal,
         "mode": row.get("mode", ""),
         "phase": row.get("phase", ""),
         "progress": row.get("processed_count", 0),
         "total": row.get("candidate_count", 0),
         "failed": row.get("failed_count", 0),
-        "scan_id": row.get("scan_id", ""),
         "cancel_requested": bool(row.get("cancel_requested", 0)),
     }
 

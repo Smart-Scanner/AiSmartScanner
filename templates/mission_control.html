@@ -468,6 +468,68 @@
 
         .mc-graph-header { flex-direction: column; align-items: flex-start; gap: 12px; }
     }
+
+    /* ═══ P0.1A: SCAN STATE OBSERVABILITY CARD ═══ */
+    .mc-scan-state-card {
+        padding: 20px; margin-bottom: 8px;
+        background: var(--card-bg); border: 1px solid var(--border-color);
+        border-radius: 14px;
+    }
+    .mc-scan-state-card.mc-scan-failed {
+        border-color: rgba(239, 68, 68, 0.4);
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.04), var(--card-bg));
+    }
+    .mc-scan-state-card.mc-scan-running {
+        border-color: rgba(59, 130, 246, 0.4);
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.04), var(--card-bg));
+    }
+    .mc-scan-state-card.mc-scan-completed {
+        border-color: rgba(16, 185, 129, 0.4);
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.04), var(--card-bg));
+    }
+    .mc-scan-state-header {
+        display: flex; align-items: center; gap: 12px;
+        margin-bottom: 16px;
+    }
+    .mc-scan-state-badge {
+        font-size: 13px; font-weight: 800;
+        font-family: 'JetBrains Mono', monospace;
+        padding: 4px 14px; border-radius: 8px;
+        letter-spacing: 0.05em;
+    }
+    .mc-scan-badge-running { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+    .mc-scan-badge-failed { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+    .mc-scan-badge-completed { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+    .mc-scan-badge-idle { background: rgba(107, 114, 128, 0.15); color: var(--text-muted); }
+    .mc-scan-state-title {
+        font-size: 15px; font-weight: 700; color: var(--text-primary);
+    }
+    .mc-scan-detail-grid {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 12px;
+    }
+    .mc-scan-detail-item {
+        padding: 10px 14px; border-radius: 10px;
+        background: var(--surface-hover); border: 1px solid var(--border-color);
+    }
+    .mc-scan-detail-label {
+        font-size: 9px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 4px;
+    }
+    .mc-scan-detail-value {
+        font-size: 13px; font-weight: 700;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--text-primary); word-break: break-all;
+    }
+    .mc-scan-detail-value.mc-val-danger { color: #ef4444; }
+    .mc-scan-detail-value.mc-val-muted { color: var(--text-muted); }
+    .mc-scan-reset-btn {
+        margin-top: 16px; padding: 8px 18px; border-radius: 8px;
+        border: 1px solid rgba(107, 114, 128, 0.3); background: var(--surface-hover);
+        color: var(--text-muted); font-size: 11px; font-weight: 700;
+        cursor: pointer; transition: all 0.15s; opacity: 0.7;
+    }
+    .mc-scan-reset-btn:hover { opacity: 1; }
 </style>
 {% endblock %}
 
@@ -490,6 +552,9 @@
         <div class="mc-hero-ring" id="mcHealthRing"></div>
         <div class="mc-hero-subs" id="mcHealthSubs">Loading...</div>
     </div>
+
+    <!-- ═══ P0.1A: SCAN STATE OBSERVABILITY CARD ═══════════════ -->
+    <div class="mc-scan-state-card mc-grid-full" id="mcScanStateCard" style="display:none;"></div>
 
     <!-- ═══ PRODUCTION READINESS (Phase 5.4) ═══════════════════ -->
     <div class="mc-readiness-card mc-grid-full" id="mcProductionReadiness">
@@ -1897,6 +1962,121 @@
             alert('❌ Error: ' + e.message);
         }
     };
+
+    // ── P0.1A: Scan State Observability Card ──────────────────
+    function renderScanStateCard() {
+        fetch('/api/status').then(r => r.json()).then(data => {
+            const card = document.getElementById('mcScanStateCard');
+            if (!card) return;
+
+            const status = (data.status || 'IDLE').toUpperCase();
+            const isTerminal = data.is_terminal !== false;
+
+            // Always show the card
+            card.style.display = '';
+
+            // Set card border color based on status
+            card.className = 'mc-scan-state-card mc-grid-full';
+            if (status === 'FAILED') card.classList.add('mc-scan-failed');
+            else if (status === 'RUNNING') card.classList.add('mc-scan-running');
+            else if (status === 'COMPLETED') card.classList.add('mc-scan-completed');
+
+            // Badge class
+            let badgeClass = 'mc-scan-badge-idle';
+            if (status === 'RUNNING') badgeClass = 'mc-scan-badge-running';
+            else if (status === 'FAILED') badgeClass = 'mc-scan-badge-failed';
+            else if (status === 'COMPLETED') badgeClass = 'mc-scan-badge-completed';
+
+            // Build detail items
+            let details = '';
+
+            if (data.status_source) {
+                details += `<div class="mc-scan-detail-item">
+                    <div class="mc-scan-detail-label">Status Source</div>
+                    <div class="mc-scan-detail-value mc-val-muted">${data.status_source}</div>
+                </div>`;
+            }
+
+            if (status === 'FAILED' && data.failed_reason) {
+                details += `<div class="mc-scan-detail-item">
+                    <div class="mc-scan-detail-label">Reason</div>
+                    <div class="mc-scan-detail-value mc-val-danger">${data.failed_reason}</div>
+                </div>`;
+            }
+
+            if (data.scan_id) {
+                details += `<div class="mc-scan-detail-item">
+                    <div class="mc-scan-detail-label">Scan ID</div>
+                    <div class="mc-scan-detail-value">${data.scan_id}</div>
+                </div>`;
+            }
+
+            const resumeVal = data.resume_version !== null && data.resume_version !== undefined ? data.resume_version : 'None';
+            details += `<div class="mc-scan-detail-item">
+                <div class="mc-scan-detail-label">Resume Checkpoint</div>
+                <div class="mc-scan-detail-value ${resumeVal === 'None' ? 'mc-val-muted' : ''}">${resumeVal}</div>
+            </div>`;
+
+            // Stuck Progress (always show if progress > 0 and terminal)
+            const progress = data.progress || 0;
+            const total = data.total || 0;
+            if (progress > 0 || total > 0) {
+                details += `<div class="mc-scan-detail-item">
+                    <div class="mc-scan-detail-label">${isTerminal ? 'Stuck Progress' : 'Progress'}</div>
+                    <div class="mc-scan-detail-value">${progress} / ${total}</div>
+                </div>`;
+            }
+
+            if (data.progress_updated_at) {
+                details += `<div class="mc-scan-detail-item">
+                    <div class="mc-scan-detail-label">Progress Timestamp</div>
+                    <div class="mc-scan-detail-value mc-val-muted">${data.progress_updated_at}</div>
+                </div>`;
+            }
+
+            if (data.last_attempt) {
+                details += `<div class="mc-scan-detail-item">
+                    <div class="mc-scan-detail-label">Last Attempt</div>
+                    <div class="mc-scan-detail-value">${data.last_attempt}</div>
+                </div>`;
+            }
+
+            const lastSuccess = data.last_successful_scan || data.last_scan || '';
+            details += `<div class="mc-scan-detail-item">
+                <div class="mc-scan-detail-label">Last Successful Scan</div>
+                <div class="mc-scan-detail-value ${!lastSuccess ? 'mc-val-muted' : ''}">${lastSuccess || 'Never'}</div>
+            </div>`;
+
+            // Reset button (placeholder only)
+            let resetBtn = '';
+            if (status === 'FAILED') {
+                resetBtn = `<button class="mc-scan-reset-btn" onclick="alert('Recovery disabled pending universe audit.')">
+                    🔒 Reset Checkpoint (Disabled)
+                </button>`;
+            }
+
+            card.innerHTML = `
+                <div class="mc-scan-state-header">
+                    <span class="mc-scan-state-badge ${badgeClass}">${status}</span>
+                    <span class="mc-scan-state-title">Scanner State</span>
+                </div>
+                <div class="mc-scan-detail-grid">${details}</div>
+                ${resetBtn}
+            `;
+        }).catch(err => {
+            console.error('[P0.1A] Scan state fetch failed:', err);
+        });
+    }
+
+    // Hook into existing refresh cycle
+    const _origRefresh = window.mcRefreshAll;
+    window.mcRefreshAll = function() {
+        if (_origRefresh) _origRefresh();
+        renderScanStateCard();
+    };
+
+    // Initial render
+    renderScanStateCard();
 
     setInterval(mcRefreshAll, 30000);
 })();

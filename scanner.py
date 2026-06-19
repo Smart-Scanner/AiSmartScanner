@@ -682,6 +682,21 @@ def run_full_scan(context: ScanContext = None):
                 except Exception as exc:
                     log.exception("[%s] Failed to save research snapshot for %s: %s", correlation_id[:12], r.get("symbol"), exc)
         db.log_scan_event(scan_id, "SNAPSHOT_COMPLETED", "")
+
+        # Release 4: Submit signals to Execution Engine (real-time paper trading)
+        # Replaces the legacy 11 AM batch snapshot — orders are now PENDING immediately
+        try:
+            from execution_engine import submit_order
+            _exec_submitted = 0
+            for r in results:
+                if r.get("high_conviction") or r.get("score", 0) >= 65:
+                    if submit_order(r, {"scan_id": scan_id, "correlation_id": correlation_id}):
+                        _exec_submitted += 1
+            if _exec_submitted > 0:
+                log.info("[%s] Execution Engine: %d signals submitted as PENDING orders", correlation_id[:12], _exec_submitted)
+        except Exception as exc:
+            log.warning("[%s] Execution Engine signal submission failed (non-fatal): %s", correlation_id[:12], exc)
+
         db.log_scan_event(scan_id, "FINALIZE_COMPLETED", "")
                     
         db.set_meta("last_scan", now_ist().strftime("%Y-%m-%d %H:%M IST"))
@@ -1013,29 +1028,27 @@ def _run_parallel_scan(context: ScanContext):
         log.info("[%s] RESUMING scan from batch %d, universe=%s (%d stocks)",
                  correlation_id[:12], start_batch, universe_version, len(eligible))
     else:
-        # Phase 5.6B/C: Load existing eligible universe instead of rebuilding
-        active_version = db.get_meta("active_universe_version")
-        if active_version:
-            eligible_rows = db.get_eligible_universe(active_version)
-            eligible = [r["symbol"] for r in eligible_rows] if eligible_rows else []
-            universe_version = active_version
-            log.info("[%s] Loaded active universe %s: %d stocks",
-                     correlation_id[:12], universe_version, len(eligible))
-        else:
-            # Fallback: try loading latest universe
-            eligible_rows = db.get_eligible_universe()
-            if eligible_rows and len(eligible_rows) >= 500:
-                eligible = [r["symbol"] for r in eligible_rows]
-                universe_version = eligible_rows[0].get("universe_version", "UNKNOWN")
-                log.info("[%s] Loaded latest universe %s: %d stocks",
-                         correlation_id[:12], universe_version, len(eligible))
-            else:
-                # Last resort: build via legacy path
-                from universe_builder import build_eligible_universe
-                eligible, universe_version = build_eligible_universe()
+        # Option B-Prime: FORCE FALLBACK PATH
+        # We explicitly bypass active_universe_version to preserve existing scanner behavior
+        # while keeping the metadata intact for the 7-day governance audit.
+        from universe_builder import build_eligible_universe
+        eligible, universe_version = build_eligible_universe()
 
     MIN_UNIVERSE_SIZE = 500
     if not eligible or len(eligible) < MIN_UNIVERSE_SIZE:
+        # P0.1A: Forensic log for resume corruption detection
+        if resume and resume.get("status") == "running":
+            _resume_ver = resume.get("universe_version", "UNKNOWN")
+            _resume_cnt = len(eligible) if eligible else 0
+            _active_ver = db.get_meta("active_universe_version") or "UNKNOWN"
+            try:
+                _active_rows = db.get_eligible_universe(_active_ver) if _active_ver != "UNKNOWN" else []
+                _active_cnt = len(_active_rows) if _active_rows else 0
+            except Exception:
+                _active_cnt = -1
+            log.error("[RESUME_CORRUPT] scan_id=%s resume_version=%s resume_count=%d active_version=%s active_count=%d",
+                      scan_id, _resume_ver, _resume_cnt, _active_ver, _active_cnt)
+
         log.error("[%s] Universe too small (count=%d, min=%d). Scan blocked.", correlation_id[:12], len(eligible) if eligible else 0, MIN_UNIVERSE_SIZE)
         scan_state.complete(success=False, error_message="Universe too small: %d < %d" % (len(eligible) if eligible else 0, MIN_UNIVERSE_SIZE))
         return

@@ -431,6 +431,8 @@ def _on_data(wsapp, message):
         change = ltp - close_price if close_price > 0 else 0
         change_pct = round((change / close_price) * 100, 2) if close_price > 0 else 0
 
+        tick_time = datetime.now(_IST)
+
         with _prices_lock:
             _live_prices[symbol] = {
                 "symbol": symbol,
@@ -442,8 +444,17 @@ def _on_data(wsapp, message):
                 "change": round(change, 2),
                 "change_pct": change_pct,
                 "volume": volume,
-                "last_update": datetime.now().isoformat(timespec="seconds"),
+                "last_update": tick_time.isoformat(timespec="seconds"),
             }
+
+        # Release 4: Fire execution engine tick (sub-second SL/Target evaluation)
+        if ltp > 0:
+            try:
+                from execution_engine import on_tick
+                on_tick(symbol, round(ltp, 2), tick_time)
+            except Exception:
+                pass  # Never block WebSocket thread
+
     except Exception as exc:
         log.debug("Tick parse error: %s", exc)
 

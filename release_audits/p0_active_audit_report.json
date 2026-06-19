@@ -1,0 +1,87 @@
+{
+    "metadata": {
+        "CPU": "Unknown",
+        "RAM": "Unknown",
+        "OS": "Windows 11",
+        "Python": "3.12.10",
+        "DB Backend": "SQLite",
+        "Timestamp": "2026-06-19T07:57:03.149111Z"
+    },
+    "results": [
+        {
+            "Finding ID": "P0-AUDIT-1",
+            "Audit": "Symbol Delta Proof",
+            "Severity": "Critical",
+            "Status": "FAIL",
+            "Evidence": "Count legacy=574, new=0, Delta=574",
+            "Root Cause": "Universe logic drift",
+            "Fix Required": "Realign logic",
+            "Retest Required": "Yes"
+        },
+        {
+            "Finding ID": "P0-AUDIT-2",
+            "Audit": "Restart Persistence",
+            "Severity": "Critical",
+            "Status": "FAIL",
+            "Evidence": "Expected UNIVERSE_v001_BOOTSTRAP, got UNIVERSE_v011",
+            "Root Cause": "State not persisted",
+            "Fix Required": "Fix state storage",
+            "Retest Required": "Yes"
+        },
+        {
+            "Finding ID": "P0-AUDIT-3",
+            "Audit": "State Consistency",
+            "Severity": "Critical",
+            "Status": "FAIL",
+            "Evidence": "near \"%\": syntax error",
+            "Root Cause": "Exception",
+            "Fix Required": "Fix exception",
+            "Retest Required": "Yes"
+        },
+        {
+            "Finding ID": "P0-AUDIT-4",
+            "Audit": "Active Zombie Regression",
+            "Severity": "Critical",
+            "Status": "FAIL",
+            "Evidence": "no such column: locked_at",
+            "Root Cause": "Exception",
+            "Fix Required": "Fix exception",
+            "Retest Required": "Yes"
+        },
+        {
+            "Finding ID": "P0-AUDIT-5",
+            "Audit": "5 Scans + Restart Cycle",
+            "Severity": "Critical",
+            "Status": "FAIL",
+            "Evidence": "no such column: locked_at",
+            "Root Cause": "Exception",
+            "Fix Required": "Fix exception",
+            "Retest Required": "Yes"
+        },
+        {
+            "Finding ID": "P0-AUDIT-6",
+            "Audit": "Error Preservation",
+            "Severity": "Critical",
+            "Status": "FAIL",
+            "Evidence": "no such column: locked_at",
+            "Root Cause": "Exception",
+            "Fix Required": "Fix exception",
+            "Retest Required": "Yes"
+        },
+        {
+            "Finding ID": "P0-AUDIT-7",
+            "Audit": "API/UI Consistency",
+            "Severity": "Critical",
+            "Status": "FAIL",
+            "Evidence": "API(IDLE,None) != DB(idle,scan_manual_1781854233_f60199)",
+            "Root Cause": "Drift in state",
+            "Fix Required": "Fix status API",
+            "Retest Required": "Yes"
+        }
+    ],
+    "summary": {
+        "total": 7,
+        "passed": 0,
+        "failed": 7
+    }
+}
