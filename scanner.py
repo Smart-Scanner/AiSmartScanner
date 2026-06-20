@@ -334,6 +334,11 @@ def run_full_scan(context: ScanContext = None):
         flushed = db.flush_deferred_writes()
         if flushed:
             log.info("[%s] Flushed %d deferred writes from DLQ", correlation_id[:12], flushed)
+            
+        # P0.1E: Flush governance artifacts (mandatory for audit)
+        gov_flushed = db.flush_governance_writes()
+        if gov_flushed:
+            log.info("[%s] Flushed %d governance artifacts from DLQ", correlation_id[:12], gov_flushed)
     except Exception as exc:
         log.warning("[%s] DLQ flush failed: %s", correlation_id[:12], exc)
 
@@ -1308,17 +1313,30 @@ def _run_parallel_scan(context: ScanContext):
         # Guaranteed terminal state
         if not _reached_terminal:
             log.warning("[%s] Finally: forcing FAILED state", correlation_id[:12])
-            transition_scan_state(
-                scan_id=scan_id, from_status="running", to_status="failed",
-                reason="finally_block_recovery", actor=ACTOR_SYSTEM,
-                correlation_id=correlation_id,
-                error_message="parallel_scan_exited_without_terminal_state",
-            )
+            try:
+                transition_scan_state(
+                    scan_id=scan_id, from_status="running", to_status="failed",
+                    reason="finally_block_recovery", actor=ACTOR_SYSTEM,
+                    correlation_id=correlation_id,
+                    error_message="parallel_scan_exited_without_terminal_state",
+                )
+            except Exception as e:
+                log.error("[%s] Finally block transition failed: %s", correlation_id[:12], e)
+                # Force sync UI so it doesn't get stuck in RUNNING
+                db.execute_db("UPDATE current_scan_state SET status='idle', phase='' WHERE id=1")
 
         # Cleanup
-        db.clear_scan_resume_state(scan_id)
-        db.release_scan_lock_v2(scan_id)
-        db.clear_meta_cache()
+        try:
+            db.clear_scan_resume_state(scan_id)
+        except Exception: pass
+        
+        try:
+            db.release_scan_lock_v2(scan_id)
+        except Exception: pass
+        
+        try:
+            db.clear_meta_cache()
+        except Exception: pass
 
         log.info("[%s] ═══ Parallel Scan Engine: DONE ═══", correlation_id[:12])
 

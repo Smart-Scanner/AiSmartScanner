@@ -158,25 +158,48 @@ def _recover_stale_scans(db):
                 db.log_scan_event(scan_id, "WATCHDOG_RECOVERY_STARTED", "Initiating watchdog recovery via zombie state")
 
                 # Transition 1: running → zombie_detected
-                zombie_marked = db.transition_scan_state(
-                    scan_id=scan_id,
-                    from_status="running",
-                    to_status="zombie_detected",
-                    reason="Heartbeat timeout",
-                    error_message="Heartbeat timeout",
-                    actor=ACTOR_WATCHDOG,
-                )
-
-                if zombie_marked:
-                    # Transition 2: zombie_detected → failed
-                    recovered = db.transition_scan_state(
+                # P0.1D: transition_scan_state uses require_pg=True. If PG is down,
+                # the watchdog is a recovery actor and MUST still clean up.
+                try:
+                    zombie_marked = db.transition_scan_state(
                         scan_id=scan_id,
-                        from_status="zombie_detected",
-                        to_status="failed",
+                        from_status="running",
+                        to_status="zombie_detected",
                         reason="Heartbeat timeout",
                         error_message="Heartbeat timeout",
                         actor=ACTOR_WATCHDOG,
                     )
+                except RuntimeError as pg_err:
+                    # PG unavailable — fall back to direct UPDATE for recovery
+                    log.warning("[WATCHDOG] PG unavailable during recovery, using direct UPDATE: %s", pg_err)
+                    rc = db.execute_db(
+                        "UPDATE scan_runs SET status='zombie_detected', error_message='Heartbeat timeout' WHERE scan_id=? AND status='running'",
+                        (scan_id,), fetch="rowcount"
+                    )
+                    zombie_marked = (rc or 0) > 0
+
+                if zombie_marked:
+                    # Transition 2: zombie_detected → failed
+                    try:
+                        recovered = db.transition_scan_state(
+                            scan_id=scan_id,
+                            from_status="zombie_detected",
+                            to_status="failed",
+                            reason="Heartbeat timeout",
+                            error_message="Heartbeat timeout",
+                            actor=ACTOR_WATCHDOG,
+                        )
+                    except RuntimeError as pg_err:
+                        log.warning("[WATCHDOG] PG unavailable during recovery (phase 2), using direct UPDATE: %s", pg_err)
+                        rc = db.execute_db(
+                            "UPDATE scan_runs SET status='failed', error_message='Heartbeat timeout' WHERE scan_id=? AND status='zombie_detected'",
+                            (scan_id,), fetch="rowcount"
+                        )
+                        recovered = (rc or 0) > 0
+                        # Also sync current_scan_state manually since we bypassed transition_scan_state
+                        db.execute_db(
+                            "UPDATE current_scan_state SET status='idle', phase='', cancel_requested=0 WHERE id=1",
+                        )
                     
                     # Guardrail: Release the scan lock explicitly
                     db.execute_db("UPDATE scan_lock SET scan_id = NULL, owner_id = NULL, heartbeat = NULL, expires_at = NULL WHERE id = 1 AND scan_id = ?", (scan_id,))

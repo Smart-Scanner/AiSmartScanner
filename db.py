@@ -494,7 +494,10 @@ def _execute_sqlite(query: str, params, fetch: str):
 
 # ─── Unified executor ───
 
-def execute_db(query: str, params=None, fetch: str = None):
+# P0.1D: Retry ladder configuration for CP-critical paths
+_REQUIRE_PG_RETRIES = [0.5, 1.0, 2.0]  # Exponential backoff: 0.5s, 1s, 2s
+
+def execute_db(query: str, params=None, fetch: str = None, require_pg: bool = False):
     """
     Unified query executor for PostgreSQL and SQLite.
     - PG path: uses ThreadedConnectionPool, always returns connection to pool.
@@ -503,6 +506,12 @@ def execute_db(query: str, params=None, fetch: str = None):
     - Falls through to SQLite on any PG failure (with 60s cooldown).
     - Pool exhaustion: if getconn() would block, falls through to SQLite
       immediately instead of hanging the Flask request thread.
+
+    P0.1D: require_pg=True
+    - Used by state machine operations (transitions, locks, resume state).
+    - Instead of falling through to SQLite, retries with exponential backoff.
+    - If all retries exhaust, raises RuntimeError (caller decides fatal action).
+    - This guarantees CP (Consistency) for governance-critical state paths.
     """
     global _pg_cooldown_until, _pg_pool
     from metrics import counters
@@ -510,6 +519,8 @@ def execute_db(query: str, params=None, fetch: str = None):
 
     if params is not None:
         params = tuple(_to_native(v) for v in params)
+
+    _last_pg_exc = None  # Track for require_pg error reporting
 
     if is_postgresql():
         pool = _get_pg_pool()
@@ -534,6 +545,7 @@ def execute_db(query: str, params=None, fetch: str = None):
                         log_pool_health()
                     return result
             except Exception as exc:
+                _last_pg_exc = exc
                 exc_str = str(exc).lower()
                 is_connection_error = (
                     "PoolError" in type(exc).__name__ or 
@@ -555,7 +567,8 @@ def execute_db(query: str, params=None, fetch: str = None):
                         with conn.cursor(cursor_factory=RealDictCursor) as cur:
                             cur.execute(query_pg, params or ())
                             return _collect_result(cur, fetch)
-                    except Exception:
+                    except Exception as retry_exc:
+                        _last_pg_exc = retry_exc
                         log.warning("PG pool exhausted after retry, falling back to SQLite | Query: %.100s", query)
                         counters.inc("db_pool_exhausted")
                         if conn:
@@ -595,6 +608,52 @@ def execute_db(query: str, params=None, fetch: str = None):
                         pool.putconn(conn)
                     except Exception:
                         pass
+
+    # ── P0.1D: CP-critical path — retry ladder instead of SQLite fallback ──
+    if require_pg:
+        for attempt, delay in enumerate(_REQUIRE_PG_RETRIES, 1):
+            log.warning(
+                "[STATE MACHINE CP] PG unavailable, retry %d/%d in %.1fs | query=%.100s",
+                attempt, len(_REQUIRE_PG_RETRIES), delay, query
+            )
+            time.sleep(delay)
+            try:
+                pool = _get_pg_pool()
+                if pool:
+                    conn = None
+                    try:
+                        from psycopg2.extras import RealDictCursor
+                        conn = pool.getconn()
+                        conn.autocommit = True
+                        query_pg = query.replace("?", "%s")
+                        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                            cur.execute(query_pg, params or ())
+                            result = _collect_result(cur, fetch)
+                            log.info(
+                                "[STATE MACHINE CP] PG recovered on retry %d/%d | query=%.100s",
+                                attempt, len(_REQUIRE_PG_RETRIES), query
+                            )
+                            return result
+                    finally:
+                        if conn:
+                            try:
+                                pool.putconn(conn)
+                            except Exception:
+                                pass
+            except Exception as retry_exc:
+                _last_pg_exc = retry_exc
+                log.warning(
+                    "[STATE MACHINE CP] Retry %d/%d failed: %s",
+                    attempt, len(_REQUIRE_PG_RETRIES), retry_exc
+                )
+
+        # All retries exhausted — raise to caller (scanner.py decides fatal action)
+        counters.inc("state_machine_pg_failures")
+        raise RuntimeError(
+            f"State Machine Persistence Failure: PostgreSQL required but unavailable after "
+            f"{len(_REQUIRE_PG_RETRIES)} retries. Last error: {_last_pg_exc}. "
+            f"Query: {query[:150]}"
+        )
 
     # Phase G: SQLite fallback telemetry
     log.warning("[SQLITE FALLBACK USED] query=%.100s", query)
@@ -2371,10 +2430,11 @@ def transition_scan_state(scan_id: str, from_status: str, to_status: str,
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Atomic conditional UPDATE on scan_runs
+    # P0.1D: require_pg=True — state transitions must never degrade to SQLite
     rowcount = execute_db("""
         UPDATE scan_runs SET status=?, error_message=COALESCE(?, error_message)
         WHERE scan_id=? AND status=?
-    """, (to_status, error_message or None, scan_id, from_status), fetch="rowcount")
+    """, (to_status, error_message or None, scan_id, from_status), fetch="rowcount", require_pg=True)
 
     if rowcount == 0:
         log.warning(
@@ -3024,6 +3084,147 @@ def dlq_entry_count() -> int:
         return 0
     try:
         with open(_DLQ_FILE, "r", encoding="utf-8") as f:
+            return sum(1 for line in f if line.strip())
+    except Exception:
+        return 0
+
+
+# ═══════════════════════════════════════════════════════════════
+# P0.1E: GOVERNANCE DLQ — Mandatory persistence for governance artifacts
+# ═══════════════════════════════════════════════════════════════
+#
+# Unlike operational scan_results (which have _deferred_writes),
+# governance artifacts (research_snapshots_v2, paper_orders, paper_trades,
+# scan_audit, score_audit, research_advisories, recommendation_snapshots,
+# paper_portfolio_daily) had ZERO sync mechanism during PG outages.
+#
+# This Governance DLQ ensures:
+# 1. When PG drops, governance writes are appended to a local JSONL file.
+# 2. When PG restores, flush_governance_writes() replays them.
+# 3. Governance data is NEVER silently lost.
+
+_GOVERNANCE_DLQ_FILE = _Path(__file__).parent / "cache" / "governance_dlq.jsonl"
+_governance_dlq_lock = threading.Lock()
+
+
+def queue_governance_write(query: str, params: tuple, artifact_type: str = "unknown"):
+    """Queue a failed governance write to the disk-backed JSONL DLQ.
+
+    P0.1E: This is MANDATORY for all governance artifacts.
+    Called when execute_db falls back to SQLite for governance-critical inserts,
+    ensuring the write will eventually reach PostgreSQL.
+    """
+    try:
+        entry = {
+            "query": query,
+            "params": [_to_native(v) if v is not None else None for v in params],
+            "artifact_type": artifact_type,
+            "queued_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "retry_count": 0,
+        }
+        with _governance_dlq_lock:
+            _GOVERNANCE_DLQ_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(_GOVERNANCE_DLQ_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, default=str) + "\n")
+        log.warning(
+            "[GOVERNANCE DLQ] Queued %s artifact for replay | query=%.100s",
+            artifact_type, query
+        )
+    except Exception as exc:
+        log.critical(
+            "[GOVERNANCE DLQ] FAILED to queue %s artifact — DATA MAY BE LOST: %s | query=%.100s",
+            artifact_type, exc, query
+        )
+
+
+def flush_governance_writes() -> int:
+    """Replay all governance DLQ entries to PostgreSQL.
+
+    P0.1E: Called periodically (e.g., by watchdog or startup).
+    Returns count of successfully replayed entries.
+    """
+    if not _GOVERNANCE_DLQ_FILE.exists():
+        return 0
+
+    if not is_postgresql() or pg_cooldown_active():
+        log.info("[GOVERNANCE DLQ] PG still unavailable, skipping flush")
+        return 0
+
+    replayed = 0
+    remaining_lines = []
+
+    try:
+        with _governance_dlq_lock:
+            with open(_GOVERNANCE_DLQ_FILE, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    query = entry["query"]
+                    params = tuple(entry.get("params", []))
+                    # Execute directly on PG (no fallback — we ARE the fallback)
+                    pool = _get_pg_pool()
+                    if pool:
+                        conn = None
+                        try:
+                            from psycopg2.extras import RealDictCursor
+                            conn = pool.getconn()
+                            conn.autocommit = True
+                            query_pg = query.replace("?", "%s")
+                            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                                cur.execute(query_pg, params)
+                            replayed += 1
+                            log.info(
+                                "[GOVERNANCE DLQ] Replayed %s artifact OK | query=%.100s",
+                                entry.get("artifact_type", "?"), query
+                            )
+                        finally:
+                            if conn:
+                                try:
+                                    pool.putconn(conn)
+                                except Exception:
+                                    pass
+                    else:
+                        remaining_lines.append(line)
+                except Exception as exc:
+                    entry_parsed = {}
+                    try:
+                        entry_parsed = json.loads(line)
+                    except Exception:
+                        pass
+                    retry_count = entry_parsed.get("retry_count", 0) + 1
+                    if retry_count >= _DLQ_MAX_RETRIES:
+                        log.error(
+                            "[GOVERNANCE DLQ] Entry permanently failed after %d retries: %s | query=%.100s",
+                            retry_count, exc, entry_parsed.get("query", "?")[:100]
+                        )
+                    else:
+                        entry_parsed["retry_count"] = retry_count
+                        remaining_lines.append(json.dumps(entry_parsed, default=str))
+
+            # Rewrite file with only failed entries
+            with open(_GOVERNANCE_DLQ_FILE, "w", encoding="utf-8") as f:
+                for rl in remaining_lines:
+                    f.write(rl + "\n")
+
+    except Exception as exc:
+        log.warning("[GOVERNANCE DLQ] Flush failed: %s", exc)
+
+    if replayed:
+        log.info("[GOVERNANCE DLQ] Flushed %d governance artifacts to PG", replayed)
+    return replayed
+
+
+def governance_dlq_count() -> int:
+    """Count pending entries in governance DLQ file."""
+    if not _GOVERNANCE_DLQ_FILE.exists():
+        return 0
+    try:
+        with open(_GOVERNANCE_DLQ_FILE, "r", encoding="utf-8") as f:
             return sum(1 for line in f if line.strip())
     except Exception:
         return 0
@@ -4160,7 +4361,7 @@ def save_score_audit(results: list, scan_id: str, scan_version: str):
                     _breakdown_json = json.dumps(_breakdown, default=str, allow_nan=False)
                 except Exception:
                     pass
-            execute_db("""
+            _score_query = """
                 INSERT INTO score_audit
                 (symbol, scan_id, scan_time, technical_score, earnings_momentum_score,
                  fundamental_score, smart_money_score, sector_rotation_score,
@@ -4168,7 +4369,8 @@ def save_score_audit(results: list, scan_id: str, scan_version: str):
                  final_score, data_source, source_reason, provider_latency_ms,
                  data_staleness_hours, scan_version, score_breakdown)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
+            """
+            _score_params = (
                 r.get("symbol", ""),
                 scan_id,
                 now,
@@ -4188,7 +4390,13 @@ def save_score_audit(results: list, scan_id: str, scan_version: str):
                 r.get("_data_staleness_hours"),
                 scan_version,
                 _breakdown_json,
-            ))
+            )
+            execute_db(_score_query, _score_params)
+            
+            # P0.1E: Queue to governance DLQ for PG replay if currently on SQLite fallback
+            if pg_cooldown_active() or not is_postgresql():
+                queue_governance_write(_score_query, _score_params, artifact_type="score_audit")
+                
             inserted += 1
         except Exception as exc:
             # ON CONFLICT or other error — skip this row, continue batch
@@ -4205,19 +4413,24 @@ def save_scan_audit(scan_id: str, start_time: str, end_time: str,
     """Insert one scan_audit row summarising the scan run."""
     if not os.getenv("ENABLE_SCORE_AUDIT", "true").lower() == "true":
         return
+    _audit_query = """
+        INSERT INTO scan_audit
+        (scan_id, start_time, end_time, duration_ms, stocks_scanned,
+         stocks_succeeded, stocks_failed, data_source, scan_version, scan_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    _audit_params = (
+        scan_id, start_time, end_time, duration_ms,
+        stocks_scanned, stocks_succeeded, stocks_failed,
+        data_source, scan_version, scan_mode,
+    )
     try:
-        execute_db("""
-            INSERT INTO scan_audit
-            (scan_id, start_time, end_time, duration_ms, stocks_scanned,
-             stocks_succeeded, stocks_failed, data_source, scan_version, scan_mode)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            scan_id, start_time, end_time, duration_ms,
-            stocks_scanned, stocks_succeeded, stocks_failed,
-            data_source, scan_version, scan_mode,
-        ))
+        execute_db(_audit_query, _audit_params)
         log.info("Phase 0: scan_audit saved (scan_id=%s, %d stocks, %dms)",
                  scan_id[:20], stocks_scanned, duration_ms)
+        # P0.1E: Queue to governance DLQ for PG replay if currently on SQLite fallback
+        if pg_cooldown_active() or not is_postgresql():
+            queue_governance_write(_audit_query, _audit_params, artifact_type="scan_audit")
     except Exception as exc:
         log.error("Failed to insert scan audit log: %s", exc)
 
@@ -4931,7 +5144,7 @@ def save_research_snapshot_v2(symbol: str, rec_data: dict, scan_context: 'ScanCo
             (symbol,)
         )
         
-    execute_db("""
+    _snapshot_query = """
         INSERT INTO research_snapshots_v2 (
             symbol, version, recommendation, entry_low, entry_high,
             stop_loss, target_1, target_2, target_3, risk_reward,
@@ -4941,14 +5154,20 @@ def save_research_snapshot_v2(symbol: str, rec_data: dict, scan_context: 'ScanCo
             recommendation_version, config_snapshot, snapshot_hash,
             status, outcome_status
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'PENDING')
-    """, (
+    """
+    _snapshot_params = (
         symbol, next_version, recommendation, entry_low, entry_high,
         stop_loss, target_1, target_2, target_3, risk_reward,
         confidence, json.dumps(confidence_breakdown), research_thesis, cmp_at_generation,
         score_at_generation, raw_score_at_generation,
         scan_id, correlation_id, scanner_version, scoring_version,
         recommendation_version, config_snapshot, snapshot_hash
-    ))
+    )
+    execute_db(_snapshot_query, _snapshot_params)
+
+    # P0.1E: Queue to governance DLQ for PG replay if currently on SQLite fallback
+    if pg_cooldown_active() or not is_postgresql():
+        queue_governance_write(_snapshot_query, _snapshot_params, artifact_type="research_snapshots_v2")
 
 def get_research_history(symbol: str) -> list[dict]:
     """
@@ -5557,7 +5776,8 @@ def acquire_scan_lock_v2(scan_id: str, owner_id: str, ttl_seconds: int = 300) ->
     expires = (datetime.now() + timedelta(seconds=ttl_seconds)).strftime("%Y-%m-%d %H:%M:%S")
 
     # Check current lock
-    lock = execute_db("SELECT * FROM scan_lock WHERE id = 1", fetch="one")
+    # P0.1D: require_pg=True — lock reads must be consistent
+    lock = execute_db("SELECT * FROM scan_lock WHERE id = 1", fetch="one", require_pg=True)
     if lock and lock.get("scan_id"):
         # Check if stale
         hb = lock.get("heartbeat")
@@ -5574,10 +5794,11 @@ def acquire_scan_lock_v2(scan_id: str, owner_id: str, ttl_seconds: int = 300) ->
                 pass  # Can't parse, allow acquisition
 
     # Acquire or steal
+    # P0.1D: require_pg=True — lock acquisition must be consistent
     execute_db(
         """UPDATE scan_lock SET scan_id = ?, owner_id = ?, heartbeat = ?,
            expires_at = ?, acquired_at = ? WHERE id = 1""",
-        (scan_id, owner_id, now, expires, now)
+        (scan_id, owner_id, now, expires, now), require_pg=True
     )
     log.info("[ScanLock] Acquired: scan_id=%s, owner=%s", scan_id, owner_id)
     return True
@@ -5585,9 +5806,10 @@ def acquire_scan_lock_v2(scan_id: str, owner_id: str, ttl_seconds: int = 300) ->
 
 def release_scan_lock_v2(scan_id: str):
     """Release the scan lock (only if owned by this scan_id)."""
+    # P0.1D: require_pg=True — lock release must be consistent
     execute_db(
         "UPDATE scan_lock SET scan_id = NULL, owner_id = NULL, heartbeat = NULL, expires_at = NULL WHERE id = 1 AND scan_id = ?",
-        (scan_id,)
+        (scan_id,), require_pg=True
     )
     log.info("[ScanLock] Released: scan_id=%s", scan_id)
 
@@ -5595,9 +5817,10 @@ def release_scan_lock_v2(scan_id: str):
 def refresh_scan_lock_heartbeat(scan_id: str):
     """Refresh the heartbeat timestamp to keep the lock alive."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # P0.1D: require_pg=True — heartbeat must be consistent
     execute_db(
         "UPDATE scan_lock SET heartbeat = ? WHERE id = 1 AND scan_id = ?",
-        (now, scan_id)
+        (now, scan_id), require_pg=True
     )
 
 
@@ -5759,6 +5982,7 @@ def save_scan_resume_state(scan_id: str, universe_version: str,
                            total_batches: int, current_batch_index: int):
     """Persist resume checkpoint. Only stores batch_index — no symbol JSON."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # P0.1D: require_pg=True — resume state must be consistent
     execute_db(
         """INSERT INTO scan_resume_state
            (scan_id, universe_version, total_batches, current_batch_index, status, last_heartbeat)
@@ -5766,7 +5990,7 @@ def save_scan_resume_state(scan_id: str, universe_version: str,
            ON CONFLICT (scan_id) DO UPDATE SET
              current_batch_index = EXCLUDED.current_batch_index,
              last_heartbeat = EXCLUDED.last_heartbeat""",
-        (scan_id, universe_version, total_batches, current_batch_index, now)
+        (scan_id, universe_version, total_batches, current_batch_index, now), require_pg=True
     )
 
 

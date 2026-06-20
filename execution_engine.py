@@ -518,7 +518,7 @@ def _db_create_order(db, data: dict):
     import json
 
     try:
-        db.execute_db("""
+        _order_query = """
             INSERT INTO paper_orders (
                 symbol, order_type, side, status,
                 entry_low, entry_high, target_price, stop_loss,
@@ -528,7 +528,8 @@ def _db_create_order(db, data: dict):
                 signal_time, order_created_at, expires_at,
                 correlation_id
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, (
+        """
+        _order_params = (
             order["symbol"],
             "LIMIT",
             "BUY",
@@ -546,7 +547,12 @@ def _db_create_order(db, data: dict):
             datetime.now(_IST).isoformat(),
             order.get("expires_at"),
             scan_context.get("correlation_id", ""),
-        ))
+        )
+        db.execute_db(_order_query, _order_params)
+        
+        # P0.1E: Queue to governance DLQ for PG replay if currently on SQLite fallback
+        if not db.is_postgresql() or db.pg_cooldown_active():
+            db.queue_governance_write(_order_query, _order_params, artifact_type="paper_orders")
 
         # Get the order ID back
         row = db.execute_db(
@@ -617,7 +623,7 @@ def _db_fill_order(db, data: dict):
 
         # 4. Insert paper_trade
         import json
-        db.execute_db("""
+        _trade_query = """
             INSERT INTO paper_trades (
                 symbol, sector, entry_date, entry_price, target_price, stop_loss,
                 virtual_capital, quantity,
@@ -631,7 +637,8 @@ def _db_fill_order(db, data: dict):
                 breadth_advances, breadth_declines, breadth_ratio,
                 status, entry_time, order_id, fill_price, execution_latency_ms
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, (
+        """
+        _trade_params = (
             order_data.get("symbol", stock_data.get("symbol", "")),
             stock_data.get("sector", ""),
             entry_date,
@@ -670,7 +677,12 @@ def _db_fill_order(db, data: dict):
             order_id,
             fill_price,
             exec_latency_ms,
-        ))
+        )
+        db.execute_db(_trade_query, _trade_params)
+        
+        # P0.1E: Queue to governance DLQ for PG replay if currently on SQLite fallback
+        if not db.is_postgresql() or db.pg_cooldown_active():
+            db.queue_governance_write(_trade_query, _trade_params, artifact_type="paper_trades_open")
 
         # 5. Get trade ID and update in-memory position
         row = db.execute_db(
@@ -754,20 +766,26 @@ def _db_close_position(db, data: dict):
 
         exit_date = exit_time[:10] if exit_time else _date.today().isoformat()
 
-        db.execute_db("""
+        _close_query = """
             UPDATE paper_trades SET
                 exit_date=?, exit_price=?, exit_reason=?,
                 nifty_exit=?, days_held=?, return_pct=?, alpha_pct=?,
                 status='CLOSED', exit_time=?, updated_at=?
             WHERE id=?
-        """, (
+        """
+        _close_params = (
             exit_date, exit_price, exit_reason,
             float(db.get_meta("nifty50_price") or 0) or None,
             days_held, round(return_pct, 2),
             round(alpha_pct, 2) if alpha_pct is not None else None,
             exit_time, datetime.now(_IST).isoformat(),
             trade_id,
-        ))
+        )
+        db.execute_db(_close_query, _close_params)
+        
+        # P0.1E: Queue to governance DLQ for PG replay if currently on SQLite fallback
+        if not db.is_postgresql() or db.pg_cooldown_active():
+            db.queue_governance_write(_close_query, _close_params, artifact_type="paper_trades_close")
 
         log.info("[EXEC Writer] Trade closed: %s id=%s | %s | return=%.2f%%",
                  symbol, trade_id, exit_reason, return_pct)
