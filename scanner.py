@@ -384,11 +384,18 @@ def run_full_scan(context: ScanContext = None):
         return
 
     # ── Legacy scan path (USE_UNIVERSE_ENGINE=0) ──────────────────
-    # Build universe: curated active set + any custom stocks not already included
-    curated_symbols = get_fast_scan_universe()
-    custom = [s["symbol"] for s in db.get_custom_stocks()]
-    curated_set = set(curated_symbols)
-    all_symbols = curated_symbols + [s for s in custom if s not in curated_set]
+    # P0 Governance: Lock active universe version
+    universe_version = db.get_meta("active_universe_version")
+    if not universe_version:
+        log.error("[%s] EMERGENCY FALLBACK: No active universe version found.", correlation_id[:12])
+        raise RuntimeError("EMERGENCY FALLBACK: No active universe version found. Scan aborted.")
+        
+    eligible_rows = db.get_eligible_universe(universe_version)
+    if not eligible_rows:
+        log.error("[%s] EMERGENCY FALLBACK: Frozen universe %s has 0 members.", correlation_id[:12], universe_version)
+        raise RuntimeError(f"EMERGENCY FALLBACK: Frozen universe {universe_version} has 0 members.")
+        
+    all_symbols = [row["symbol"] for row in eligible_rows]
     total = len(all_symbols)
 
     # Persist the resolved universe for debugging / transparency
@@ -403,6 +410,9 @@ def run_full_scan(context: ScanContext = None):
         # Lock not acquired — another scan is running (Section 32: TOCTOU prevention)
         log.warning("[%s] Scan rejected — another scan is already active", correlation_id[:12])
         return
+
+    # Lock universe version into scan_runs (P0 Governance)
+    db.execute_db("UPDATE scan_runs SET universe_version = ? WHERE scan_id = ?", (universe_version, scan_id))
 
     db.clear_meta_cache()  # Phase 1: ensure fresh metadata during scan
     log.info("[%s] Scan: %d stocks... (scan_id=%s)", correlation_id[:12], total, scan_id[:20])
@@ -1033,11 +1043,20 @@ def _run_parallel_scan(context: ScanContext):
         log.info("[%s] RESUMING scan from batch %d, universe=%s (%d stocks)",
                  correlation_id[:12], start_batch, universe_version, len(eligible))
     else:
-        # Option B-Prime: FORCE FALLBACK PATH
-        # We explicitly bypass active_universe_version to preserve existing scanner behavior
-        # while keeping the metadata intact for the 7-day governance audit.
-        from universe_builder import build_eligible_universe
-        eligible, universe_version = build_eligible_universe()
+        # P0 Governance: Lock active universe version
+        universe_version = db.get_meta("active_universe_version")
+        if not universe_version:
+            log.error("[%s] EMERGENCY FALLBACK: No active universe version found.", correlation_id[:12])
+            scan_state.complete(success=False, error_message="EMERGENCY FALLBACK: No active universe version.")
+            raise RuntimeError("EMERGENCY FALLBACK: No active universe version found. Scan aborted.")
+            
+        eligible_rows = db.get_eligible_universe(universe_version)
+        if not eligible_rows:
+            log.error("[%s] EMERGENCY FALLBACK: Frozen universe %s has 0 members.", correlation_id[:12], universe_version)
+            scan_state.complete(success=False, error_message=f"EMERGENCY FALLBACK: Frozen universe {universe_version} has 0 members.")
+            raise RuntimeError(f"EMERGENCY FALLBACK: Frozen universe {universe_version} has 0 members.")
+            
+        eligible = [row["symbol"] for row in eligible_rows]
 
     MIN_UNIVERSE_SIZE = 500
     if not eligible or len(eligible) < MIN_UNIVERSE_SIZE:
@@ -1073,6 +1092,9 @@ def _run_parallel_scan(context: ScanContext):
     if lock_acquired is None:
         log.warning("[%s] Scan rejected — another scan is already active", correlation_id[:12])
         return
+
+    # Lock universe version into scan_runs (P0 Governance)
+    db.execute_db("UPDATE scan_runs SET universe_version = ? WHERE scan_id = ?", (universe_version, scan_id))
 
     if not db.acquire_scan_lock_v2(scan_id, context.correlation_id):
         log.warning("[%s] Scan lock held by another owner — aborting", correlation_id[:12])

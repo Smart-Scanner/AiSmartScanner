@@ -704,6 +704,25 @@ def _run_init_db_logic():
                         scan_date TEXT NOT NULL,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
+                    
+                    CREATE TABLE IF NOT EXISTS scan_results_v2 (
+                        scan_id TEXT NOT NULL,
+                        symbol TEXT NOT NULL,
+                        data JSONB NOT NULL,
+                        score INTEGER DEFAULT 0,
+                        high_conviction INTEGER DEFAULT 0,
+                        sector TEXT DEFAULT '',
+                        scan_date TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        slim_data JSONB,
+                        PRIMARY KEY (scan_id, symbol)
+                    );
+
+                    -- Migration: Clone legacy data safely if v2 is empty
+                    INSERT INTO scan_results_v2 (scan_id, symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
+                    SELECT 'scan_legacy_migration', symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data
+                    FROM scan_results
+                    ON CONFLICT DO NOTHING;
 
                     CREATE TABLE IF NOT EXISTS scan_meta (
                         key TEXT PRIMARY KEY,
@@ -1560,6 +1579,24 @@ def _init_sqlite():
                 scan_date TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS scan_results_v2 (
+                scan_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                data JSON NOT NULL,
+                score INTEGER DEFAULT 0,
+                high_conviction INTEGER DEFAULT 0,
+                sector TEXT DEFAULT '',
+                scan_date TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                slim_data JSON,
+                PRIMARY KEY (scan_id, symbol)
+            );
+
+            -- Migration: Clone legacy data safely for SQLite
+            INSERT OR IGNORE INTO scan_results_v2 (scan_id, symbol, data, score, high_conviction, sector, scan_date, updated_at)
+            SELECT 'scan_legacy_migration', symbol, data, score, high_conviction, sector, scan_date, updated_at
+            FROM scan_results;
 
             CREATE TABLE IF NOT EXISTS scan_meta (
                 key TEXT PRIMARY KEY,
@@ -3250,7 +3287,7 @@ def _bulk_upsert_pg(table_name, sql_template, rows, cursor):
     return total_rows
 
 @timed("db_write_batch")
-def save_results(results: list[dict], meta: dict = None):
+def save_results(results: list[dict], scan_id: str = 'legacy_fallback', meta: dict = None):
     """Save scan results to DB and populate normalized tables.
 
     Deploy A.1: Bulk UPSERT rewrite.
@@ -3351,10 +3388,10 @@ def save_results(results: list[dict], meta: dict = None):
 
                     f = r_sanitized.get("fundamentals", {})
 
-                    # 1. scan_results (+ slim_data for Phase 1C)
+                    # 1. scan_results_v2 (+ slim_data for Phase 1C)
                     slim = _build_slim(r_sanitized) if _DB_USE_SLIM else None
                     scan_results_rows.append((
-                        sym, data_json, _sf(r_sanitized.get("score")),
+                        scan_id, sym, data_json, _sf(r_sanitized.get("score")),
                         1 if r_sanitized.get("high_conviction") else 0,
                         r_sanitized.get("sector", ""), scan_date, now, slim
                     ))
@@ -3450,11 +3487,11 @@ def save_results(results: list[dict], meta: dict = None):
 
                 # ── Execute bulk UPSERTs ──
 
-                # 1. scan_results (+ slim_data)
-                _bulk_upsert_pg("scan_results", """
-                    INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
+                # 1. scan_results_v2 (+ slim_data)
+                _bulk_upsert_pg("scan_results_v2", """
+                    INSERT INTO scan_results_v2 (scan_id, symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
                     VALUES %s
-                    ON CONFLICT(symbol) DO UPDATE SET
+                    ON CONFLICT(scan_id, symbol) DO UPDATE SET
                         data=EXCLUDED.data, score=EXCLUDED.score,
                         high_conviction=EXCLUDED.high_conviction, sector=EXCLUDED.sector,
                         scan_date=EXCLUDED.scan_date, updated_at=EXCLUDED.updated_at,
@@ -3626,17 +3663,17 @@ def save_results(results: list[dict], meta: dict = None):
                 r_sanitized = sanitize_for_json(r, symbol=sym, component="sqlite_fallback")
                 data_json = json.dumps(r_sanitized, default=str, allow_nan=False)
 
-                # 1. scan_results (+ slim_data)
+                # 1. scan_results_v2 (+ slim_data)
                 slim = _build_slim(r_sanitized) if _DB_USE_SLIM else None
                 sqlite_conn.execute("""
-                    INSERT INTO scan_results (symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(symbol) DO UPDATE SET
+                    INSERT INTO scan_results_v2 (scan_id, symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(scan_id, symbol) DO UPDATE SET
                         data=excluded.data, score=excluded.score,
                         high_conviction=excluded.high_conviction, sector=excluded.sector,
                         scan_date=excluded.scan_date, updated_at=excluded.updated_at,
                         slim_data=excluded.slim_data
-                """, (sym, data_json, r_sanitized.get("score", 0), 1 if r_sanitized.get("high_conviction") else 0, r_sanitized.get("sector", ""), scan_date, now, slim))
+                """, (scan_id, sym, data_json, r_sanitized.get("score", 0), 1 if r_sanitized.get("high_conviction") else 0, r_sanitized.get("sector", ""), scan_date, now, slim))
 
                 # 2. score_history
                 sqlite_conn.execute("""
@@ -3954,7 +3991,7 @@ _SLIM_BACKFILL_BATCH_SIZE = int(os.getenv("SLIM_BACKFILL_BATCH_SIZE", "50"))
 def log_slim_coverage():
     """Log current slim_data coverage ratio."""
     try:
-        row = execute_db("SELECT COUNT(*) as total, COUNT(slim_data) as slim FROM scan_results", fetch="one")
+        row = execute_db("SELECT COUNT(*) as total, COUNT(slim_data) as slim FROM scan_results_v2 WHERE scan_id = ?", (get_latest_completed_scan_id(),), fetch="one")
         if row:
             total = row.get("total", 0) if isinstance(row, dict) else 0
             slim = row.get("slim", 0) if isinstance(row, dict) else 0
@@ -4016,16 +4053,16 @@ def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
         # Sprint 1: Two-pass approach — first try slim-only, then fallback
         try:
             rows = execute_db(
-                "SELECT slim_data FROM scan_results WHERE slim_data IS NOT NULL ORDER BY score DESC LIMIT ?",
-                (limit,), fetch="all"
+                "SELECT slim_data FROM scan_results_v2 WHERE scan_id = ? AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?",
+                (get_latest_completed_scan_id(), limit,), fetch="all"
             )
             slim_count = len(rows) if rows else 0
             # If we got fewer than limit, fill remaining from data column
             if slim_count < limit:
                 remaining = limit - slim_count
                 fallback_rows = execute_db(
-                    "SELECT data FROM scan_results WHERE slim_data IS NULL ORDER BY score DESC LIMIT ?",
-                    (remaining,), fetch="all"
+                    "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND slim_data IS NULL ORDER BY score DESC LIMIT ?",
+                    (get_latest_completed_scan_id(), remaining,), fetch="all"
                 )
         except Exception as e:
             # If slim_data column does not exist (e.g. init_db failed or hasn't run)
@@ -4034,8 +4071,8 @@ def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
             _DB_USE_SLIM = False
             rows = []
             fallback_rows = execute_db(
-                "SELECT data FROM scan_results ORDER BY score DESC LIMIT ?",
-                (limit,), fetch="all"
+                "SELECT data FROM scan_results_v2 WHERE scan_id = ? ORDER BY score DESC LIMIT ?",
+                (get_latest_completed_scan_id(), limit,), fetch="all"
             )
     else:
         fallback_rows = execute_db(
@@ -4092,15 +4129,15 @@ def load_golden_results(limit: int = 100) -> list[dict]:
     use_slim = is_slim_results_enabled() and _DB_USE_SLIM
 
     if use_slim:
-        pg_query = "SELECT slim_data FROM scan_results WHERE ((slim_data->>'is_golden')::text = 'true' OR (slim_data->>'is_golden')::text = '1') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
-        sqlite_query = "SELECT slim_data FROM scan_results WHERE (json_extract(slim_data, '$.is_golden') = 1 OR json_extract(slim_data, '$.is_golden') = 'true') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
+        pg_query = "SELECT slim_data FROM scan_results_v2 WHERE scan_id = ? AND ((slim_data->>'is_golden')::text = 'true' OR (slim_data->>'is_golden')::text = '1') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
+        sqlite_query = "SELECT slim_data FROM scan_results_v2 WHERE scan_id = ? AND (json_extract(slim_data, '$.is_golden') = 1 OR json_extract(slim_data, '$.is_golden') = 'true') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
     else:
-        pg_query = "SELECT data FROM scan_results WHERE (data->>'is_golden')::text = 'true' OR (data->>'is_golden')::text = '1' ORDER BY score DESC LIMIT ?"
-        sqlite_query = "SELECT data FROM scan_results WHERE json_extract(data, '$.is_golden') = 1 OR json_extract(data, '$.is_golden') = 'true' ORDER BY score DESC LIMIT ?"
+        pg_query = "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND ((data->>'is_golden')::text = 'true' OR (data->>'is_golden')::text = '1') ORDER BY score DESC LIMIT ?"
+        sqlite_query = "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND (json_extract(data, '$.is_golden') = 1 OR json_extract(data, '$.is_golden') = 'true') ORDER BY score DESC LIMIT ?"
 
     try:
         query = pg_query if is_postgresql() and not pg_cooldown_active() else sqlite_query
-        rows = execute_db(query, (limit,), fetch="all")
+        rows = execute_db(query, (get_latest_completed_scan_id(), limit), fetch="all")
     except Exception:
         rows = _execute_sqlite(sqlite_query, (limit,), "all")
     results = []
@@ -4118,8 +4155,8 @@ def load_golden_results(limit: int = 100) -> list[dict]:
 
     if use_slim and len(results) < limit:
         remaining = limit - len(results)
-        fallback_pg = "SELECT data FROM scan_results WHERE ((data->>'is_golden')::text = 'true' OR (data->>'is_golden')::text = '1') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
-        fallback_sqlite = "SELECT data FROM scan_results WHERE (json_extract(data, '$.is_golden') = 1 OR json_extract(data, '$.is_golden') = 'true') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
+        fallback_pg = "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND ((data->>'is_golden')::text = 'true' OR (data->>'is_golden')::text = '1') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
+        fallback_sqlite = "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND (json_extract(data, '$.is_golden') = 1 OR json_extract(data, '$.is_golden') = 'true') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
         try:
             f_query = fallback_pg if is_postgresql() and not pg_cooldown_active() else fallback_sqlite
             f_rows = execute_db(f_query, (remaining,), fetch="all")
@@ -4146,15 +4183,15 @@ def load_breakout_results(limit: int = 100) -> list[dict]:
     use_slim = is_slim_results_enabled() and _DB_USE_SLIM
 
     if use_slim:
-        pg_query = "SELECT slim_data FROM scan_results WHERE ((slim_data->>'is_breakout')::text = 'true' OR (slim_data->>'is_breakout')::text = '1') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
-        sqlite_query = "SELECT slim_data FROM scan_results WHERE (json_extract(slim_data, '$.is_breakout') = 1 OR json_extract(slim_data, '$.is_breakout') = 'true') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
+        pg_query = "SELECT slim_data FROM scan_results_v2 WHERE scan_id = ? AND ((slim_data->>'is_breakout')::text = 'true' OR (slim_data->>'is_breakout')::text = '1') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
+        sqlite_query = "SELECT slim_data FROM scan_results_v2 WHERE scan_id = ? AND (json_extract(slim_data, '$.is_breakout') = 1 OR json_extract(slim_data, '$.is_breakout') = 'true') AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
     else:
-        pg_query = "SELECT data FROM scan_results WHERE (data->>'is_breakout')::text = 'true' OR (data->>'is_breakout')::text = '1' ORDER BY score DESC LIMIT ?"
-        sqlite_query = "SELECT data FROM scan_results WHERE json_extract(data, '$.is_breakout') = 1 OR json_extract(data, '$.is_breakout') = 'true' ORDER BY score DESC LIMIT ?"
+        pg_query = "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND ((data->>'is_breakout')::text = 'true' OR (data->>'is_breakout')::text = '1') ORDER BY score DESC LIMIT ?"
+        sqlite_query = "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND (json_extract(data, '$.is_breakout') = 1 OR json_extract(data, '$.is_breakout') = 'true') ORDER BY score DESC LIMIT ?"
 
     try:
         query = pg_query if is_postgresql() and not pg_cooldown_active() else sqlite_query
-        rows = execute_db(query, (limit,), fetch="all")
+        rows = execute_db(query, (get_latest_completed_scan_id(), limit), fetch="all")
     except Exception:
         rows = _execute_sqlite(sqlite_query, (limit,), "all")
     results = []
@@ -4172,8 +4209,8 @@ def load_breakout_results(limit: int = 100) -> list[dict]:
 
     if use_slim and len(results) < limit:
         remaining = limit - len(results)
-        fallback_pg = "SELECT data FROM scan_results WHERE ((data->>'is_breakout')::text = 'true' OR (data->>'is_breakout')::text = '1') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
-        fallback_sqlite = "SELECT data FROM scan_results WHERE (json_extract(data, '$.is_breakout') = 1 OR json_extract(data, '$.is_breakout') = 'true') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
+        fallback_pg = "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND ((data->>'is_breakout')::text = 'true' OR (data->>'is_breakout')::text = '1') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
+        fallback_sqlite = "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND (json_extract(data, '$.is_breakout') = 1 OR json_extract(data, '$.is_breakout') = 'true') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
         try:
             f_query = fallback_pg if is_postgresql() and not pg_cooldown_active() else fallback_sqlite
             f_rows = execute_db(f_query, (remaining,), fetch="all")
@@ -4196,11 +4233,11 @@ def load_high_conviction_results(limit: int = 100) -> list[dict]:
     use_slim = is_slim_results_enabled() and _DB_USE_SLIM
 
     if use_slim:
-        query = "SELECT slim_data FROM scan_results WHERE high_conviction = 1 AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
+        query = "SELECT slim_data FROM scan_results_v2 WHERE scan_id = ? AND high_conviction = 1 AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?"
     else:
-        query = "SELECT data FROM scan_results WHERE high_conviction = 1 ORDER BY score DESC LIMIT ?"
+        query = "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND high_conviction = 1 ORDER BY score DESC LIMIT ?"
 
-    rows = execute_db(query, (limit,), fetch="all")
+    rows = execute_db(query, (get_latest_completed_scan_id(), limit), fetch="all")
     results = []
     for row in (rows or []):
         try:
@@ -4216,8 +4253,8 @@ def load_high_conviction_results(limit: int = 100) -> list[dict]:
 
     if use_slim and len(results) < limit:
         remaining = limit - len(results)
-        fallback_query = "SELECT data FROM scan_results WHERE high_conviction = 1 AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
-        f_rows = execute_db(fallback_query, (remaining,), fetch="all")
+        fallback_query = "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND high_conviction = 1 AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
+        f_rows = execute_db(fallback_query, (get_latest_completed_scan_id(), remaining), fetch="all")
         for row in (f_rows or []):
             try:
                 r = _parse_data_column(row.get("data"))
@@ -4229,7 +4266,8 @@ def load_high_conviction_results(limit: int = 100) -> list[dict]:
     return results
 
 def get_result_count() -> int:
-    return execute_db("SELECT COUNT(*) as cnt FROM scan_results", fetch="count")
+    scan_id = get_latest_completed_scan_id()
+    return execute_db("SELECT COUNT(*) as cnt FROM scan_results_v2 WHERE scan_id = ?", (scan_id,), fetch="count")
 
 def get_meta(key: str, default=None):
     """Get a metadata value. Served from memory cache when fresh."""
@@ -4462,7 +4500,8 @@ def update_chunk_progress(chunk_run_id: int, symbol: str, symbols_processed: int
 def get_stock(symbol: str) -> dict | None:
     """Get a single stock's scan data."""
     resolved = resolve_symbol(symbol)
-    row = execute_db("SELECT data FROM scan_results WHERE symbol=?", (resolved.upper(),), fetch="one")
+    scan_id = get_latest_completed_scan_id()
+    row = execute_db("SELECT data FROM scan_results_v2 WHERE symbol=? AND scan_id=?", (resolved.upper(), scan_id), fetch="one")
     if row:
         try:
             r = _parse_data_column(row["data"])
@@ -4508,9 +4547,11 @@ def get_stocks_map(symbols: list[str]) -> dict[str, dict]:
         
     resolved_symbols = list(resolved_to_orig.keys())
     placeholders = ",".join("?" * len(resolved_symbols))
+    scan_id = get_latest_completed_scan_id()
+    query_args = resolved_symbols + [scan_id]
     rows = execute_db(
-        f"SELECT symbol, data FROM scan_results WHERE symbol IN ({placeholders})",
-        resolved_symbols,
+        f"SELECT symbol, data FROM scan_results_v2 WHERE symbol IN ({placeholders}) AND scan_id = ?",
+        query_args,
         fetch="all"
     )
     res = {}
@@ -4526,23 +4567,33 @@ def get_stocks_map(symbols: list[str]) -> dict[str, dict]:
             pass
     return res
 
+def get_latest_completed_scan_id() -> str:
+    """Get the scan_id of the most recent completed scan."""
+    row = execute_db("SELECT scan_id FROM scan_runs WHERE status = 'COMPLETED' ORDER BY end_time DESC LIMIT 1", fetch="one")
+    if row and row.get("scan_id"):
+        return row["scan_id"]
+    return "scan_legacy_migration"
+
 def get_all_symbols() -> list[str]:
-    """Get all symbols in scan_results."""
-    rows = execute_db("SELECT symbol FROM scan_results ORDER BY score DESC", fetch="all")
-    return [row["symbol"] for row in rows]
+    """Get all symbols in scan_results_v2 for the latest scan."""
+    scan_id = get_latest_completed_scan_id()
+    rows = execute_db("SELECT symbol FROM scan_results_v2 WHERE scan_id = ? ORDER BY score DESC", (scan_id,), fetch="all")
+    return [row["symbol"] for row in rows] if rows else []
 
 
 def get_all_results() -> list[dict]:
     """Get all scan results as dicts. Used for deep scan shortlisting."""
-    rows = execute_db("SELECT symbol, data FROM scan_results ORDER BY score DESC", fetch="all")
+    scan_id = get_latest_completed_scan_id()
+    rows = execute_db("SELECT symbol, data FROM scan_results_v2 WHERE scan_id = ? ORDER BY score DESC", (scan_id,), fetch="all")
     results = []
-    for row in rows:
-        try:
-            r = _parse_data_column(row["data"])
-            if r:
-                results.append(r)
-        except Exception:
-            pass
+    if rows:
+        for row in rows:
+            try:
+                r = _parse_data_column(row["data"])
+                if r:
+                    results.append(r)
+            except Exception:
+                pass
     return results
 
 def get_score_history(symbol: str, days: int = 30) -> list[dict]:
@@ -4557,15 +4608,17 @@ def get_score_history(symbol: str, days: int = 30) -> list[dict]:
 
 def get_sector_stats() -> list[dict]:
     """Get sector-wise stats."""
+    scan_id = get_latest_completed_scan_id()
     rows = execute_db("""
         SELECT sector, COUNT(*) as count,
                AVG(score) as avg_score,
                SUM(high_conviction) as hc_count
-        FROM scan_results
+        FROM scan_results_v2
+        WHERE scan_id = ?
         GROUP BY sector
         ORDER BY avg_score DESC
-    """, fetch="all")
-    return rows
+    """, (scan_id,), fetch="all")
+    return rows if rows else []
 
 def clear_old_results(days: int = 7):
     """Remove results older than N days."""
