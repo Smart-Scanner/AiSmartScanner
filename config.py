@@ -32,7 +32,20 @@ DATA_LOOKBACK_DAYS = 365
 BENCHMARK_LOOKBACK_DAYS = 60
 _ON_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
 
-MAX_WORKERS = 3 if _ON_RAILWAY else 4   # 4 parallel workers (intelligence adds per-stock overhead)
+# Determine number of Angel One accounts from .env to scale workers
+_account_count = 0
+_env_path = Path(__file__).parent / ".env"
+if _env_path.exists():
+    for line in _env_path.read_text().splitlines():
+        if line.startswith("ANGEL_API_KEY_") and "=" in line:
+            _account_count += 1
+if _account_count == 0 and (os.environ.get("ANGEL_API_KEY") or (_env_path.exists() and "ANGEL_API_KEY=" in _env_path.read_text())):
+    _account_count = 1
+
+# Scale workers: 3 workers per account
+_multiplier = max(1, _account_count)
+MAX_WORKERS = 3 * _multiplier if _ON_RAILWAY else 4 * _multiplier
+
 MAX_RAW_SCORE = 380   # 25 technical indicators (~220 pts) + 12 intelligence layers (~160 pts)
 TOP_N_RESULTS = 3000
 # Phase D: Dashboard endpoints use a smaller limit for faster queries.
@@ -85,7 +98,7 @@ USE_UNIVERSE_ENGINE = os.getenv("USE_UNIVERSE_ENGINE", "0") == "1"
 # Scan Engine
 AUTO_SCAN_ENABLED_DEFAULT = os.getenv("AUTO_SCAN_ENABLED_DEFAULT", "0") == "1"
 SCAN_BATCH_SIZE = int(os.getenv("SCAN_BATCH_SIZE", "50"))
-MAX_SCAN_WORKERS = min(int(os.getenv("MAX_SCAN_WORKERS", "2")), 2)  # hard cap at 2
+MAX_SCAN_WORKERS = min(int(os.getenv("MAX_SCAN_WORKERS", str(2 * _multiplier))), 2 * _multiplier)
 PROGRESSIVE_PUBLISH_INTERVAL = int(os.getenv("PROGRESSIVE_PUBLISH_INTERVAL", "25"))
 
 # Universe Eligibility Filters (Turnover = primary, Volume = secondary)

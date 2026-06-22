@@ -223,7 +223,7 @@ if USE_UNIVERSE_ENGINE:
         log.info("[Phase 5.5] Found incomplete scan %s — scheduling resume",
                  _resume.get("scan_id", "unknown"))
         _resume_ctx = ScanContext.create(trigger_source="resume", user_id="system", mode="auto")
-        threading.Thread(target=run_full_scan, args=(_resume_ctx,), daemon=True,
+        threading.Thread(target=run_full_scan, args=(_resume_ctx, _resume.get("scan_id")), daemon=True,
                          name="scan-resume").start()
     else:
         log.info("[Phase 5.5] No pending resume state")

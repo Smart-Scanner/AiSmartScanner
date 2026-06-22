@@ -6664,3 +6664,15 @@ def cleanup_old_snapshots(keep_days: int = 90):
     return deleted or 0
 
 
+
+def get_incomplete_chunks(scan_id: str) -> dict:
+    " Return chunk_name -> symbols_processed for incomplete chunks of a scan."
+    rows = execute_db("SELECT chunk_name, symbols_processed FROM universe_chunk_runs WHERE scan_id = ? AND status != 'COMPLETED'", (scan_id,), fetch="all")
+    if not rows: return {}
+    return {r["chunk_name"]: r.get("symbols_processed", 0) for r in rows}
+
+def get_chunk_run_states(scan_id: str) -> dict:
+    """Return chunk_name -> (status, symbols_processed) for a scan."""
+    rows = execute_db("SELECT chunk_name, status, symbols_processed FROM universe_chunk_runs WHERE scan_id = ?", (scan_id,), fetch="all")
+    if not rows: return {}
+    return {r["chunk_name"]: (r["status"], r.get("symbols_processed", 0)) for r in rows}

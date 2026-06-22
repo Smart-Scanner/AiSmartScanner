@@ -281,12 +281,21 @@ def get_universe_chunks(symbols: list) -> list[tuple[str, list[str]]]:
                     unknown.append(s)
                     
             chunks = []
-            if blue_chip: chunks.append(("Blue Chip", blue_chip))
-            if large_cap: chunks.append(("Large Cap", large_cap))
-            if mid_cap: chunks.append(("Mid Cap", mid_cap))
-            if small_cap: chunks.append(("Small Cap", small_cap))
-            if micro_cap: chunks.append(("Micro Cap", micro_cap))
-            if unknown: chunks.append(("Unknown Cap", unknown))
+            def _add_chunk(name, arr):
+                chunk_size = 100
+                for i in range(0, len(arr), chunk_size):
+                    slice_arr = arr[i:i+chunk_size]
+                    if i == 0 and len(arr) <= chunk_size:
+                        chunks.append((name, slice_arr))
+                    else:
+                        chunks.append((f"{name} Part {i//chunk_size + 1}", slice_arr))
+                        
+            if blue_chip: _add_chunk("Blue Chip", blue_chip)
+            if large_cap: _add_chunk("Large Cap", large_cap)
+            if mid_cap: _add_chunk("Mid Cap", mid_cap)
+            if small_cap: _add_chunk("Small Cap", small_cap)
+            if micro_cap: _add_chunk("Micro Cap", micro_cap)
+            if unknown: _add_chunk("Unknown Cap", unknown)
             return chunks
     except Exception as exc:
         log.warning("Failed to group by universe_catalog: %s", exc)
@@ -316,8 +325,8 @@ def get_universe_chunks(symbols: list) -> list[tuple[str, list[str]]]:
     if blue_chip: chunks.append(("Blue Chip (Nifty 50 Proxy)", blue_chip))
     if large_mid_fno: chunks.append(("Large/Mid Cap (F&O Proxy)", large_mid_fno))
     
-    # Split the rest into chunks of 250 so we don't blow up Angel One
-    chunk_size = 250
+    # Split the rest into chunks of 100 so we don't blow up Angel One and get better thread distribution
+    chunk_size = 100
     for i in range(0, len(rest_universe), chunk_size):
         chunk_slice = rest_universe[i:i+chunk_size]
         chunks.append((f"Broader Market Part {i//chunk_size + 1}", chunk_slice))

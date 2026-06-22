@@ -784,12 +784,18 @@ def get_git_commit_sha():
 
 @api_bp.route("/api/health")
 def health():
-    """Ultra-lightweight health check for Railway and uptime monitors.
-    Zero DB calls — just confirms the process is alive."""
+    """Detailed health check and telemetry for Mission Control."""
+    try:
+        from data_provider import provider_manager
+        telemetry = provider_manager.get_telemetry()
+    except Exception as e:
+        telemetry = {"error": str(e)}
+
     return jsonify({
         "status": "ok",
         "version": APP_VERSION,
         "ts": int(time.time()),
+        "providers": telemetry
     })
 
 

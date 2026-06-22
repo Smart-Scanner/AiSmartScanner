@@ -95,3 +95,15 @@ Date,Scan ID,Artifact Name,Rows Written
 2026-06-20,scan_manual_1781976982_158770,daily_top20_snapshot.csv,20
 2026-06-20,scan_manual_1781976982_158770,daily_open_trades_mtm.csv,29
 2026-06-20,scan_manual_1781976982_158770,daily_hc_funnel_snapshot.csv,1
+2026-06-22,scan_manual_1782111162_ebaa00,daily_release1_snapshot.csv,1
+2026-06-22,scan_manual_1782111162_ebaa00,daily_top20_snapshot.csv,20
+2026-06-22,scan_manual_1782111162_ebaa00,daily_open_trades_mtm.csv,25
+2026-06-22,scan_manual_1782111162_ebaa00,daily_hc_funnel_snapshot.csv,1
+2026-06-22,scan_manual_1782112990_716a02,daily_release1_snapshot.csv,1
+2026-06-22,scan_manual_1782112990_716a02,daily_top20_snapshot.csv,20
+2026-06-22,scan_manual_1782112990_716a02,daily_open_trades_mtm.csv,25
+2026-06-22,scan_manual_1782112990_716a02,daily_hc_funnel_snapshot.csv,1
+2026-06-22,scan_manual_1782113878_c924d8,daily_release1_snapshot.csv,1
+2026-06-22,scan_manual_1782113878_c924d8,daily_top20_snapshot.csv,20
+2026-06-22,scan_manual_1782113878_c924d8,daily_open_trades_mtm.csv,25
+2026-06-22,scan_manual_1782113878_c924d8,daily_hc_funnel_snapshot.csv,1

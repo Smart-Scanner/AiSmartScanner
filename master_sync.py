@@ -361,14 +361,14 @@ def _fetch_symbol_metadata(symbol: str) -> dict:
     Returns dict with keys: symbol, company_name, market_cap, market_cap_bucket,
                             sector, industry, is_active, instrument_type, exchange, price
     """
-    from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success
+    from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_session
 
     if not yf_is_available():
         return None
 
     try:
         import yfinance as yf
-        ticker = yf.Ticker(f"{symbol}.NS")
+        ticker = yf.Ticker(f"{symbol}.NS", session=get_yf_session())
         info = ticker.info
 
         if not info or info.get("regularMarketPrice") is None:

@@ -311,7 +311,7 @@ def _shortlist_for_deep_scan(
 
 
 @timed("full_scan")
-def run_full_scan(context: ScanContext = None):
+def run_full_scan(context: ScanContext = None, resume_from_scan_id: str = None):
     """Run full stock scan. Writes results to DB incrementally.
 
     Phase 0A: Uses ScanContext for execution ownership.
@@ -465,47 +465,57 @@ def run_full_scan(context: ScanContext = None):
 
         # Phase 6: Chunk Execution Architecture
         import universe
+
         chunks = universe.get_universe_chunks(all_symbols)
         
-        global_i = 0
-        for chunk_name, chunk_symbols in chunks:
-            if not chunk_symbols:
-                continue
-                
-            chunk_run_id = db.start_chunk_run(scan_id, chunk_name, len(chunk_symbols))
-            db.log_scan_event(scan_id, "CHUNK_STARTED", f"Chunk: {chunk_name} ({len(chunk_symbols)} symbols)")
-            chunk_processed = 0
-            chunk_failed = 0
-            
-            log.info("[%s] Starting chunk: %s (%d symbols)", correlation_id[:12], chunk_name, len(chunk_symbols))
-            
+        # --- PHASE F: INTRA-CHUNK RESUME LOGIC ---
+        resume_states = {}
+        if resume_from_scan_id:
+            try:
+                resume_states = db.get_chunk_run_states(resume_from_scan_id)
+                log.info("[%s] Resuming from %s, found %d chunk states.", correlation_id[:12], resume_from_scan_id, len(resume_states))
+            except Exception as e:
+                log.warning("[%s] Failed to fetch resume states: %s", correlation_id[:12], e)
+
+        filtered_chunks = []
+        for c_name, c_symbols in chunks:
+            if c_name in resume_states:
+                status, processed = resume_states[c_name]
+                if status == "COMPLETED":
+                    log.info("[%s] Skipping completed chunk: %s", correlation_id[:12], c_name)
+                    continue
+                elif processed > 0:
+                    log.info("[%s] Resuming chunk: %s from offset %d", correlation_id[:12], c_name, processed)
+                    filtered_chunks.append((c_name, c_symbols[processed:]))
+                else:
+                    filtered_chunks.append((c_name, c_symbols))
+            else:
+                filtered_chunks.append((c_name, c_symbols))
+        chunks = filtered_chunks
+        # ----------------------------------------
+
+        
+        def _process_chunk_worker(chunk_name, chunk_symbols, scan_id, correlation_id, nifty_1m, regime, total):
+            from data_provider import provider_manager
             chunk_results = []
+            chunk_failed = 0
+            chunk_processed = 0
+            failed_syms = []
+            scored_syms = set()
+            
+            provider = provider_manager.acquire_active_provider(role="RESEARCH")
+            log.info("[%s] Worker acquired provider: %s for %s", correlation_id[:12], provider.name, chunk_name)
             
             try:
                 for sym in chunk_symbols:
-                    # Phase C: Self-Awareness
-                    current_status = db.check_scan_status(scan_id)
-                    if current_status not in ("running",):
-                        log.error("[%s] SCANNER_ABORT_DETECTED: Status changed to %s", correlation_id[:12], current_status)
-                        db.log_scan_event(scan_id, "SCANNER_ABORT_DETECTED", f"Scan status changed to {current_status}")
-                        _reached_terminal = True
-                        return
-
-                    # Phase 6: Check for cancellation
+                    if db.check_scan_status(scan_id) not in ("running",):
+                        break
                     if get_scan_cancel_requested():
-                        log.warning("[%s] Scan cancelled by user at %d/%d", correlation_id[:12], global_i, total)
-                        db.log_scan_event(scan_id, "SCAN_CANCELLED", "User cancelled scan")
-                        transition_scan_state(
-                            scan_id=scan_id, from_status="running", to_status="cancelled",
-                            reason="user_cancelled", actor=ACTOR_USER,
-                            correlation_id=correlation_id,
-                        )
-                        _reached_terminal = True
-                        return
+                        break
 
                     sym_start_time = time.monotonic()
                     try:
-                        df = live_feed.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
+                        df = provider.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
                         api_duration = time.monotonic() - sym_start_time
                         
                         anal_start = time.monotonic()
@@ -513,48 +523,94 @@ def run_full_scan(context: ScanContext = None):
                             r = fetch_and_analyze(sym, nifty_1m, regime, ext_df=df)
                             anal_duration = time.monotonic() - anal_start
                             if r:
-                                results.append(r)
                                 chunk_results.append(r)
-                                scored_set.add(sym)
+                                scored_syms.add(sym)
                                 db.log_scan_event(scan_id, "SYMBOL_COMPLETED", f"Sym: {sym}, Chunk: {chunk_name}, API: {api_duration:.2f}s, Anal: {anal_duration:.2f}s")
                         else:
-                            failed_symbols.append(sym)
+                            failed_syms.append(sym)
                             chunk_failed += 1
                             db.log_scan_event(scan_id, "SYMBOL_FAILED", f"Sym: {sym}, Chunk: {chunk_name}, Reason: Empty df")
                     except Exception as exc:
-                        failed_symbols.append(sym)
+                        failed_syms.append(sym)
                         chunk_failed += 1
                         db.log_scan_event(scan_id, "SYMBOL_FAILED", f"Sym: {sym}, Chunk: {chunk_name}, Error: {str(exc)}")
                     
                     chunk_processed += 1
-                    global_i += 1
-                    if chunk_processed % 10 == 0:
-                        db.update_chunk_progress(chunk_run_id, sym, chunk_processed)
-                    scan_state.set_progress(global_i)
-                    
-                    if global_i % 50 == 0:
-                        log.info("[%s] Phase 1: %d/%d done, %d scored", correlation_id[:12], global_i, total, len(results))
-            
+                    time.sleep(1.0) # Gap optimization loop
             finally:
-                # Phase D: Chunk Governance - Guaranteed Cleanup
+                provider_manager.release_provider(provider.name)
+                
+            return chunk_name, chunk_symbols, chunk_results, failed_syms, chunk_processed, chunk_failed
+
+        global_i = 0
+        _reached_terminal = False
+        
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_to_chunk = {}
+            for chunk_name, chunk_symbols in chunks:
+                if not chunk_symbols:
+                    continue
+                    
+                chunk_run_id = db.start_chunk_run(scan_id, chunk_name, len(chunk_symbols))
+                db.log_scan_event(scan_id, "CHUNK_STARTED", f"Chunk: {chunk_name} ({len(chunk_symbols)} symbols)")
+                log.info("[%s] Queuing chunk: %s (%d symbols)", correlation_id[:12], chunk_name, len(chunk_symbols))
+                
+                future = executor.submit(_process_chunk_worker, chunk_name, chunk_symbols, scan_id, correlation_id, nifty_1m, regime, total)
+                future_to_chunk[future] = (chunk_name, chunk_run_id, len(chunk_symbols))
+                
+            for future in as_completed(future_to_chunk):
+                chunk_name, chunk_run_id, chunk_total = future_to_chunk[future]
+                
+                current_status = db.check_scan_status(scan_id)
                 if current_status not in ("running",):
-                    chunk_status = "ABORTED"
-                elif get_scan_cancel_requested():
-                    chunk_status = "CANCELLED"
-                elif chunk_failed > 0 and chunk_processed == 0:
-                    chunk_status = "FAILED"
-                else:
-                    chunk_status = "COMPLETED"
-                
-                db.end_chunk_run(chunk_run_id, chunk_status, chunk_processed, f"{chunk_failed} failed")
-                db.log_scan_event(scan_id, f"CHUNK_{chunk_status}", f"Chunk: {chunk_name}, Processed: {chunk_processed}")
-                
-                # Phase E: Recommendation Persistence (Chunk saves)
-                if chunk_results:
-                    db.save_results(chunk_results)
-                
-            # Mandatory cooling delay between chunks
-            time.sleep(3)
+                    log.error("[%s] SCANNER_ABORT_DETECTED: Status changed to %s", correlation_id[:12], current_status)
+                    db.log_scan_event(scan_id, "SCANNER_ABORT_DETECTED", f"Scan status changed to {current_status}")
+                    _reached_terminal = True
+                    break
+
+                if get_scan_cancel_requested():
+                    log.warning("[%s] Scan cancelled by user at %d/%d", correlation_id[:12], global_i, total)
+                    db.log_scan_event(scan_id, "SCAN_CANCELLED", "User cancelled scan")
+                    transition_scan_state(
+                        scan_id=scan_id, from_status="running", to_status="cancelled",
+                        reason="user_cancelled", actor=ACTOR_USER,
+                        correlation_id=correlation_id,
+                    )
+                    _reached_terminal = True
+                    break
+                    
+                try:
+                    c_name, c_symbols, c_results, c_failed_syms, c_processed, c_failed = future.result()
+                    
+                    for r in c_results:
+                        results.append(r)
+                        scored_set.add(r['symbol'])
+                    for f in c_failed_syms:
+                        failed_symbols.append(f)
+                        
+                    global_i += c_processed
+                    scan_state.set_progress(global_i)
+                    if global_i % 50 == 0 or global_i == total:
+                        log.info("[%s] Phase 1: %d/%d done, %d scored", correlation_id[:12], global_i, total, len(results))
+                        
+                    if c_failed > 0 and c_processed == 0:
+                        chunk_status = "FAILED"
+                    else:
+                        chunk_status = "COMPLETED"
+                    
+                    db.end_chunk_run(chunk_run_id, chunk_status, c_processed, f"{c_failed} failed")
+                    db.log_scan_event(scan_id, f"CHUNK_{chunk_status}", f"Chunk: {c_name}, Processed: {c_processed}")
+                    
+                    if c_results:
+                        db.save_results(c_results)
+                        
+                except Exception as exc:
+                    db.end_chunk_run(chunk_run_id, "FAILED", 0, f"Worker exception: {str(exc)}")
+                    db.log_scan_event(scan_id, "CHUNK_FAILED", f"Chunk: {chunk_name}, Error: {str(exc)}")
+                    
+        if _reached_terminal:
+            return
 
         scan_state.update(phase="phase1_done")
         log.info("[%s] Phase 1 done: %d scored, %d failed", correlation_id[:12], len(results), len(failed_symbols))
@@ -1034,17 +1090,34 @@ def _run_parallel_scan(context: ScanContext):
     # ── 1. Load or resume universe ──────────────────────────────
     resume = db.get_pending_resume()
     start_batch = 0
+    active_universe_version = db.get_meta("active_universe_version")
 
     if resume and resume.get("status") == "running":
-        universe_version = resume["universe_version"]
-        eligible_rows = db.get_eligible_universe(universe_version)
-        eligible = [r["symbol"] for r in eligible_rows] if eligible_rows else []
-        start_batch = resume.get("current_batch_index", 0)
-        log.info("[%s] RESUMING scan from batch %d, universe=%s (%d stocks)",
-                 correlation_id[:12], start_batch, universe_version, len(eligible))
-    else:
+        resume_version = resume.get("universe_version")
+        if active_universe_version and resume_version != active_universe_version:
+            log.warning(
+                "[%s] [RESUME_VERSION_MISMATCH] resume=%s active=%s",
+                correlation_id[:12], resume_version, active_universe_version
+            )
+            old_scan_id = resume.get("scan_id")
+            if old_scan_id:
+                try:
+                    db.clear_scan_resume_state(old_scan_id)
+                    db.transition_scan_state(old_scan_id, "running", "failed", reason="stale_resume_abandoned", actor=ACTOR_SYSTEM)
+                except Exception as exc:
+                    log.warning("[%s] Failed to clear stale resume %s: %s", correlation_id[:12], old_scan_id, exc)
+            resume = None
+        else:
+            universe_version = resume_version
+            eligible_rows = db.get_eligible_universe(universe_version)
+            eligible = [r["symbol"] for r in eligible_rows] if eligible_rows else []
+            start_batch = resume.get("current_batch_index", 0)
+            log.info("[%s] RESUMING scan from batch %d, universe=%s (%d stocks)",
+                     correlation_id[:12], start_batch, universe_version, len(eligible))
+
+    if not resume or resume.get("status") != "running":
         # P0 Governance: Lock active universe version
-        universe_version = db.get_meta("active_universe_version")
+        universe_version = active_universe_version
         if not universe_version:
             log.error("[%s] EMERGENCY FALLBACK: No active universe version found.", correlation_id[:12])
             scan_state.complete(success=False, error_message="EMERGENCY FALLBACK: No active universe version.")
@@ -1064,7 +1137,7 @@ def _run_parallel_scan(context: ScanContext):
         if resume and resume.get("status") == "running":
             _resume_ver = resume.get("universe_version", "UNKNOWN")
             _resume_cnt = len(eligible) if eligible else 0
-            _active_ver = db.get_meta("active_universe_version") or "UNKNOWN"
+            _active_ver = active_universe_version or "UNKNOWN"
             try:
                 _active_rows = db.get_eligible_universe(_active_ver) if _active_ver != "UNKNOWN" else []
                 _active_cnt = len(_active_rows) if _active_rows else 0
@@ -1072,6 +1145,15 @@ def _run_parallel_scan(context: ScanContext):
                 _active_cnt = -1
             log.error("[RESUME_CORRUPT] scan_id=%s resume_version=%s resume_count=%d active_version=%s active_count=%d",
                       scan_id, _resume_ver, _resume_cnt, _active_ver, _active_cnt)
+            
+            # Clear the stale resume state that caused this
+            old_scan_id = resume.get("scan_id")
+            if old_scan_id:
+                try:
+                    db.clear_scan_resume_state(old_scan_id)
+                    db.transition_scan_state(old_scan_id, "running", "failed", reason="stale_resume_abandoned", actor=ACTOR_SYSTEM)
+                except Exception:
+                    pass
 
         log.error("[%s] Universe too small (count=%d, min=%d). Scan blocked.", correlation_id[:12], len(eligible) if eligible else 0, MIN_UNIVERSE_SIZE)
         scan_state.complete(success=False, error_message="Universe too small: %d < %d" % (len(eligible) if eligible else 0, MIN_UNIVERSE_SIZE))

@@ -100,3 +100,18 @@ def yf_status() -> dict:
             "yf_cooldown_remaining_s": round(remaining),
             "yf_circuit_open": circuit_open,
         }
+
+import os
+import random
+import requests
+
+def get_yf_session() -> requests.Session:
+    session = requests.Session()
+    proxies_env = os.environ.get("YFINANCE_PROXIES", "")
+    if proxies_env:
+        proxy_list = [p.strip() for p in proxies_env.split(",") if p.strip()]
+        if proxy_list:
+            proxy = random.choice(proxy_list)
+            session.proxies.update({"http": proxy, "https": proxy})
+            log.debug("yf_guard: Using proxy %s", proxy)
+    return session

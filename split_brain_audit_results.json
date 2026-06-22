@@ -1,0 +1,330 @@
+{
+  "incidents": [
+    {
+      "scan_id": "scan_auto_1781236729_554800",
+      "timestamp": "2026-06-12 04:06:51",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_auto_1781236729_554800",
+      "timestamp": "2026-06-12 04:07:36",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_auto_1781622574_c8ed0c",
+      "timestamp": "2026-06-18 07:17:16",
+      "evidence": "Watchdog recovery event: No heartbeat received for 2403.7 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_auto_1781622574_c8ed0c",
+      "timestamp": "2026-06-18 07:17:16",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_dummy_test_1781769912",
+      "timestamp": "2026-06-18 08:05:12",
+      "evidence": "Watchdog recovery event: No heartbeat received for 450.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_dummy_test_1781769912",
+      "timestamp": "2026-06-18 08:05:12",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771280",
+      "timestamp": "2026-06-18 08:28:00",
+      "evidence": "Watchdog recovery event: No heartbeat received for 450.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771280",
+      "timestamp": "2026-06-18 08:28:00",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771327",
+      "timestamp": "2026-06-18 08:28:47",
+      "evidence": "Watchdog recovery event: No heartbeat received for 450.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771327",
+      "timestamp": "2026-06-18 08:28:47",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771370",
+      "timestamp": "2026-06-18 08:29:30",
+      "evidence": "Watchdog recovery event: No heartbeat received for 450.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771370",
+      "timestamp": "2026-06-18 08:29:30",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771403",
+      "timestamp": "2026-06-18 08:30:03",
+      "evidence": "Watchdog recovery event: No heartbeat received for 450.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771403",
+      "timestamp": "2026-06-18 08:30:03",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771422",
+      "timestamp": "2026-06-18 08:30:22",
+      "evidence": "Watchdog recovery event: No heartbeat received for 450.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771422",
+      "timestamp": "2026-06-18 08:30:22",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771523",
+      "timestamp": "2026-06-18 08:32:03",
+      "evidence": "Watchdog recovery event: No heartbeat received for 450.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771523",
+      "timestamp": "2026-06-18 08:32:03",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771597",
+      "timestamp": "2026-06-18 08:33:17",
+      "evidence": "Watchdog recovery event: No heartbeat received for 450.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771597",
+      "timestamp": "2026-06-18 08:33:17",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771616",
+      "timestamp": "2026-06-18 08:33:36",
+      "evidence": "Watchdog recovery event: No heartbeat received for 450.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771616",
+      "timestamp": "2026-06-18 08:33:36",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771657",
+      "timestamp": "2026-06-18 08:34:17",
+      "evidence": "Watchdog recovery event: No heartbeat received for 450.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "scan_regression_1781771657",
+      "timestamp": "2026-06-18 08:34:17",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "test_zombie_25910e6c",
+      "timestamp": "2026-06-19 08:33:38",
+      "evidence": "Watchdog recovery event: No heartbeat received for 16.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "test_zombie_25910e6c",
+      "timestamp": "2026-06-19 08:33:38",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "test_zombie_404804ce",
+      "timestamp": "2026-06-19 09:38:47",
+      "evidence": "Watchdog recovery event: No heartbeat received for 16.0 minutes",
+      "confidence": "HIGH (Watchdog Intervention)"
+    },
+    {
+      "scan_id": "test_zombie_404804ce",
+      "timestamp": "2026-06-19 09:38:47",
+      "evidence": "Watchdog recovery event: Initiating watchdog recovery via zombie state",
+      "confidence": "HIGH (Watchdog Intervention)"
+    }
+  ],
+  "suspected": [
+    {
+      "scan_id": "scan_manual_1780667943_db18bf",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780729829_a8f0d1",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780779905_60cf13",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780851767_9eeff6",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780891119_945595",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780893077_83a2ef",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780895091_5daec9",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780897193_7bda56",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780898231_a3b93b",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780899289_1fc77e",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780900480_928ca0",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780902051_88a23b",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780904408_363319",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780906865_172ee7",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780909149_77b070",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780909676_d32958",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780910553_e676c1",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780911313_47100e",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780977700_e80ade",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780990778_b96d74",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780995256_41d160",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is completed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780680938_89b866",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is failed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780725359_a35b44",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is failed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780742432_ebdbb5",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is failed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780935142_23d2c8",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is failed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    },
+    {
+      "scan_id": "scan_manual_1780940735_9ef2c7",
+      "timestamp": "2026-06-19 23:25:17.832691",
+      "evidence": "Scan is failed in scan_runs but no transition logged in SQLite",
+      "confidence": "LOW (Could be in PG)"
+    }
+  ]
+}
