@@ -175,51 +175,35 @@ from config import USE_UNIVERSE_ENGINE, AUTO_SCAN_ENABLED_DEFAULT
 if USE_UNIVERSE_ENGINE:
     log.info("[Phase 5.5] Universe Engine ACTIVE")
     
-    # Background Boot Sequence (Master Sync -> Liquidity Worker -> Universe Build)
+    # Background Boot Sequence (New Pipeline: Universe Sync → Bhavcopy → Eligible)
     def _boot_universe_prep():
         # Reset stale locks from previous container (Railway deploy = new container)
         try:
             db.set_meta("master_sync_status", "idle")
             db.set_meta("liquidity_worker_status", "idle")
-            log.info("[BootPrep] Reset stale master_sync + liquidity_worker locks")
+            log.info("[BootPrep] Reset stale locks")
         except Exception:
             pass
 
-        # One-time data repair: fix symbols corrupted by old Phase 1
-        # (last_synced_at was set but market_cap=0, meaning yfinance never ran)
+        log.info("[BootPrep] Running NEW Universe Pipeline (Sync → Bhavcopy → Eligible)...")
         try:
-            repaired = db.execute_db(
-                """UPDATE universe_catalog SET last_synced_at = NULL
-                   WHERE market_cap = 0 AND last_synced_at IS NOT NULL""",
-                fetch="rowcount"
-            )
-            if repaired and repaired > 0:
-                log.info("[BootPrep] Data repair: reset last_synced_at for %d unenriched symbols", repaired)
+            from nse_bhavcopy import run_bhavcopy_pipeline
+            result = run_bhavcopy_pipeline()
+            eligible = result.get("universe", {}).get("eligible_count", 0)
+            log.info("[BootPrep] ✅ Universe Pipeline Complete — %d eligible stocks", eligible)
         except Exception as e:
-            log.warning("[BootPrep] Data repair error (non-fatal): %s", e)
-
-        log.info("[BootPrep] Running Master Sync...")
-        try:
-            from master_sync import run_master_sync
-            run_master_sync()
-        except Exception as e:
-            log.error("[BootPrep] Master Sync error: %s", e)
-
-        # Phase 5.6B/C: Launch background liquidity worker (detached from boot)
-        # Worker will: freeze candidates → enrich → check coverage → build universe
-        log.info("[BootPrep] Launching Background Liquidity Worker...")
-        try:
-            from liquidity_enrichment import start_background_liquidity_worker
-            start_background_liquidity_worker()
-        except Exception as e:
-            log.error("[BootPrep] Liquidity Worker launch error: %s", e)
-            # Fallback: try legacy universe build if worker fails
-            log.info("[BootPrep] Falling back to legacy Universe Build...")
+            log.error("[BootPrep] New Pipeline error: %s — falling back to legacy", e)
+            # Fallback to old pipeline if new one fails
+            try:
+                from master_sync import run_master_sync
+                run_master_sync()
+            except Exception as e2:
+                log.error("[BootPrep] Legacy Master Sync also failed: %s", e2)
             try:
                 from universe_builder import build_eligible_universe
                 build_eligible_universe()
-            except Exception as e2:
-                log.error("[BootPrep] Legacy Universe Build error: %s", e2)
+            except Exception as e3:
+                log.error("[BootPrep] Legacy Universe Build also failed: %s", e3)
 
         log.info("[BootPrep] Universe Prep Complete.")
         
@@ -324,7 +308,7 @@ def _auto_scan_loop():
                 except Exception as exc:
                     log.warning("[Phase 5.5] Master sync failed: %s", exc)
 
-                # Phase 5.6B/C: Daily universe rebuild + liquidity refresh at 8:30 AM IST
+                # Daily universe refresh (bhavcopy enrichment at configured hour)
                 try:
                     from datetime import datetime, timezone, timedelta as _td
                     _IST = timezone(_td(hours=5, minutes=30))
@@ -334,14 +318,17 @@ def _auto_scan_loop():
                         _now_ist.minute >= UNIVERSE_REBUILD_MINUTE and
                         _now_ist.minute < UNIVERSE_REBUILD_MINUTE + 5 and
                         (now - last_universe_rebuild) > 3600):
-                        log.info("[Phase 5.6B/C] Daily universe refresh triggered")
-                        # Kick off liquidity worker which handles freeze → enrich → build
-                        from liquidity_enrichment import start_background_liquidity_worker
-                        start_background_liquidity_worker()
+                        log.info("[DailyRefresh] Daily bhavcopy pipeline triggered")
+                        from nse_bhavcopy import run_bhavcopy_pipeline
+                        threading.Thread(
+                            target=run_bhavcopy_pipeline,
+                            daemon=True,
+                            name="daily-bhavcopy"
+                        ).start()
                         last_universe_rebuild = time.time()
                         db.set_meta("last_universe_rebuild_ts", str(last_universe_rebuild))
                 except Exception as exc:
-                    log.warning("[Phase 5.6B/C] Daily universe refresh failed: %s", exc)
+                    log.warning("[DailyRefresh] Daily universe refresh failed: %s", exc)
 
             market_open = live_feed.is_market_open()
 
