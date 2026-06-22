@@ -9,7 +9,7 @@ Sector Rotation Engine — RRG (Relative Rotation Graph) Proxy
 import time
 import logging
 import threading
-import yfinance as yf
+from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_download
 import pandas as pd
 
 log = logging.getLogger("screener")
@@ -114,7 +114,7 @@ def scan_sector_rotation():
     results = {}
 
     try:
-        bench_df = yf.download(BENCHMARK, period="6mo", interval="1d",
+        bench_df = get_yf_download(BENCHMARK, source="sector_rotation", period="6mo", interval="1d",
                                progress=False, auto_adjust=True)
         if bench_df.empty or len(bench_df) < 20:
             log.warning("Benchmark data empty, skipping RRG")
@@ -124,7 +124,7 @@ def scan_sector_rotation():
 
         for name, ticker in NIFTY_SECTORS.items():
             try:
-                sec_df = yf.download(ticker, period="6mo", interval="1d",
+                sec_df = get_yf_download(ticker, source="sector_rotation", period="6mo", interval="1d",
                                      progress=False, auto_adjust=True)
                 if sec_df.empty or len(sec_df) < 20:
                     continue

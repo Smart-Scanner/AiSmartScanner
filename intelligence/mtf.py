@@ -50,14 +50,14 @@ _miss_count = 0
 
 def _compute_mtf(symbol: str) -> tuple:
     """Internal: download all 3 timeframes and compute trend dict + score."""
-    import yfinance as yf
+    from intelligence.yf_guard import get_yf_download
 
     ns = symbol + ".NS"
     trends = {}
 
     for tf, (period, interval) in TIMEFRAMES.items():
         try:
-            df = yf.download(ns, period=period, interval=interval,
+            df = get_yf_download(ns, source="mtf", period=period, interval=interval,
                              progress=False, auto_adjust=True)
             if df is None or len(df) < 20:
                 trends[tf] = "UNKNOWN"
@@ -122,7 +122,7 @@ def get_mtf_trend(symbol: str, cache_only: bool = False) -> tuple:
         yf_record_success()
     except Exception as exc:
         log.debug("MTF fetch failed for %s: %s", sym, exc)
-        yf_record_failure()
+        yf_record_failure(source="mtf")
         return {}, 0
 
     with _mtf_lock:
@@ -164,7 +164,7 @@ def prefetch_mtf_batch(symbols: list, max_workers: int = 5) -> None:
             return sym, result
         except Exception as exc:
             log.debug("MTF prefetch failed for %s: %s", sym, exc)
-            yf_record_failure()
+            yf_record_failure(source="mtf_prefetch")
             return sym, None
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:

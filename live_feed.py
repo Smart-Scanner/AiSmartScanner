@@ -17,7 +17,7 @@ import requests
 from SmartApi import SmartConnect
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 from metrics.timer import timed
-from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_session
+from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_session, get_yf_ticker
 
 log = logging.getLogger("live_feed")
 
@@ -390,7 +390,7 @@ def get_live_price(symbol):
         return None
     try:
         import yfinance as yf
-        ticker = yf.Ticker(f"{clean}.NS", session=get_yf_session())
+        ticker = get_yf_ticker(f"{clean}.NS", source="live_feed")
         info = ticker.fast_info
         ltp = info.get("lastPrice") or info.get("last_price")
         if ltp:
@@ -412,7 +412,7 @@ def get_live_price(symbol):
             return tick
     except Exception as exc:
         log.debug("yfinance live fallback failed for %s: %s", clean, exc)
-        yf_record_failure()
+        yf_record_failure(source="live_feed")
     return None
 
 def _on_data(wsapp, message):
@@ -621,9 +621,9 @@ def fetch_historical(symbol: str, days: int = 365):
             log.debug("fetch_historical: yf_guard OPEN for %s — skipping yfinance", clean)
             return None
         try:
-            df = yf.Ticker(f"{clean}.NS", session=get_yf_session()).history(period="1y")
+            df = get_yf_ticker(f"{clean}.NS", source="live_feed_historical").history(period="1y")
             if df.empty:
-                yf_record_failure()
+                yf_record_failure(source="live_feed")
                 return None
             df = df.reset_index().rename(columns={
                 "Date": "DATE", "Open": "OPEN", "High": "HIGH",
@@ -633,7 +633,7 @@ def fetch_historical(symbol: str, days: int = 365):
             yf_record_success()
             return df[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
         except Exception:
-            yf_record_failure()
+            yf_record_failure(source="live_feed")
             return None
 
     token = get_token(clean)
@@ -677,7 +677,7 @@ def fetch_historical(symbol: str, days: int = 365):
             log.warning("Candle query fail for %s. Trying yfinance fallback...", clean)
             if yf_is_available():
                 try:
-                    df = yf.Ticker(f"{clean}.NS", session=get_yf_session()).history(period="1y")
+                    df = get_yf_ticker(f"{clean}.NS", source="live_feed_historical").history(period="1y")
                     if not df.empty:
                         df = df.reset_index().rename(columns={
                             "Date": "DATE", "Open": "OPEN", "High": "HIGH",
@@ -687,7 +687,7 @@ def fetch_historical(symbol: str, days: int = 365):
                         yf_record_success()
                         return df[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
                 except Exception:
-                    yf_record_failure()
+                    yf_record_failure(source="live_feed")
             return None
 
         rows = [{
@@ -704,7 +704,7 @@ def fetch_historical(symbol: str, days: int = 365):
         log.warning("Historical exception for %s: %s. Trying yfinance fallback...", clean, exc)
         if yf_is_available():
             try:
-                df = yf.Ticker(f"{clean}.NS", session=get_yf_session()).history(period="1y")
+                df = get_yf_ticker(f"{clean}.NS", source="live_feed_historical").history(period="1y")
                 if not df.empty:
                     df = df.reset_index().rename(columns={
                         "Date": "DATE", "Open": "OPEN", "High": "HIGH",
@@ -714,5 +714,5 @@ def fetch_historical(symbol: str, days: int = 365):
                     yf_record_success()
                     return df[["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]]
             except Exception:
-                yf_record_failure()
+                yf_record_failure(source="live_feed")
         return None

@@ -29,7 +29,7 @@ import requests
 from datetime import datetime, timedelta
 
 from intelligence.news_gdelt_finbert import get_gdelt_sentiment
-from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success
+from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_ticker
 from intelligence import finbert_engine
 from intelligence import news_cache
 
@@ -333,8 +333,7 @@ def _fetch_yfinance_articles(symbol: str) -> list:
         log.debug("yf_guard OPEN -- skipping yfinance news for %s", symbol)
         return []
     try:
-        import yfinance as yf
-        tk = yf.Ticker(symbol + ".NS")
+        tk = get_yf_ticker(symbol + ".NS", source="news_sentiment")
         news = tk.news or []
         yf_record_success()
         if not news:
@@ -352,7 +351,7 @@ def _fetch_yfinance_articles(symbol: str) -> list:
         return articles
     except Exception as exc:
         log.debug("yfinance news failed for %s: %s", symbol, exc)
-        yf_record_failure()
+        yf_record_failure(source="news_sentiment")
         news_cache.record_refresh_failure("yahoo", str(exc))
         return []
 

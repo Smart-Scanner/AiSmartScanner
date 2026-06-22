@@ -8,7 +8,7 @@ Order Book Proxy Engine
 """
 
 import logging
-import yfinance as yf
+from intelligence.yf_guard import yf_is_available, get_yf_ticker
 
 log = logging.getLogger("screener")
 
@@ -34,7 +34,10 @@ def get_order_book_proxy(symbol: str, fundamentals: dict) -> dict:
         # If missing key data, try quick yfinance fetch
         if not total_rev or not mcap:
             try:
-                info = yf.Ticker(symbol + ".NS").info
+                if not yf_is_available():
+                    pass
+                else:
+                    info = get_yf_ticker(symbol + ".NS", source="order_book").info
                 total_rev       = info.get("totalRevenue") or 0
                 mcap            = info.get("marketCap") or 0
                 rev_growth_pct  = (info.get("revenueGrowth") or 0) * 100

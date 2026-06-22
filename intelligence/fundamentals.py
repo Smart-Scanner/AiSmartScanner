@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 from metrics.timer import timed
-from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success
+from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_ticker
 
 log = logging.getLogger("screener")
 
@@ -179,12 +179,12 @@ def get_fundamentals_yf(symbol: str, cache_only: bool = False) -> dict:
         return _empty_fundamentals()
 
     try:
-        import yfinance as yf
-        info = yf.Ticker(sym + ".NS").info
+        ticker = get_yf_ticker(sym + ".NS", source="fundamentals")
+        info = ticker.info
         yf_record_success()
     except Exception as exc:
         log.debug("yfinance fundamentals failed for %s: %s", sym, exc)
-        yf_record_failure()
+        yf_record_failure(source="fundamentals")
         return _empty_fundamentals()
 
     def safe(val, default=None):
@@ -443,16 +443,15 @@ def extract_detailed_financials(
         }
 
     try:
-        import yfinance as yf
-        ticker = yf.Ticker(clean + ".NS")
+        ticker = get_yf_ticker(clean + ".NS", source="fundamentals_detailed")
         fin_y = ticker.financials
         if fin_y.empty:
-            ticker = yf.Ticker(clean)
+            ticker = get_yf_ticker(clean, source="fundamentals_detailed")
             fin_y = ticker.financials
         yf_record_success()
     except Exception as exc:
         log.warning("yfinance fetch failed for detailed financials %s: %s", clean, exc)
-        yf_record_failure()
+        yf_record_failure(source="fundamentals_detailed")
         return {
             "yearly": [], "quarterly": [],
             "fin_health_score": 0,

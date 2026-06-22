@@ -15,9 +15,8 @@ Per-stock (called inside fetch_and_analyze):
 import logging
 import threading
 import time
-import yfinance as yf
 from metrics.timer import timed
-from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success
+from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_ticker
 
 from intelligence.seasonal import get_seasonal_score
 from intelligence.order_book import get_order_book_proxy
@@ -104,7 +103,7 @@ def get_upcoming_events(symbol: str, cache_only: bool = False) -> list:
 
     # Level 2: yfinance fetch
     try:
-        tk = yf.Ticker(symbol + ".NS")
+        tk = get_yf_ticker(symbol + ".NS", source="events")
         cal = tk.calendar
         events = []
         if cal is not None and not cal.empty:
@@ -115,7 +114,7 @@ def get_upcoming_events(symbol: str, cache_only: bool = False) -> list:
         result = events[:5]
         yf_record_success()
     except Exception:
-        yf_record_failure()
+        yf_record_failure(source="events")
         result = []
 
     with _events_lock:

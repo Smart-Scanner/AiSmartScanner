@@ -12,7 +12,7 @@ import time
 import logging
 import requests
 import threading
-import yfinance as yf
+from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_download
 
 log = logging.getLogger("screener")
 
@@ -168,7 +168,7 @@ def scan_world_markets():
     world = {}
     for name, ticker in all_indices.items():
         try:
-            df = yf.download(ticker, period="5d", interval="1d",
+            df = get_yf_download(ticker, source="macro_world", period="5d", interval="1d",
                              progress=False, auto_adjust=True)
             if df is not None and not df.empty and len(df) >= 2:
                 close_series = df["Close"].squeeze()
@@ -187,7 +187,7 @@ def scan_world_markets():
     spot = {}
     for label, ticker in SPOT_TICKERS.items():
         try:
-            df = yf.download(ticker, period="3d", interval="1d",
+            df = get_yf_download(ticker, source="macro_spot", period="3d", interval="1d",
                              progress=False, auto_adjust=True)
             if df is not None and not df.empty and len(df) > 0:
                 close_series = df["Close"].squeeze()
