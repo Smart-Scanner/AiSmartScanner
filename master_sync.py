@@ -160,8 +160,21 @@ def run_master_sync():
         total_stale_processed = 0
         batch_round = 0
         batch_size = 20  # yfinance batch size
+        MAX_ENRICHMENT_ROUNDS = 5  # Guard: prevent infinite looping
 
         while True:
+            # Guard 1: Max rounds cap
+            if batch_round >= MAX_ENRICHMENT_ROUNDS:
+                log.info("[MasterSync] Phase 2: Max enrichment rounds (%d) reached — exiting loop", MAX_ENRICHMENT_ROUNDS)
+                break
+
+            # Guard 2: Circuit breaker check BEFORE iterating stale symbols
+            from intelligence.yf_guard import yf_is_available
+            if not yf_is_available():
+                log.warning("[MasterSync] yfinance circuit OPEN — exiting Phase 2 enrichment loop (synced=%d, skipped=%d)",
+                            synced, skipped_provider_unavailable)
+                break
+
             stale_symbols = _get_stale_symbols(MASTER_SYNC_INTERVAL_DAYS,
                                                MASTER_SYNC_DAILY_BATCH_SIZE)
 
@@ -178,15 +191,17 @@ def run_master_sync():
             log.info("[MasterSync] PHASE2_BATCH_START round=%d stale_count=%d total_so_far=%d",
                      batch_round, round_count, total_stale_processed)
 
+            # Track if ANY symbol was actually synced this round
+            round_synced = 0
+
             for i in range(0, len(stale_symbols), batch_size):
                 batch = stale_symbols[i:i + batch_size]
                 symbols_data = []
 
                 for sym in batch:
-                    from intelligence.yf_guard import yf_is_available
                     if not yf_is_available():
                         skipped_provider_unavailable += 1
-                        log.warning("[MasterSync] yfinance circuit breaker is OPEN. Skipping %s without recording failure.", sym)
+                        # Don't log every single symbol — just count
                         continue
 
                     try:
@@ -196,6 +211,7 @@ def run_master_sync():
                             meta["sync_fail_count"] = 0
                             symbols_data.append(meta)
                             synced += 1
+                            round_synced += 1
                         else:
                             # Increment consecutive fail counter
                             prev_fails = _get_sync_fail_count(sym)
@@ -231,6 +247,7 @@ def run_master_sync():
                                     "sync_fail_count": new_fails,
                                 })
                             synced += 1
+                            round_synced += 1
                     except Exception as exc:
                         log.debug("[MasterSync] Metadata fetch failed for %s: %s", sym, exc)
                         failed += 1
@@ -246,6 +263,12 @@ def run_master_sync():
                 if (i + batch_size) % 100 == 0:
                     log.info("[MasterSync] Progress: %d/%d synced in round %d, %d failed total",
                              synced, round_count, batch_round, failed)
+
+            # Guard 3: If zero symbols were actually synced this round, exit
+            # (all were skipped due to circuit breaker opening mid-round)
+            if round_synced == 0:
+                log.warning("[MasterSync] Phase 2: Zero symbols synced in round %d — circuit breaker likely open. Exiting.", batch_round)
+                break
 
             # Log coverage after each round
             try:
