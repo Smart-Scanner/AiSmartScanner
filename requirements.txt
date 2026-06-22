@@ -14,6 +14,9 @@ logzero
 # ── Zerodha Kite Connect ──────────────────────────────
 kiteconnect
 
+# ── Fyers API v3 ──────────────────────────────────────
+fyers-apiv3
+
 # ── Data ──────────────────────────────────────────────
 yfinance>=0.2.40
 pandas>=2.2.0

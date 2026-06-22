@@ -187,6 +187,19 @@ class ProviderManager:
         self.providers: Dict[str, BrokerProvider] = {}
 
     def discover_providers(self):
+        # ── Fyers Providers (higher priority — faster, less rate limiting) ──
+        try:
+            from fyers_provider import discover_fyers_providers
+            fyers_providers = discover_fyers_providers()
+            for name, provider in fyers_providers.items():
+                self.providers[name] = provider
+                logging.info(f"Registered Fyers provider: {name} (Role: RESEARCH)")
+        except ImportError:
+            logging.debug("fyers_provider module not available — skipping Fyers discovery")
+        except Exception as e:
+            logging.warning(f"Fyers discovery failed (non-fatal): {e}")
+
+        # ── Angel Providers (fallback — existing logic) ──
         # Scan env for unique provider prefixes (by _TYPE or _API_KEY)
         prefixes = set()
         for key in os.environ:
@@ -232,29 +245,40 @@ class ProviderManager:
     def acquire_active_provider(self, required_role="RESEARCH") -> Optional[BrokerProvider]:
         """
         Scheduler lock: Finds an ACTIVE, unused provider with the right role.
+        Fyers providers are checked first (higher priority).
         """
+        # Priority order: Fyers first, then Angel
         for name, p in self.providers.items():
             # Check cooldown recovery
-            if p.state == ProviderState.COOLDOWN and p.stats.cooldown_until:
-                if datetime.now() > p.stats.cooldown_until:
-                    logging.info(f"[{name}] Cooldown expired. Recovering to ACTIVE.")
-                    p.state = ProviderState.ACTIVE
-                    p.stats.consecutive_failures = 0
-                    p.stats.cooldown_until = None
-            
-            if p.state == ProviderState.ACTIVE and not p.in_use and p.role == required_role:
-                p.in_use = True
-                return p
+            if hasattr(p, 'state'):
+                state_val = p.state.value if hasattr(p.state, 'value') else p.state
+                if state_val == "COOLDOWN" and p.stats.cooldown_until:
+                    if datetime.now() > p.stats.cooldown_until:
+                        logging.info(f"[{name}] Cooldown expired. Recovering to ACTIVE.")
+                        if hasattr(p.state, 'value'):
+                            p.state = ProviderState.ACTIVE
+                        else:
+                            p.state = "ACTIVE"
+                        p.stats.consecutive_failures = 0
+                        p.stats.cooldown_until = None
+
+                active_check = (state_val == "ACTIVE") if isinstance(state_val, str) else (p.state == ProviderState.ACTIVE)
+                role_check = p.role == required_role
+                
+                if active_check and not p.in_use and role_check:
+                    p.in_use = True
+                    return p
         return None
 
-    def release_provider(self, provider: BrokerProvider):
+    def release_provider(self, provider):
         provider.in_use = False
 
     def get_telemetry(self) -> dict:
         telemetry = {}
         for name, p in self.providers.items():
+            state_val = p.state.value if hasattr(p.state, 'value') else p.state
             telemetry[name] = {
-                "state": p.state.value,
+                "state": state_val,
                 "role": p.role,
                 "in_use": p.in_use,
                 **p.stats.to_dict()
@@ -266,4 +290,5 @@ provider_manager.discover_providers()
 if provider_manager.providers:
     logging.info("Initializing %d data providers (login)...", len(provider_manager.providers))
     provider_manager.initialize_all()
+
 

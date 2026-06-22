@@ -263,6 +263,27 @@ def _fill_order(symbol: str, order: dict, fill_price: float, fill_time: datetime
         "quantity": quantity,
     })
 
+    # Telegram notification (non-blocking)
+    try:
+        from telegram_alerts import send_entry_alert
+        stock_data = order.get("stock_data", {})
+        send_entry_alert({
+            "symbol": symbol,
+            "entry_price": fill_price,
+            "target_price": order.get("target_price"),
+            "stop_loss": order.get("stop_loss"),
+            "quantity": quantity,
+            "score_at_entry": order.get("score_at_signal", stock_data.get("score", 0)),
+            "grade_at_entry": order.get("grade_at_signal", stock_data.get("grade", "")),
+            "confidence_score": stock_data.get("confidence_score", 0),
+            "risk_reward": stock_data.get("risk_reward", 0),
+            "sector": stock_data.get("sector", ""),
+            "high_conviction": stock_data.get("high_conviction", False),
+            "is_golden": stock_data.get("is_golden", False),
+        })
+    except Exception:
+        pass  # Telegram is optional — never block execution
+
 
 def _close_position(symbol: str, position: dict, exit_price: float, exit_time: datetime, reason: str):
     """Close an active position."""
@@ -284,6 +305,28 @@ def _close_position(symbol: str, position: dict, exit_price: float, exit_time: d
         "entry_price": entry_price,
         "entry_date": position.get("entry_date"),
     })
+
+    # Telegram notification (non-blocking)
+    try:
+        from telegram_alerts import send_exit_alert
+        days_held = 0
+        try:
+            entry_date_str = position.get("entry_date", "")
+            if entry_date_str:
+                days_held = (_date.today() - _date.fromisoformat(entry_date_str[:10])).days
+        except Exception:
+            pass
+        send_exit_alert({
+            "symbol": symbol,
+            "entry_price": entry_price,
+            "exit_price": exit_price,
+            "exit_reason": reason,
+            "return_pct": round(return_pct, 1),
+            "quantity": position.get("quantity", 0),
+            "days_held": days_held,
+        })
+    except Exception:
+        pass  # Telegram is optional — never block execution
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

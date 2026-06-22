@@ -17,6 +17,9 @@
     <!-- Engine Status Banner -->
     <div id="engineBanner" class="engine-banner"></div>
 
+    <!-- Portfolio Summary Banner -->
+    <div id="portfolioBanner" class="portfolio-banner" style="display:none"></div>
+
     <!-- Stats Row -->
     <div id="ptStats" class="pt-stats-grid"></div>
 
@@ -59,13 +62,27 @@
 .pt-stat-value.positive { color: var(--success); }
 .pt-stat-value.negative { color: var(--danger); }
 
+.portfolio-banner {
+    background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(168,85,247,0.06));
+    border: 1px solid rgba(59,130,246,0.15);
+    border-radius: 12px; padding: 16px 24px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px; margin-bottom: 16px;
+}
+.pf-item { text-align: center; }
+.pf-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 4px; }
+.pf-value { font-size: 18px; font-weight: 900; font-family: 'JetBrains Mono', monospace; color: var(--text-primary); }
+.pf-value.positive { color: var(--success); }
+.pf-value.negative { color: var(--danger); }
+.pf-sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+
 .pt-trades-list { display: flex; flex-direction: column; gap: 10px; }
 
 .pt-trade-row {
     background: var(--card-bg); border: 1px solid var(--border-subtle);
     border-radius: 10px; padding: 16px 20px;
-    display: grid; grid-template-columns: 1.2fr 0.8fr 0.8fr 0.8fr 0.8fr 0.6fr;
-    align-items: center; gap: 12px;
+    display: grid; grid-template-columns: 1.2fr 0.7fr 0.7fr 0.8fr 0.7fr 0.7fr 0.5fr;
+    align-items: center; gap: 10px;
     cursor: pointer; transition: all 0.2s;
 }
 .pt-trade-row:hover { border-color: var(--accent-blue); box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
@@ -270,6 +287,13 @@ function renderTradeRow(t, isOpen) {
         const livePnlSign = liveReturn >= 0 ? '+' : '';
         const currentPrice = Number(t.current_price) || 0;
         const dayChg = Number(t.day_change_pct) || 0;
+        const qty = Number(t.quantity) || 0;
+        const invested = Number(t.invested_amount) || 0;
+        const livePnlAmt = Number(t.live_pnl) || 0;
+        const tgtProfit = Number(t.target_profit_amount) || 0;
+        const slLoss = Number(t.sl_loss_amount) || 0;
+        const tgtPct = Number(t.target_pct) || 0;
+        const slPct = Number(t.sl_pct) || 0;
         // P0-10: ID assigned for DOM diffing
         return `<div class="pt-trade-row" id="trade-row-${t.symbol}" onclick="window.location.href='/symbol/' + encodeURIComponent(('${t.symbol}' || '').toUpperCase())">
             <div>
@@ -278,9 +302,9 @@ function renderTradeRow(t, isOpen) {
                 <div class="pt-badges" style="margin-top:4px">${badges.join('')}${latencyBadge}</div>
             </div>
             <div>
-                <div class="pt-trade-meta-label">Entry</div>
+                <div class="pt-trade-meta-label">Entry / Qty</div>
                 <div class="pt-trade-meta">₹${entryPrice.toFixed(2)}</div>
-                <div class="pt-timestamp">${entryDisplay}</div>
+                <div style="font-size:10px;color:var(--text-muted)">${qty} qty • ₹${invested.toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">LTP</div>
@@ -288,13 +312,19 @@ function renderTradeRow(t, isOpen) {
                 <div class="live-day-chg" style="font-size:10px;color:${dayChg >= 0 ? 'var(--success)' : 'var(--danger)'}">${dayChg ? (dayChg >= 0 ? '+' : '') + dayChg.toFixed(1) + '% today' : ''}</div>
             </div>
             <div>
-                <div class="pt-trade-meta-label">Live P&L</div>
+                <div class="pt-trade-meta-label">P&L</div>
                 <div class="pt-pnl live-pnl ${livePnlClass}" style="font-size:14px;font-weight:700">${currentPrice ? livePnlSign + liveReturn.toFixed(1) + '%' : '—'}</div>
+                <div class="live-pnl-amt" style="font-size:11px;font-weight:600;color:${livePnlAmt >= 0 ? 'var(--success)' : 'var(--danger)'}">${livePnlAmt ? (livePnlAmt >= 0 ? '+' : '') + '₹' + Math.abs(livePnlAmt).toLocaleString('en-IN', {maximumFractionDigits:0}) : ''}</div>
             </div>
             <div>
-                <div class="pt-trade-meta-label">Target / Stop</div>
-                <div style="font-size:11px;color:var(--success)">₹${Number(t.target_price||0).toFixed(0)}</div>
-                <div style="font-size:11px;color:var(--danger)">₹${Number(t.stop_loss||0).toFixed(0)}</div>
+                <div class="pt-trade-meta-label">Target</div>
+                <div style="font-size:11px;color:var(--success)">₹${Number(t.target_price||0).toFixed(0)} (${tgtPct >= 0 ? '+' : ''}${tgtPct.toFixed(1)}%)</div>
+                <div style="font-size:10px;color:var(--success);opacity:0.7">+₹${tgtProfit.toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">StopLoss</div>
+                <div style="font-size:11px;color:var(--danger)">₹${Number(t.stop_loss||0).toFixed(0)} (${slPct.toFixed(1)}%)</div>
+                <div style="font-size:10px;color:var(--danger);opacity:0.7">-₹${slLoss.toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">Score</div>
@@ -303,6 +333,9 @@ function renderTradeRow(t, isOpen) {
         </div>`;
     } else {
         const duration = fmtDuration(t.entry_time || t.entry_date, t.exit_time || t.exit_date);
+        const qty = Number(t.quantity) || 0;
+        const invested = Number(t.invested_amount) || 0;
+        const realizedPnl = Number(t.realized_pnl) || 0;
         return `<div class="pt-trade-row" onclick="window.location.href='/symbol/' + encodeURIComponent(('${t.symbol}' || '').toUpperCase())">
             <div>
                 <div class="pt-trade-sym">${t.symbol}</div>
@@ -316,11 +349,17 @@ function renderTradeRow(t, isOpen) {
             <div>
                 <div class="pt-trade-meta-label">P&L</div>
                 <div class="pt-pnl ${pnlClass}">${pnlSign}${returnPct.toFixed(1)}%</div>
+                <div style="font-size:11px;font-weight:600;color:${realizedPnl >= 0 ? 'var(--success)' : 'var(--danger)'}">${realizedPnl >= 0 ? '+' : ''}₹${Math.abs(realizedPnl).toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
+            </div>
+            <div>
+                <div class="pt-trade-meta-label">Invested</div>
+                <div class="pt-trade-meta">${qty} qty • ₹${invested.toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
+                <div class="pt-timestamp">${entryDisplay}</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">Duration</div>
                 <div class="pt-trade-meta">${duration || (t.days_held||0)+'d'}</div>
-                <div class="pt-timestamp">${entryDisplay} → ${exitDisplay}</div>
+                <div class="pt-timestamp">${exitDisplay}</div>
             </div>
             <div>
                 <div class="pt-trade-meta-label">Alpha</div>
@@ -354,6 +393,44 @@ function renderStats(stats) {
         <div class="pt-stat"><div class="pt-stat-label">Expectancy</div><div class="pt-stat-value ${Number(stats.expectancy||0) >= 0 ? 'positive' : 'negative'}">${Number(stats.expectancy||0).toFixed(2)}%</div></div>
         <div class="pt-stat"><div class="pt-stat-label">Avg Days</div><div class="pt-stat-value">${Number(stats.avg_days_held||0).toFixed(0)}</div></div>
         <div class="pt-stat"><div class="pt-stat-label">Max DD</div><div class="pt-stat-value negative">${Number(stats.max_drawdown_pct||0).toFixed(1)}%</div></div>
+    `;
+}
+
+function renderPortfolioBanner(pf) {
+    const banner = document.getElementById('portfolioBanner');
+    if (!pf || pf.open_positions === 0) {
+        banner.style.display = 'none';
+        return;
+    }
+    banner.style.display = 'grid';
+    const pnlClass = pf.total_pnl >= 0 ? 'positive' : 'negative';
+    const pnlSign = pf.total_pnl >= 0 ? '+' : '';
+    banner.innerHTML = `
+        <div class="pf-item">
+            <div class="pf-label">Open Positions</div>
+            <div class="pf-value">${pf.open_positions}</div>
+        </div>
+        <div class="pf-item">
+            <div class="pf-label">Total Invested</div>
+            <div class="pf-value">₹${Number(pf.total_invested).toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
+        </div>
+        <div class="pf-item">
+            <div class="pf-label">Current Value</div>
+            <div class="pf-value">₹${Number(pf.total_current_value).toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
+        </div>
+        <div class="pf-item">
+            <div class="pf-label">Total P&L</div>
+            <div class="pf-value ${pnlClass}">${pnlSign}₹${Math.abs(pf.total_pnl).toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
+            <div class="pf-sub ${pnlClass}">${pnlSign}${Number(pf.total_pnl_pct).toFixed(1)}%</div>
+        </div>
+        <div class="pf-item">
+            <div class="pf-label">Target Profit</div>
+            <div class="pf-value positive">+₹${Number(pf.total_target_profit).toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
+        </div>
+        <div class="pf-item">
+            <div class="pf-label">Max Risk (SL)</div>
+            <div class="pf-value negative">-₹${Number(pf.total_sl_risk).toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
+        </div>
     `;
 }
 
@@ -425,6 +502,11 @@ async function pollPaperTrades() {
         // Render engine banner
         renderEngineBanner(data.engine);
 
+        // Render portfolio summary
+        if (data.portfolio && data.portfolio.open_positions > 0) {
+            renderPortfolioBanner(data.portfolio);
+        }
+
         // P0-5: Stats Guard
         if (data.stats && data.stats.ok) {
             renderStats(data.stats);
@@ -481,6 +563,7 @@ async function pollPaperTrades() {
                 const currentPrice = Number(t.current_price) || 0;
                 const liveReturn = Number(t.live_return_pct) || 0;
                 const dayChg = Number(t.day_change_pct) || 0;
+                const livePnlAmt = Number(t.live_pnl) || 0;
 
                 const ltpEl = row.querySelector('.live-ltp');
                 if (ltpEl) {
@@ -498,6 +581,13 @@ async function pollPaperTrades() {
                 if (pnlEl) {
                     pnlEl.className = `pt-pnl live-pnl ${liveReturn >= 0 ? 'positive' : 'negative'}`;
                     pnlEl.textContent = currentPrice ? (liveReturn >= 0 ? '+' : '') + liveReturn.toFixed(1) + '%' : '—';
+                }
+
+                // Update P/L amount in ₹
+                const pnlAmtEl = row.querySelector('.live-pnl-amt');
+                if (pnlAmtEl) {
+                    pnlAmtEl.style.color = livePnlAmt >= 0 ? 'var(--success)' : 'var(--danger)';
+                    pnlAmtEl.textContent = livePnlAmt ? (livePnlAmt >= 0 ? '+' : '') + '₹' + Math.abs(livePnlAmt).toLocaleString('en-IN', {maximumFractionDigits:0}) : '';
                 }
             }
         }

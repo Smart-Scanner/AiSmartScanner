@@ -98,14 +98,14 @@ USE_UNIVERSE_ENGINE = os.getenv("USE_UNIVERSE_ENGINE", "0") == "1"
 # Scan Engine
 AUTO_SCAN_ENABLED_DEFAULT = os.getenv("AUTO_SCAN_ENABLED_DEFAULT", "0") == "1"
 SCAN_BATCH_SIZE = int(os.getenv("SCAN_BATCH_SIZE", "50"))
-MAX_SCAN_WORKERS = min(int(os.getenv("MAX_SCAN_WORKERS", str(2 * _multiplier))), 2 * _multiplier)
+MAX_SCAN_WORKERS = int(os.getenv("MAX_SCAN_WORKERS", "6"))  # 6 parallel workers
 PROGRESSIVE_PUBLISH_INTERVAL = int(os.getenv("PROGRESSIVE_PUBLISH_INTERVAL", "25"))
 
 # Universe Eligibility Filters (Turnover = primary, Volume = secondary)
-UNIVERSE_MIN_MCAP_CR = float(os.getenv("UNIVERSE_MIN_MCAP_CR", "1500"))
-UNIVERSE_MIN_AVG_TURNOVER_CR = float(os.getenv("UNIVERSE_MIN_AVG_TURNOVER_CR", "5"))
-UNIVERSE_MIN_AVG_VOLUME = int(os.getenv("UNIVERSE_MIN_AVG_VOLUME", "100000"))
-UNIVERSE_MIN_PRICE = float(os.getenv("UNIVERSE_MIN_PRICE", "20"))
+UNIVERSE_MIN_MCAP_CR = float(os.getenv("UNIVERSE_MIN_MCAP_CR", "1000"))
+UNIVERSE_MIN_AVG_TURNOVER_CR = float(os.getenv("UNIVERSE_MIN_AVG_TURNOVER_CR", "10"))
+UNIVERSE_MIN_AVG_VOLUME = int(os.getenv("UNIVERSE_MIN_AVG_VOLUME", "10000"))
+UNIVERSE_MIN_PRICE = float(os.getenv("UNIVERSE_MIN_PRICE", "50"))
 UNIVERSE_MIN_DATA_COVERAGE = float(os.getenv("UNIVERSE_MIN_DATA_COVERAGE", "0.90"))
 UNIVERSE_MIN_LISTING_DAYS = int(os.getenv("UNIVERSE_MIN_LISTING_DAYS", "180"))  # IPO age filter
 
@@ -129,6 +129,16 @@ UNIVERSE_REBUILD_MINUTE = 30
 
 # Performance Alerting
 SCAN_DURATION_ALERT_MINUTES = int(os.getenv("SCAN_DURATION_ALERT_MINUTES", "20"))
+
+# ═══════════════════════════════════════════════════════════════
+# Telegram Alerts (Paper Trade Notifications)
+# ═══════════════════════════════════════════════════════════════
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_ENABLED = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+
+# Fyers OAuth
+FYERS_REDIRECT_URI = os.getenv("FYERS_REDIRECT_URI", "https://www.aismartscan.in/")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -172,11 +182,11 @@ BASELINE_CONFIG = {
     "BP_TARGET_PCT": 10.0,
     # Phase 5.5: Universe Engine
     "SCAN_BATCH_SIZE": 50,
-    "MAX_SCAN_WORKERS": 2,
-    "UNIVERSE_MIN_MCAP_CR": 1500,
-    "UNIVERSE_MIN_AVG_TURNOVER_CR": 5,
-    "UNIVERSE_MIN_AVG_VOLUME": 100000,
-    "UNIVERSE_MIN_PRICE": 20,
+    "MAX_SCAN_WORKERS": 6,
+    "UNIVERSE_MIN_MCAP_CR": 1000,
+    "UNIVERSE_MIN_AVG_TURNOVER_CR": 10,
+    "UNIVERSE_MIN_AVG_VOLUME": 10000,
+    "UNIVERSE_MIN_PRICE": 50,
     "SCAN_DURATION_ALERT_MINUTES": 20,
     "UNIVERSE_MIN_LISTING_DAYS": 180,
     "MASTER_SYNC_DAILY_BATCH_SIZE": 500,

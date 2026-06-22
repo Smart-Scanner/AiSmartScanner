@@ -1498,6 +1498,42 @@ def _run_init_db_logic():
                 except Exception as exc:
                     log.warning("Release 4: Execution Engine schema migration failed (non-fatal): %s", exc)
 
+                # ── Phase 5.7: Immutable First Analysis Lock ─────────────
+                try:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS recommendation_history (
+                            id SERIAL PRIMARY KEY,
+                            symbol TEXT NOT NULL,
+                            scan_id TEXT,
+                            version INTEGER DEFAULT 1,
+                            entry_low REAL,
+                            entry_high REAL,
+                            stop_loss REAL,
+                            target_price REAL,
+                            target1 REAL,
+                            target2 REAL,
+                            target3 REAL,
+                            risk_reward REAL,
+                            score INTEGER DEFAULT 0,
+                            grade TEXT DEFAULT '',
+                            confidence_score REAL DEFAULT 0,
+                            risk_score REAL DEFAULT 0,
+                            technical_score REAL DEFAULT 0,
+                            fundamental_score REAL DEFAULT 0,
+                            price_at_analysis REAL,
+                            analysis_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            is_first_analysis BOOLEAN DEFAULT FALSE,
+                            change_reason TEXT,
+                            data_snapshot JSONB,
+                            UNIQUE(symbol, version)
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_rh_symbol ON recommendation_history(symbol);
+                        CREATE INDEX IF NOT EXISTS idx_rh_first ON recommendation_history(symbol) WHERE is_first_analysis = TRUE;
+                    """)
+                    log.info("Phase 5.7: recommendation_history table verified")
+                except Exception as exc:
+                    log.warning("Phase 5.7: recommendation_history migration failed (non-fatal): %s", exc)
+
                 log.info("PostgreSQL tables checked/created.")
             finally:
                 conn.close()
@@ -6772,3 +6808,112 @@ def set_historical_cache(symbol_token: str, exchange: str, timeframe: str, paylo
     except Exception as e:
         log.error("Failed to set historical_cache for %s: %s", symbol_token, e)
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 5.7: Immutable First Analysis Lock
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_first_analysis(symbol: str) -> dict:
+    """Get the locked first analysis for a symbol. Returns None if not yet analysed."""
+    try:
+        row = execute_db(
+            "SELECT * FROM recommendation_history WHERE symbol = ? AND is_first_analysis = TRUE LIMIT 1",
+            (symbol,), fetch="one"
+        )
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def save_first_analysis(symbol: str, analysis_data: dict, scan_id: str = None):
+    """
+    Lock the first analysis for a symbol. This NEVER gets overwritten.
+    Called only when get_first_analysis() returns None.
+    """
+    try:
+        import json as _json
+        execute_db(
+            """INSERT INTO recommendation_history
+               (symbol, scan_id, version, entry_low, entry_high, stop_loss, target_price,
+                target1, target2, target3, risk_reward, score, grade,
+                confidence_score, risk_score, technical_score, fundamental_score,
+                price_at_analysis, is_first_analysis, data_snapshot)
+               VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?)
+               ON CONFLICT (symbol, version) DO NOTHING""",
+            (
+                symbol, scan_id,
+                analysis_data.get("entry_low"), analysis_data.get("entry_high"),
+                analysis_data.get("stop_loss"), analysis_data.get("target_price"),
+                analysis_data.get("target1"), analysis_data.get("target2"),
+                analysis_data.get("target3"),
+                analysis_data.get("risk_reward", 0),
+                analysis_data.get("score", 0), analysis_data.get("grade", ""),
+                analysis_data.get("confidence_score", 0),
+                analysis_data.get("risk_score", 0),
+                analysis_data.get("technical_score", 0),
+                analysis_data.get("fundamental_score", 0),
+                analysis_data.get("price", analysis_data.get("close", 0)),
+                _json.dumps(analysis_data, default=str),
+            )
+        )
+        log.info("[FIRST_ANALYSIS] Locked for %s (score=%s, grade=%s)",
+                 symbol, analysis_data.get("score"), analysis_data.get("grade"))
+    except Exception as exc:
+        log.warning("[FIRST_ANALYSIS] Save failed for %s: %s", symbol, exc)
+
+
+def save_rescan_analysis(symbol: str, analysis_data: dict, scan_id: str = None,
+                          change_reason: str = None):
+    """
+    Store a rescan result as a new version. First analysis remains untouched.
+    """
+    try:
+        import json as _json
+        # Get next version number
+        row = execute_db(
+            "SELECT COALESCE(MAX(version), 0) as max_ver FROM recommendation_history WHERE symbol = ?",
+            (symbol,), fetch="one"
+        )
+        next_version = (row.get("max_ver", 0) if row else 0) + 1
+
+        execute_db(
+            """INSERT INTO recommendation_history
+               (symbol, scan_id, version, entry_low, entry_high, stop_loss, target_price,
+                target1, target2, target3, risk_reward, score, grade,
+                confidence_score, risk_score, technical_score, fundamental_score,
+                price_at_analysis, is_first_analysis, change_reason, data_snapshot)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?)
+               ON CONFLICT (symbol, version) DO NOTHING""",
+            (
+                symbol, scan_id, next_version,
+                analysis_data.get("entry_low"), analysis_data.get("entry_high"),
+                analysis_data.get("stop_loss"), analysis_data.get("target_price"),
+                analysis_data.get("target1"), analysis_data.get("target2"),
+                analysis_data.get("target3"),
+                analysis_data.get("risk_reward", 0),
+                analysis_data.get("score", 0), analysis_data.get("grade", ""),
+                analysis_data.get("confidence_score", 0),
+                analysis_data.get("risk_score", 0),
+                analysis_data.get("technical_score", 0),
+                analysis_data.get("fundamental_score", 0),
+                analysis_data.get("price", analysis_data.get("close", 0)),
+                change_reason,
+                _json.dumps(analysis_data, default=str),
+            )
+        )
+        log.info("[RESCAN_ANALYSIS] Saved version %d for %s (reason=%s)",
+                 next_version, symbol, change_reason)
+    except Exception as exc:
+        log.warning("[RESCAN_ANALYSIS] Save failed for %s: %s", symbol, exc)
+
+
+def get_analysis_history(symbol: str) -> list:
+    """Get all analysis versions for a symbol, ordered by version."""
+    try:
+        rows = execute_db(
+            "SELECT * FROM recommendation_history WHERE symbol = ? ORDER BY version ASC",
+            (symbol,), fetch="all"
+        )
+        return [dict(r) for r in rows] if rows else []
+    except Exception:
+        return []

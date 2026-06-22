@@ -265,18 +265,22 @@ def build_eligible_universe() -> dict:
     """
     Build eligible_universe directly from enriched universe_catalog.
     
-    Filters (user-specified thresholds):
+    Filters (user-specified thresholds from config.py):
     - instrument_type = 'EQ' (no ETF/NAV/MF)
     - price >= 50 (no penny stocks)
     - avg_volume_20d >= 10000 (minimum liquidity)
+    - market_cap >= 1000 Cr (skip micro-caps)
     
     Uses db.save_eligible_universe() which matches the existing
     eligible_universe schema: symbol, market_cap_cr, avg_volume_20d,
     avg_turnover_20d, price, eligibility_reason, universe_version, generated_at
     """
     import db
+    from config import (UNIVERSE_MIN_PRICE, UNIVERSE_MIN_AVG_VOLUME,
+                        UNIVERSE_MIN_MCAP_CR)
 
-    log.info("[Bhavcopy] Building eligible universe with filters...")
+    log.info("[Bhavcopy] Building eligible universe (price>=%s, vol>=%s, mcap>=%sCr)...",
+             UNIVERSE_MIN_PRICE, UNIVERSE_MIN_AVG_VOLUME, UNIVERSE_MIN_MCAP_CR)
 
     # Query eligible stocks from universe_catalog
     eligible_rows = db.execute_db(
@@ -285,9 +289,11 @@ def build_eligible_universe() -> dict:
            FROM universe_catalog 
            WHERE is_active = TRUE 
              AND instrument_type = 'EQ'
-             AND price >= 50
-             AND avg_volume_20d >= 10000
-           ORDER BY avg_turnover_20d DESC""",
+             AND COALESCE(price, 0) >= ?
+             AND COALESCE(avg_volume_20d, 0) >= ?
+             AND COALESCE(market_cap, 0) >= ?
+           ORDER BY COALESCE(market_cap, 0) DESC""",
+        (UNIVERSE_MIN_PRICE, UNIVERSE_MIN_AVG_VOLUME, UNIVERSE_MIN_MCAP_CR),
         fetch="all"
     )
 
@@ -344,11 +350,326 @@ def build_eligible_universe() -> dict:
     }
 
 
+# ─── Market Cap + Fundamentals Enrichment (Dhan.co — FREE, no API key) ────────
+
+DHAN_SCANX_API = "https://ow-scanx-analytics.dhan.co/customscan/v2/fetchdt"
+
+DHAN_FIELDS = [
+    "Sym", "DispSym", "Mcap", "Pe", "Pb", "Roe", "ROCE", "Eps", "Ltp",
+    "Volume", "Exch", "Ind_Pe", "DivYeild", "High1Yr", "Low1Yr",
+    "DayRSI14CurrentCandle", "DaySMA50CurrentCandle", "DaySMA200CurrentCandle",
+    "Isin", "Seg", "Sid", "PricePerchng1mon", "PricePerchng1year",
+    "Revenue", "FreeCashFlow", "NetProfitMargin",
+]
+
+DHAN_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Content-Type": "application/json",
+    "Origin": "https://dhan.co",
+    "Referer": "https://dhan.co/all-stocks-list/",
+}
+
+
+def _fetch_dhan_exchange(exchange: str, max_pages: int = 100) -> list:
+    """
+    Fetch ALL stocks for given exchange (NSE/BSE) from Dhan scanx API.
+    Returns list of dicts with field names mapped.
+    """
+    import requests
+
+    all_stocks = []
+    page = 1
+
+    while page <= max_pages:
+        payload = {
+            "sort": "Mcap",
+            "sorder": "desc",
+            "params": [
+                {"field": "OgInst", "op": "", "val": "ES"},
+                {"field": "Exch", "op": "", "val": exchange},
+            ],
+            "fields": DHAN_FIELDS,
+            "pgno": page,
+        }
+
+        try:
+            resp = requests.post(
+                DHAN_SCANX_API, headers=DHAN_HEADERS,
+                json=payload, timeout=15
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            items = data.get("data", [])
+            total_pages = data.get("tot_pg", 0)
+            total_records = data.get("tot_rec", 0)
+
+            if not items:
+                break
+
+            # Items are arrays — map to field names
+            for item in items:
+                if isinstance(item, list) and len(item) == len(DHAN_FIELDS):
+                    record = dict(zip(DHAN_FIELDS, item))
+                    record["_exchange"] = exchange
+                    all_stocks.append(record)
+                elif isinstance(item, dict):
+                    item["_exchange"] = exchange
+                    all_stocks.append(item)
+
+            if page % 10 == 0:
+                log.info("[Dhan] %s page %d/%d — %d stocks so far",
+                         exchange, page, total_pages, len(all_stocks))
+
+            if page >= total_pages:
+                break
+
+            page += 1
+            time.sleep(0.3)  # Be nice to Dhan servers
+
+        except Exception as exc:
+            log.warning("[Dhan] %s page %d failed: %s", exchange, page, exc)
+            break
+
+    log.info("[Dhan] %s: fetched %d stocks in %d pages", exchange, len(all_stocks), page)
+    return all_stocks
+
+
+def _fetch_dhan_ssr_fallback() -> list:
+    """
+    Fallback: Parse __NEXT_DATA__ from Dhan SSR page.
+    Only gets top 50 stocks (by market cap) but always works.
+    """
+    import requests
+    from bs4 import BeautifulSoup
+    import json as _json
+
+    log.info("[Dhan] Using SSR fallback (top 50 stocks)...")
+
+    try:
+        resp = requests.get(
+            "https://dhan.co/all-stocks-list/",
+            headers={"User-Agent": DHAN_HEADERS["User-Agent"]},
+            timeout=30
+        )
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        script = soup.find("script", id="__NEXT_DATA__")
+        if not script:
+            log.error("[Dhan] SSR fallback: __NEXT_DATA__ not found")
+            return []
+
+        data = _json.loads(script.string)
+        stocks = data.get("props", {}).get("pageProps", {}).get("listData", {}).get("data", [])
+
+        log.info("[Dhan] SSR fallback: got %d stocks", len(stocks))
+
+        # SSR data is already dicts with proper field names
+        for s in stocks:
+            s["_exchange"] = s.get("Exch", "NSE")
+
+        return stocks
+    except Exception as exc:
+        log.error("[Dhan] SSR fallback failed: %s", exc)
+        return []
+
+
+def enrich_market_cap_batch(max_symbols: int = 5000) -> dict:
+    """
+    Fetch market cap + fundamentals from Dhan.co for ALL NSE+BSE stocks.
+
+    Strategy:
+    1. Try Dhan POST API (paginated, all stocks) — works on Railway
+    2. Fallback to __NEXT_DATA__ SSR (top 50 stocks) — always works
+    3. Fallback to yfinance (slow but reliable)
+
+    Deduplication: NSE has priority. If same ISIN exists on NSE+BSE,
+    NSE data is kept. BSE-only stocks are added separately.
+
+    Data available per stock:
+    - Market Cap (Cr), PE, PB, ROE, ROCE, EPS
+    - 52W High/Low, RSI, 50/200 DMA
+    - Revenue, Free Cash Flow, Net Profit Margin
+    - Dividend Yield, Industry PE
+    """
+    import db
+
+    log.info("[MarketCap] Starting Dhan.co enrichment (NSE+BSE, NSE priority)...")
+
+    # ── Step 1: Try Dhan POST API (all stocks, paginated) ──
+    nse_stocks = _fetch_dhan_exchange("NSE")
+    bse_stocks = []
+
+    if nse_stocks:
+        # Also fetch BSE
+        bse_stocks = _fetch_dhan_exchange("BSE")
+        log.info("[MarketCap] Dhan API: NSE=%d, BSE=%d", len(nse_stocks), len(bse_stocks))
+    else:
+        # API failed (DNS/network) — try SSR fallback
+        log.warning("[MarketCap] Dhan API failed, trying SSR fallback...")
+        nse_stocks = _fetch_dhan_ssr_fallback()
+
+        if not nse_stocks:
+            log.warning("[MarketCap] SSR also failed, using yfinance fallback...")
+            return _enrich_mcap_yfinance_fallback(min(max_symbols, 200))
+
+    # ── Step 2: Deduplicate NSE+BSE (NSE priority by ISIN) ──
+    dhan_data = {}  # sym -> record
+
+    # NSE first (priority)
+    seen_isins = set()
+    for stock in nse_stocks:
+        sym = stock.get("Sym", "")
+        isin = stock.get("Isin", "")
+        mcap = stock.get("Mcap", 0) or 0
+
+        if sym and mcap > 0:
+            dhan_data[sym.upper()] = stock
+            if isin:
+                seen_isins.add(isin)
+
+    # BSE: only add if ISIN not already seen (NSE priority)
+    bse_added = 0
+    for stock in bse_stocks:
+        sym = stock.get("Sym", "")
+        isin = stock.get("Isin", "")
+        mcap = stock.get("Mcap", 0) or 0
+
+        if isin and isin in seen_isins:
+            continue  # Skip — NSE already has this stock
+
+        if sym and mcap > 0 and sym.upper() not in dhan_data:
+            dhan_data[sym.upper()] = stock
+            bse_added += 1
+            if isin:
+                seen_isins.add(isin)
+
+    log.info("[MarketCap] After dedup: %d unique stocks (NSE=%d, BSE-only=%d)",
+             len(dhan_data), len(dhan_data) - bse_added, bse_added)
+
+    if not dhan_data:
+        log.warning("[MarketCap] No data from Dhan, using yfinance fallback")
+        return _enrich_mcap_yfinance_fallback(min(max_symbols, 200))
+
+    # ── Step 3: Match with universe_catalog and update ──
+    all_catalog = db.execute_db(
+        """SELECT symbol, isin, company_name FROM universe_catalog
+           WHERE is_active = TRUE AND instrument_type = 'EQ'""",
+        fetch="all"
+    )
+
+    enriched = 0
+    for row in all_catalog:
+        symbol = row["symbol"].upper()
+        isin = (row.get("isin") or "").upper()
+
+        # Match 1: exact symbol match (fastest, most common)
+        match = dhan_data.get(symbol)
+
+        # Match 2: ISIN match (handles symbol name differences between Angel/Dhan)
+        if not match and isin:
+            for dhan_sym, dhan_stock in dhan_data.items():
+                if (dhan_stock.get("Isin") or "").upper() == isin:
+                    match = dhan_stock
+                    break
+
+        if match:
+            mcap = match.get("Mcap", 0) or 0
+            if mcap <= 0:
+                continue
+
+            try:
+                db.execute_db(
+                    """UPDATE universe_catalog SET
+                         market_cap = ?,
+                         company_name = COALESCE(NULLIF(company_name, ''), ?),
+                         last_synced_at = ?
+                       WHERE symbol = ?""",
+                    (mcap,
+                     match.get("DispSym", row["symbol"]),
+                     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                     row["symbol"])
+                )
+                enriched += 1
+            except Exception as exc:
+                log.debug("[MarketCap] Update failed for %s: %s", row["symbol"], exc)
+
+    log.info("[MarketCap] ✅ Enriched %d/%d stocks with market cap from Dhan",
+             enriched, len(all_catalog))
+
+    return {
+        "enriched": enriched,
+        "total_catalog": len(all_catalog),
+        "dhan_unique": len(dhan_data),
+        "nse_count": len(nse_stocks),
+        "bse_only": bse_added,
+        "source": "dhan_api" if len(nse_stocks) > 50 else "dhan_ssr",
+    }
+
+
+def _enrich_mcap_yfinance_fallback(max_symbols: int = 100) -> dict:
+    """Last-resort fallback: use yfinance if Dhan fails entirely."""
+    import db
+
+    log.info("[MarketCap] Using yfinance fallback for market cap...")
+
+    pending = db.execute_db(
+        """SELECT symbol FROM universe_catalog
+           WHERE is_active = TRUE
+             AND instrument_type = 'EQ'
+             AND (market_cap IS NULL OR market_cap = 0)
+           ORDER BY avg_turnover_20d DESC
+           LIMIT ?""",
+        (max_symbols,),
+        fetch="all"
+    )
+
+    if not pending:
+        return {"enriched": 0, "total_pending": 0, "source": "yfinance"}
+
+    symbols = [r["symbol"] for r in pending]
+    enriched = 0
+
+    batch_size = 20
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i:i + batch_size]
+        try:
+            import yfinance as yf
+            tickers_str = " ".join(f"{s}.NS" for s in batch)
+            tickers = yf.Tickers(tickers_str)
+
+            for sym in batch:
+                try:
+                    ticker = tickers.tickers.get(f"{sym}.NS")
+                    if not ticker:
+                        continue
+                    info = ticker.info or {}
+                    mcap = info.get("marketCap", 0) or 0
+                    if mcap > 0:
+                        mcap_cr = mcap / 1e7
+                        db.execute_db(
+                            """UPDATE universe_catalog SET
+                                 market_cap = ?, last_synced_at = ?
+                               WHERE symbol = ?""",
+                            (mcap_cr, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sym)
+                        )
+                        enriched += 1
+                except Exception:
+                    pass
+            time.sleep(1)
+        except Exception:
+            pass
+
+    log.info("[MarketCap] yfinance fallback: enriched %d/%d", enriched, len(symbols))
+    return {"enriched": enriched, "total_pending": len(symbols), "source": "yfinance"}
+
+
 # ─── Main Entry Point (called from boot sequence) ───────────────────────────
 
 def run_bhavcopy_pipeline() -> dict:
     """
-    Complete pipeline: Universe Sync → Fetch bhavcopy → Enrich catalog → Build eligible universe.
+    Complete pipeline: Universe Sync → Fetch bhavcopy → Market Cap → Build eligible universe.
     Called at boot and daily at 18:30 IST.
     """
     log.info("[Bhavcopy] ═══ Starting Bhavcopy Pipeline ═══")
@@ -367,11 +688,22 @@ def run_bhavcopy_pipeline() -> dict:
         log.error("[Bhavcopy] Universe Sync failed: %s", exc)
         results["universe_sync"] = {"error": str(exc)}
 
-    # Step 1: Enrich from bhavcopy
+    # Step 1: Enrich from bhavcopy (price, volume, turnover — FREE, no rate limit)
     enrichment = enrich_universe_from_bhavcopy()
     results["enrichment"] = enrichment
 
-    # Step 2: Build eligible universe
+    # Step 1.5: Market cap enrichment via yfinance (batched, background-friendly)
+    # Only runs if there are stocks without market cap
+    try:
+        mcap_result = enrich_market_cap_batch(max_symbols=300)
+        results["market_cap"] = mcap_result
+        log.info("[Bhavcopy] Step 1.5: Market cap enrichment — %d stocks updated",
+                 mcap_result.get("enriched", 0))
+    except Exception as exc:
+        log.warning("[Bhavcopy] Market cap enrichment failed (non-fatal): %s", exc)
+        results["market_cap"] = {"error": str(exc)}
+
+    # Step 2: Build eligible universe (with all filters applied)
     universe = build_eligible_universe()
     results["universe"] = universe
 
@@ -379,8 +711,10 @@ def run_bhavcopy_pipeline() -> dict:
     results["duration_sec"] = round(duration, 1)
 
     log.info("[Bhavcopy] ═══ Pipeline Complete in %.1fs ═══", duration)
-    log.info("[Bhavcopy]   Enriched: %d | Eligible: %d",
+    log.info("[Bhavcopy]   Enriched: %d | MarketCap: %d | Eligible: %d",
              enrichment.get("nse_enriched", 0),
+             results.get("market_cap", {}).get("enriched", 0),
              universe.get("eligible_count", 0))
 
     return results
+

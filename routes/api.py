@@ -273,7 +273,7 @@ def scan_status():
     result = cache_layer.get_status_cache(_compute)
 
     # Phase 5.5: Inject batch-level progress when universe engine is active
-    from config import USE_UNIVERSE_ENGINE
+    from config import USE_UNIVERSE_ENGINE, MAX_SCAN_WORKERS
     if USE_UNIVERSE_ENGINE and result.get("scanning"):
         try:
             scan_id = db.get_meta("current_scan_id")
@@ -287,9 +287,20 @@ def scan_status():
                     "batch_progress": batch_progress.get("progress", 0),
                     "current_batch": batch_progress.get("current_batch", 0),
                     "total_batches": batch_progress.get("total_batches", 0),
-                    "worker_count": 2,
+                    "worker_count": MAX_SCAN_WORKERS,
                     "universe_version": batch_progress.get("universe_version", ""),
                 })
+        except Exception:
+            pass
+    
+    # Inject professional progress message
+    if result.get("scanning"):
+        try:
+            progress_msg = db.get_meta("scan_progress_message", "")
+            if progress_msg:
+                if isinstance(result, dict):
+                    result = dict(result)
+                result["progress_message"] = progress_msg
         except Exception:
             pass
 
@@ -590,6 +601,39 @@ def stock_data(symbol):
         }
         result["data_freshness_seconds"] = 0
         result["data_unavailable"] = _data_unavailable
+
+        # Phase 5.7: Immutable First Analysis + History
+        try:
+            first_analysis = db.get_first_analysis(clean)
+            if first_analysis:
+                result["first_analysis"] = {
+                    "entry_low": first_analysis.get("entry_low"),
+                    "entry_high": first_analysis.get("entry_high"),
+                    "stop_loss": first_analysis.get("stop_loss"),
+                    "target_price": first_analysis.get("target_price"),
+                    "risk_reward": first_analysis.get("risk_reward"),
+                    "score": first_analysis.get("score"),
+                    "grade": first_analysis.get("grade"),
+                    "confidence_score": first_analysis.get("confidence_score"),
+                    "risk_score": first_analysis.get("risk_score"),
+                    "price_at_analysis": first_analysis.get("price_at_analysis"),
+                    "analysis_date": str(first_analysis.get("analysis_timestamp", "")),
+                    "locked": True,
+                }
+            analysis_history = db.get_analysis_history(clean)
+            if analysis_history:
+                result["analysis_history"] = [{
+                    "version": h.get("version"),
+                    "score": h.get("score"),
+                    "grade": h.get("grade"),
+                    "price_at_analysis": h.get("price_at_analysis"),
+                    "risk_reward": h.get("risk_reward"),
+                    "analysis_date": str(h.get("analysis_timestamp", "")),
+                    "is_first": h.get("is_first_analysis", False),
+                    "change_reason": h.get("change_reason"),
+                } for h in analysis_history]
+        except Exception:
+            pass
 
         resp = make_response(jsonify(sanitize_nan(result)))
         resp.headers["Cache-Control"] = "max-age=900"
@@ -1152,24 +1196,60 @@ def get_market_overview():
 
 @api_bp.route("/api/paper-trades")
 def get_paper_trades():
-    """Return all paper trades (open + closed) with live P&L and stats."""
+    """Return all paper trades (open + closed) with live P&L, stats, and portfolio totals."""
     try:
         limit = request.args.get("limit", 200, type=int)
         trades = db.get_all_paper_trades(limit)
 
-        # Inject live P&L for open positions from WebSocket cache
+        # Portfolio-level tracking
+        total_invested = 0
+        total_current_value = 0
+        total_pnl = 0
+        total_target_profit = 0
+        total_sl_risk = 0
+
+        # Inject live P&L + calculated fields for all trades
         for trade in trades:
+            entry = trade.get("entry_price", 0) or 0
+            qty = trade.get("quantity", 0) or 0
+            target = trade.get("target_price", 0) or 0
+            sl = trade.get("stop_loss", 0) or 0
+
+            # Always calculate static fields
+            trade["invested_amount"] = round(entry * qty, 2) if entry and qty else 0
+            trade["target_profit_amount"] = round((target - entry) * qty, 2) if target and entry and qty else 0
+            trade["sl_loss_amount"] = round((entry - sl) * qty, 2) if sl and entry and qty else 0
+            trade["target_pct"] = round(((target - entry) / entry) * 100, 1) if target and entry else 0
+            trade["sl_pct"] = round(((sl - entry) / entry) * 100, 1) if sl and entry else 0
+
             if trade.get("status") == "OPEN":
                 live = live_feed.get_live_price(trade.get("symbol", ""))
+                ltp = 0
                 if live:
-                    entry = trade.get("entry_price", 0)
                     ltp = live.get("ltp", 0)
-                    if entry and ltp:
-                        trade["current_price"] = ltp
-                        trade["live_return_pct"] = round(((ltp - entry) / entry) * 100, 2)
-                        qty = trade.get("quantity", 0)
-                        trade["live_pnl"] = round((ltp - entry) * qty, 2) if qty else 0
-                        trade["day_change_pct"] = live.get("change_pct", 0)
+                    trade["current_price"] = ltp
+                    trade["day_change_pct"] = live.get("change_pct", 0)
+
+                if entry and ltp:
+                    trade["live_return_pct"] = round(((ltp - entry) / entry) * 100, 2)
+                    trade["live_pnl"] = round((ltp - entry) * qty, 2) if qty else 0
+                    trade["current_value"] = round(ltp * qty, 2) if qty else 0
+                else:
+                    trade["live_return_pct"] = 0
+                    trade["live_pnl"] = 0
+                    trade["current_value"] = trade["invested_amount"]
+
+                # Accumulate portfolio totals (open trades only)
+                total_invested += trade["invested_amount"]
+                total_current_value += trade.get("current_value", trade["invested_amount"])
+                total_pnl += trade.get("live_pnl", 0)
+                total_target_profit += trade.get("target_profit_amount", 0)
+                total_sl_risk += trade.get("sl_loss_amount", 0)
+
+            elif trade.get("status") == "CLOSED":
+                exit_price = trade.get("exit_price", 0) or 0
+                trade["exit_value"] = round(exit_price * qty, 2) if exit_price and qty else 0
+                trade["realized_pnl"] = round((exit_price - entry) * qty, 2) if exit_price and entry and qty else 0
 
         open_count = sum(1 for t in trades if t.get("status") == "OPEN")
 
@@ -1207,6 +1287,16 @@ def get_paper_trades():
             "market_open": market_open,
             "scan_running": scan_active,
             "engine": engine_stats,
+            # Portfolio-level totals (open positions only)
+            "portfolio": {
+                "total_invested": round(total_invested, 2),
+                "total_current_value": round(total_current_value, 2),
+                "total_pnl": round(total_pnl, 2),
+                "total_pnl_pct": round((total_pnl / total_invested) * 100, 2) if total_invested > 0 else 0,
+                "total_target_profit": round(total_target_profit, 2),
+                "total_sl_risk": round(total_sl_risk, 2),
+                "open_positions": open_count,
+            },
         })
     except Exception as exc:
         return jsonify({"error": str(exc), "trades": []})

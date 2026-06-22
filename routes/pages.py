@@ -42,11 +42,17 @@ def _trial_status(user, trial_days: int) -> dict:
 @pages_bp.route("/")
 def index():
     """Smart route:
+       - ?auth_code=XXX → Fyers OAuth callback (exchanges for access_token)
        - logged out → public landing page
        - logged in + needs device verify → /auth/device/verify
        - logged in + trial/sub expired → /subscribe
        - logged in + has access → dashboard
     """
+    # ── Fyers OAuth Callback: /?auth_code=XXX&state=YYY ──────────────
+    auth_code = request.args.get("auth_code")
+    if auth_code:
+        return _handle_fyers_callback(auth_code)
+
     if not session.get("user_id"):
         plans = auth_db.list_plans(active_only=True)
         return render_template("landing.html", plans=plans, active="home")
@@ -71,6 +77,68 @@ def index():
         is_admin=bool(user["is_admin"]),
         trial_status=_trial_status(user, trial_days),
     )
+
+
+def _handle_fyers_callback(auth_code: str):
+    """Exchange Fyers auth_code for access_token and activate provider."""
+    import os
+    try:
+        from fyers_apiv3 import fyersModel
+        from config import FYERS_REDIRECT_URI
+
+        app_id = os.getenv("FYERS_APP_ID", "")
+        secret_key = os.getenv("FYERS_SECRET_KEY", "")
+
+        if not app_id or not secret_key:
+            log.error("[Fyers OAuth] FYERS_APP_ID or FYERS_SECRET_KEY not set")
+            return redirect(url_for("pages.index"))
+
+        # Exchange auth_code for access_token
+        sess = fyersModel.SessionModel(
+            client_id=app_id,
+            secret_key=secret_key,
+            redirect_uri=FYERS_REDIRECT_URI,
+            response_type="code",
+            grant_type="authorization_code",
+        )
+        sess.set_token(auth_code)
+        token_response = sess.generate_token()
+
+        if token_response and token_response.get("s") == "ok":
+            access_token = token_response["access_token"]
+            # Store in DB for persistence across restarts
+            import db
+            db.set_meta("fyers_access_token", access_token)
+            db.set_meta("fyers_token_updated_at",
+                        datetime.now(timezone.utc).isoformat())
+            log.info("[Fyers OAuth] ✅ Token generated and stored successfully")
+
+            # Hot-reload: activate provider immediately
+            try:
+                from data_provider import provider_manager
+                from fyers_provider import FyersProvider
+                config = {
+                    "APP_ID": app_id,
+                    "SECRET_KEY": secret_key,
+                    "REDIRECT_URI": FYERS_REDIRECT_URI,
+                    "ACCESS_TOKEN": access_token,
+                    "ROLE": "RESEARCH",
+                }
+                fyers_prov = FyersProvider("FYERS_1", config)
+                if fyers_prov.login():
+                    provider_manager.providers["FYERS_1"] = fyers_prov
+                    log.info("[Fyers OAuth] ✅ Provider hot-reloaded")
+            except Exception as exc:
+                log.warning("[Fyers OAuth] Hot-reload failed (non-fatal): %s", exc)
+        else:
+            log.error("[Fyers OAuth] Token exchange failed: %s", token_response)
+
+    except ImportError:
+        log.warning("[Fyers OAuth] fyers-apiv3 not installed")
+    except Exception as exc:
+        log.error("[Fyers OAuth] Callback error: %s", exc)
+
+    return redirect(url_for("pages.index"))
 
 
 # ── V2 Backward Compatibility ────────────────────────────────────────

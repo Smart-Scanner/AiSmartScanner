@@ -1339,6 +1339,17 @@ def _run_parallel_scan(context: ScanContext):
             db.save_scan_resume_state(scan_id, universe_version,
                                       total_batches, completed_batches)
 
+            # ── Progressive Save: results appear on frontend immediately ──
+            if batch_results:
+                try:
+                    db.save_results(batch_results,
+                                   meta={"last_scan": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"),
+                                         "scan_id": scan_id,
+                                         "universe_version": universe_version})
+                except Exception as prog_exc:
+                    log.warning("[%s] Progressive save failed (non-fatal): %s",
+                                correlation_id[:12], prog_exc)
+
             # Update live progress
             scan_state.set_progress(global_processed)
             update_scan_progress(scan_id, processed_count=global_processed)
@@ -1348,6 +1359,20 @@ def _run_parallel_scan(context: ScanContext):
 
             elapsed = time.monotonic() - start_time
             rate = global_processed / elapsed * 60 if elapsed > 0 else 0
+            remaining_batches = total_batches - completed_batches
+            eta_seconds = (remaining_batches * (elapsed / completed_batches)) if completed_batches > 0 else 0
+
+            # ── Professional progress message for frontend ──
+            if remaining_batches > 0:
+                eta_min = int(eta_seconds / 60)
+                eta_str = f"~{eta_min} min remaining" if eta_min >= 1 else "< 1 min remaining"
+                progress_msg = (f"Analysing {total} stocks • "
+                                f"Batch {completed_batches}/{total_batches} complete • "
+                                f"{len(all_results)} results found • {eta_str}")
+            else:
+                progress_msg = (f"Finalising analysis • {len(all_results)} stocks scored • "
+                                f"Generating report...")
+            db.set_meta("scan_progress_message", progress_msg)
 
             log.info("[%s] Batch %d/%d complete: +%d results | %d/%d total | "
                      "%.1f stocks/min | %.0fs elapsed",
@@ -1511,6 +1536,30 @@ def _persistent_scan_worker(worker_id: str, scan_id: str,
                 if df is not None and not df.empty and len(df) >= 50:
                     r = fetch_and_analyze(sym, nifty_1m, regime, ext_df=df)
                     if r:
+                        # ── Phase 5.7: Immutable First Analysis Lock ──
+                        try:
+                            first = db.get_first_analysis(sym)
+                            if first is None:
+                                # First time — lock this analysis permanently
+                                db.save_first_analysis(sym, r, scan_id=correlation_id)
+                            else:
+                                # Rescan — save as new version, overlay locked values
+                                db.save_rescan_analysis(sym, r, scan_id=correlation_id,
+                                                        change_reason="rescan")
+                                # Overlay first analysis values onto current result
+                                # so frontend always shows the original recommendation
+                                for lock_key in ("entry_low", "entry_high", "stop_loss",
+                                                 "target_price", "target1", "target2", "target3",
+                                                 "risk_reward", "score", "grade",
+                                                 "confidence_score", "risk_score"):
+                                    if first.get(lock_key) is not None:
+                                        r[lock_key] = first[lock_key]
+                                r["first_analysis_date"] = str(first.get("analysis_timestamp", ""))
+                                r["rescan_count"] = (first.get("version", 1))
+                        except Exception as fa_exc:
+                            log.debug("[%s] First analysis lock failed for %s: %s",
+                                      correlation_id[:12], sym, fa_exc)
+
                         batch_results.append(r)
                         batch_publish_buffer.append(r)
             except Exception as exc:
