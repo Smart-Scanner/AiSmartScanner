@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 import threading
 
-from db import get_historical_cache, set_historical_cache
+from db import get_historical_cache, set_historical_cache, execute_db
 from data_provider import provider_manager
 
 log = logging.getLogger("screener")
@@ -21,36 +21,12 @@ HIST_CACHE_TTL_HOURS = int(os.environ.get("HIST_CACHE_TTL_HOURS", "24"))
 def _record_provider_stat(provider_name: str):
     """Record historical_calls for the provider to satisfy Provider Utilization Audit."""
     try:
-        from db import get_pg_connection, _get_connection
-        if is_postgresql():
-            with get_pg_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute('''
-                        CREATE TABLE IF NOT EXISTS provider_stats (
-                            provider_name TEXT PRIMARY KEY,
-                            historical_calls INTEGER DEFAULT 0
-                        )
-                    ''')
-                    cursor.execute('''
-                        INSERT INTO provider_stats (provider_name, historical_calls)
-                        VALUES (%s, 1)
-                        ON CONFLICT (provider_name) DO UPDATE SET historical_calls = provider_stats.historical_calls + 1
-                    ''', (provider_name,))
-                conn.commit()
-        else:
-            with _get_connection() as conn:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS provider_stats (
-                        provider_name TEXT PRIMARY KEY,
-                        historical_calls INTEGER DEFAULT 0
-                    )
-                ''')
-                conn.execute('''
-                    INSERT INTO provider_stats (provider_name, historical_calls)
-                    VALUES (?, 1)
-                    ON CONFLICT(provider_name) DO UPDATE SET historical_calls = provider_stats.historical_calls + 1
-                ''', (provider_name,))
-                conn.commit()
+        execute_db(
+            """INSERT INTO provider_stats (provider_name, historical_calls)
+               VALUES (?, 1)
+               ON CONFLICT(provider_name) DO UPDATE SET historical_calls = provider_stats.historical_calls + 1""",
+            (provider_name,)
+        )
     except Exception as e:
         log.error(f"[HistoricalService] Failed to record provider stat: {e}")
 

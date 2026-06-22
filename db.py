@@ -1446,18 +1446,12 @@ def _run_init_db_logic():
                             payload_json JSONB NOT NULL,
                             PRIMARY KEY(symbol_token, exchange, timeframe)
                         );
-                        
-            
-            CREATE TABLE IF NOT EXISTS historical_cache (
-                symbol_token TEXT NOT NULL,
-                exchange TEXT NOT NULL,
-                timeframe TEXT NOT NULL,
-                last_refresh TIMESTAMP NOT NULL,
-                expires_at TIMESTAMP NOT NULL,
-                payload_json JSON NOT NULL,
-                PRIMARY KEY(symbol_token, exchange, timeframe)
-            );
-            
+
+                        CREATE TABLE IF NOT EXISTS provider_stats (
+                            provider_name TEXT PRIMARY KEY,
+                            historical_calls INTEGER DEFAULT 0
+                        );
+
             CREATE TABLE IF NOT EXISTS paper_orders (
                             id SERIAL PRIMARY KEY,
                             symbol TEXT NOT NULL,
@@ -1960,7 +1954,12 @@ def _init_sqlite():
                 payload_json JSON NOT NULL,
                 PRIMARY KEY(symbol_token, exchange, timeframe)
             );
-            
+
+            CREATE TABLE IF NOT EXISTS provider_stats (
+                provider_name TEXT PRIMARY KEY,
+                historical_calls INTEGER DEFAULT 0
+            );
+
             CREATE TABLE IF NOT EXISTS paper_orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL,
@@ -6714,54 +6713,60 @@ def get_chunk_run_states(scan_id: str) -> dict:
 # --- Historical Cache API ---
 def get_historical_cache(symbol_token: str, exchange: str, timeframe: str, allow_stale: bool = False):
     try:
-        if is_postgresql():
-            with get_pg_connection() as conn:
-                with conn.cursor() as cursor:
-                    if allow_stale:
-                        cursor.execute("SELECT payload_json FROM historical_cache WHERE symbol_token = %s AND exchange = %s AND timeframe = %s", (symbol_token, exchange, timeframe))
-                    else:
-                        cursor.execute("SELECT payload_json FROM historical_cache WHERE symbol_token = %s AND exchange = %s AND timeframe = %s AND expires_at > NOW()", (symbol_token, exchange, timeframe))
-                    row = cursor.fetchone()
-                    if row:
-                        return row[0]
-                    return None
+        if allow_stale:
+            row = execute_db(
+                "SELECT payload_json FROM historical_cache WHERE symbol_token = ? AND exchange = ? AND timeframe = ?",
+                (symbol_token, exchange, timeframe), fetch="one"
+            )
         else:
-            with _get_connection() as conn:
-                if allow_stale:
-                    cursor = conn.execute("SELECT payload_json FROM historical_cache WHERE symbol_token = ? AND exchange = ? AND timeframe = ?", (symbol_token, exchange, timeframe))
-                else:
-                    cursor = conn.execute("SELECT payload_json FROM historical_cache WHERE symbol_token = ? AND exchange = ? AND timeframe = ? AND expires_at > datetime('now')", (symbol_token, exchange, timeframe))
-                row = cursor.fetchone()
-                if row:
-                    import json
-                    return json.loads(row[0])
-                return None
+            # PG uses NOW(), SQLite uses datetime('now') — execute_db handles placeholder translation
+            # Use a portable approach: fetch and check expiry in Python
+            row = execute_db(
+                "SELECT payload_json, expires_at FROM historical_cache WHERE symbol_token = ? AND exchange = ? AND timeframe = ?",
+                (symbol_token, exchange, timeframe), fetch="one"
+            )
+            if row:
+                expires_at = row.get("expires_at")
+                if expires_at:
+                    from datetime import datetime as _dt
+                    try:
+                        if isinstance(expires_at, str):
+                            exp_dt = _dt.fromisoformat(expires_at.replace("Z", "+00:00").replace("+00:00", ""))
+                        else:
+                            exp_dt = expires_at  # already datetime
+                        if exp_dt < _dt.utcnow():
+                            return None  # expired
+                    except Exception:
+                        pass  # if we can't parse, treat as valid
+        if row:
+            payload = row.get("payload_json")
+            if isinstance(payload, str):
+                return json.loads(payload)
+            return payload  # already parsed (PG JSONB)
+        return None
     except Exception as e:
         log.error("Failed to get historical_cache for %s: %s", symbol_token, e)
         return None
 
 def set_historical_cache(symbol_token: str, exchange: str, timeframe: str, payload: list, ttl_hours: int = 24):
-    import json
     try:
         payload_str = json.dumps(payload)
-        if is_pg_enabled():
-            with get_pg_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute('''
-                        INSERT INTO historical_cache (symbol_token, exchange, timeframe, last_refresh, expires_at, payload_json)
-                        VALUES (%s, %s, %s, NOW(), NOW() + interval '%s hours', %s)
-                        ON CONFLICT (symbol_token, exchange, timeframe)
-                        DO UPDATE SET last_refresh = EXCLUDED.last_refresh, expires_at = EXCLUDED.expires_at, payload_json = EXCLUDED.payload_json
-                    ''', (symbol_token, exchange, timeframe, ttl_hours, payload_str))
-                conn.commit()
+        if is_postgresql():
+            execute_db(
+                """INSERT INTO historical_cache (symbol_token, exchange, timeframe, last_refresh, expires_at, payload_json)
+                   VALUES (?, ?, ?, NOW(), NOW() + interval '1 hour' * ?, ?)
+                   ON CONFLICT (symbol_token, exchange, timeframe)
+                   DO UPDATE SET last_refresh = EXCLUDED.last_refresh, expires_at = EXCLUDED.expires_at, payload_json = EXCLUDED.payload_json""",
+                (symbol_token, exchange, timeframe, ttl_hours, payload_str)
+            )
         else:
-            with _get_connection() as conn:
-                conn.execute('''
-                    INSERT INTO historical_cache (symbol_token, exchange, timeframe, last_refresh, expires_at, payload_json)
-                    VALUES (?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' hours'), ?)
-                    ON CONFLICT(symbol_token, exchange, timeframe) DO UPDATE SET
-                    last_refresh=excluded.last_refresh, expires_at=excluded.expires_at, payload_json=excluded.payload_json
-                ''', (symbol_token, exchange, timeframe, ttl_hours, payload_str))
-                conn.commit()
+            execute_db(
+                """INSERT INTO historical_cache (symbol_token, exchange, timeframe, last_refresh, expires_at, payload_json)
+                   VALUES (?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' hours'), ?)
+                   ON CONFLICT(symbol_token, exchange, timeframe) DO UPDATE SET
+                   last_refresh=excluded.last_refresh, expires_at=excluded.expires_at, payload_json=excluded.payload_json""",
+                (symbol_token, exchange, timeframe, ttl_hours, payload_str)
+            )
     except Exception as e:
         log.error("Failed to set historical_cache for %s: %s", symbol_token, e)
+

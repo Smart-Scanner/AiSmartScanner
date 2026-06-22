@@ -36,10 +36,10 @@ _ON_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
 _account_count = 0
 _env_path = Path(__file__).parent / ".env"
 if _env_path.exists():
-    for line in _env_path.read_text().splitlines():
+    for line in _env_path.read_text(encoding='utf-8').splitlines():
         if line.startswith("ANGEL_API_KEY_") and "=" in line:
             _account_count += 1
-if _account_count == 0 and (os.environ.get("ANGEL_API_KEY") or (_env_path.exists() and "ANGEL_API_KEY=" in _env_path.read_text())):
+if _account_count == 0 and (os.environ.get("ANGEL_API_KEY") or (_env_path.exists() and "ANGEL_API_KEY=" in _env_path.read_text(encoding='utf-8'))):
     _account_count = 1
 
 # Scale workers: 3 workers per account
