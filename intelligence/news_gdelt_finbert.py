@@ -132,7 +132,7 @@ def fetch_gdelt_india_bulk(hours_back: int = 48) -> list:
         try:
             # Controlled rate limiting between queries
             if query != GDELT_QUERIES[0]:
-                time.sleep(2)  # Controlled queue approach: 2s between sequential queries
+                time.sleep(6)  # GDELT requires 1 request per 5 seconds
 
             params = {
                 "query": query,
@@ -146,6 +146,12 @@ def fetch_gdelt_india_bulk(hours_back: int = 48) -> list:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
             resp = requests.get(GDELT_BASE, params=params, headers=headers, timeout=10)
+            
+            if resp.status_code == 429:
+                log.debug("GDELT rate limited (429). Waiting 6 seconds and retrying...")
+                time.sleep(6)
+                resp = requests.get(GDELT_BASE, params=params, headers=headers, timeout=10)
+                
             if resp.status_code != 200:
                 log.debug("GDELT query failed with status %d: %s", resp.status_code, resp.text[:100])
                 query_failures += 1
