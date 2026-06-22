@@ -311,6 +311,7 @@ def _login_account(acct):
         acct["circuit_error"] = ""
         acct["smart_api"] = obj
         acct["feed_token"] = obj.getfeedToken()
+        acct["auth_token"] = data["data"]["jwtToken"]
         acct["last_login"] = time.time()
         log.info("Angel One Account %d login successful", acct['id'])
         return True
@@ -529,7 +530,7 @@ def start_websocket():
         while _ws_running:
             try:
                 acct = get_active_account()
-                _sws = SmartWebSocketV2(_auth_token, acct["api_key"], acct["client_id"], _feed_token)
+                _sws = SmartWebSocketV2(acct.get("auth_token", ""), acct["api_key"], acct["client_id"], acct.get("feed_token", ""))
                 _sws.on_data = _on_data
                 _sws.on_open = _on_open
                 _sws.on_error = _on_error
