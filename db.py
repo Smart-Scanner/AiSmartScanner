@@ -1534,6 +1534,13 @@ def _run_init_db_logic():
                 except Exception as exc:
                     log.warning("Phase 5.7: recommendation_history migration failed (non-fatal): %s", exc)
 
+                # ── Phase 5.8: Add universe_version to scan_runs ─────────
+                try:
+                    cur.execute("ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS universe_version TEXT;")
+                    log.info("Phase 5.8: scan_runs.universe_version column verified")
+                except Exception as exc:
+                    log.warning("Phase 5.8: scan_runs.universe_version migration failed (non-fatal): %s", exc)
+
                 log.info("PostgreSQL tables checked/created.")
             finally:
                 conn.close()
