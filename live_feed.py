@@ -179,7 +179,7 @@ def _load_env():
                 "api_key": ak,
                 "client_id": os.environ.get(f"PROVIDER_{i}_CLIENT_ID", "") or os.environ.get(f"ANGEL_CLIENT_ID_{i}", ""),
                 "mpin": os.environ.get(f"PROVIDER_{i}_MPIN", "") or os.environ.get(f"ANGEL_MPIN_{i}", ""),
-                "totp_secret": os.environ.get(f"PROVIDER_{i}_TOTP_SECRET", "") or os.environ.get(f"ANGEL_TOTP_SECRET_{i}", ""),
+                "totp_secret": os.environ.get(f"PROVIDER_{i}_TOTP_SECRET", "") or os.environ.get(f"PROVIDER_{i}_TOTP", "") or os.environ.get(f"ANGEL_TOTP_SECRET_{i}", ""),
                 "smart_api": None,
                 "last_login": 0,
                 "429_count": 0,
@@ -200,7 +200,7 @@ def _load_env():
                 "api_key": ak,
                 "client_id": os.environ.get("PROVIDER_3_CLIENT_ID", "") or os.environ.get("ANGEL_CLIENT_ID", ""),
                 "mpin": os.environ.get("PROVIDER_3_MPIN", "") or os.environ.get("ANGEL_MPIN", ""),
-                "totp_secret": os.environ.get("PROVIDER_3_TOTP_SECRET", "") or os.environ.get("ANGEL_TOTP_SECRET", ""),
+                "totp_secret": os.environ.get("PROVIDER_3_TOTP_SECRET", "") or os.environ.get("PROVIDER_3_TOTP", "") or os.environ.get("ANGEL_TOTP_SECRET", ""),
                 "smart_api": None,
                 "last_login": 0,
                 "429_count": 0,
@@ -244,6 +244,8 @@ def refresh_token_map():
 
 def get_token(symbol: str):
     import db
+    if not _token_map:
+        load_token_map()
     resolved = db.resolve_symbol(symbol)
     return _token_map.get(resolved.upper().replace(".NS", ""))
 
@@ -526,7 +528,8 @@ def start_websocket():
         _ws_running = True
         while _ws_running:
             try:
-                _sws = SmartWebSocketV2(_auth_token, API_KEY, CLIENT_ID, _feed_token)
+                acct = get_active_account()
+                _sws = SmartWebSocketV2(_auth_token, acct["api_key"], acct["client_id"], _feed_token)
                 _sws.on_data = _on_data
                 _sws.on_open = _on_open
                 _sws.on_error = _on_error
