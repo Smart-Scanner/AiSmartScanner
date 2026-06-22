@@ -6714,7 +6714,7 @@ def get_chunk_run_states(scan_id: str) -> dict:
 # --- Historical Cache API ---
 def get_historical_cache(symbol_token: str, exchange: str, timeframe: str, allow_stale: bool = False):
     try:
-        if is_pg_enabled():
+        if is_postgresql():
             with get_pg_connection() as conn:
                 with conn.cursor() as cursor:
                     if allow_stale:
