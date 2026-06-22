@@ -135,6 +135,9 @@ class AngelProvider(BrokerProvider):
     def _do_fetch(self, symboltoken: str, exchange: str, fromdate: str = None, todate: str = None, interval: str = "ONE_DAY") -> Optional[list]:
         start_time = time.time()
         try:
+            if not self.api:
+                logging.error(f"[{self.name}] Cannot fetch: api is None (login failed?)")
+                return None
             if not fromdate:
                 fromdate = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
             if not todate:
@@ -153,13 +156,18 @@ class AngelProvider(BrokerProvider):
                 self.stats.record_success(latency_ms)
                 return res["data"]
             elif res and res.get("errorcode") == "AB1019":
+                logging.warning(f"[{self.name}] Rate limited (AB1019) for token {symboltoken}")
                 self._handle_failure(is_429=True)
                 return None
             else:
+                err_code = res.get("errorcode", "?") if res else "no_response"
+                err_msg = res.get("message", "") if res else "None"
+                logging.warning(f"[{self.name}] Fetch failed for token={symboltoken}: errorcode={err_code} message={err_msg}")
                 self._handle_failure(is_429=False)
                 return None
         except Exception as e:
             msg = str(e)
+            logging.error(f"[{self.name}] Exception fetching token={symboltoken}: {msg}")
             if "Access denied" in msg or "access rate" in msg.lower():
                 self._handle_failure(is_429=True)
             else:
