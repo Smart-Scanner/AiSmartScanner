@@ -172,21 +172,30 @@ class ProviderManager:
         self.providers: Dict[str, BrokerProvider] = {}
 
     def discover_providers(self):
-        # Scan env for unique provider prefixes
+        # Scan env for unique provider prefixes (by _TYPE or _API_KEY)
         prefixes = set()
         for key in os.environ:
             if key.startswith("PROVIDER_") and key.endswith("_TYPE"):
                 prefix = key.replace("_TYPE", "")
                 prefixes.add(prefix)
 
+        # Fallback: if no _TYPE vars found, discover by _API_KEY
+        # This handles the common case where .env has PROVIDER_1_API_KEY
+        # but not PROVIDER_1_TYPE
+        if not prefixes:
+            for key in os.environ:
+                if key.startswith("PROVIDER_") and key.endswith("_API_KEY"):
+                    prefix = key.replace("_API_KEY", "")
+                    prefixes.add(prefix)
+
         for prefix in sorted(list(prefixes)):
-            ptype = os.getenv(f"{prefix}_TYPE", "").upper()
+            ptype = os.getenv(f"{prefix}_TYPE", "ANGEL").upper()  # Default to ANGEL
             config = {
                 "ROLE": os.getenv(f"{prefix}_ROLE", "RESEARCH"),
                 "API_KEY": os.getenv(f"{prefix}_API_KEY", ""),
                 "CLIENT_ID": os.getenv(f"{prefix}_CLIENT_ID", ""),
                 "MPIN": os.getenv(f"{prefix}_MPIN", ""),
-                "TOTP": os.getenv(f"{prefix}_TOTP", "")
+                "TOTP": os.getenv(f"{prefix}_TOTP_SECRET", "") or os.getenv(f"{prefix}_TOTP", "")
             }
             
             if ptype == "ANGEL":
@@ -232,4 +241,7 @@ class ProviderManager:
 
 provider_manager = ProviderManager()
 provider_manager.discover_providers()
+if provider_manager.providers:
+    logging.info("Initializing %d data providers (login)...", len(provider_manager.providers))
+    provider_manager.initialize_all()
 
