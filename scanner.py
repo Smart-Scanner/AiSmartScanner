@@ -1072,6 +1072,9 @@ def _run_parallel_scan(context: ScanContext):
     log.info("[%s] ═══ Phase 5.6B/C: Parallel Scan Engine ═══", correlation_id[:12])
 
     # ── Safety Gate: Check eligible_universe count ────────────
+    # If eligible_universe is too small (enrichment not yet complete),
+    # fall back to candidate universe (EQ stocks only, no ETF/NAV/MF)
+    _use_fallback_universe = False
     try:
         eu_count_row = db.execute_db(
             "SELECT COUNT(*) as c FROM eligible_universe",
@@ -1080,12 +1083,12 @@ def _run_parallel_scan(context: ScanContext):
         eu_count = int(eu_count_row.get("c", 0)) if eu_count_row else 0
 
         if eu_count < 500:
-            log.error("[%s] SCAN SAFETY GATE: eligible_universe count=%d < 500. Scan BLOCKED.",
+            log.warning("[%s] eligible_universe count=%d < 500. Attempting candidate fallback...",
                       correlation_id[:12], eu_count)
-            scan_state.complete(success=False, error_message="SAFETY_GATE: eligible_universe too small (%d < 500)" % eu_count)
-            return
+            _use_fallback_universe = True
     except Exception as exc:
         log.warning("[%s] Safety gate check failed (non-fatal): %s", correlation_id[:12], exc)
+        _use_fallback_universe = True
 
     # ── 1. Load or resume universe ──────────────────────────────
     resume = db.get_pending_resume()
@@ -1116,22 +1119,42 @@ def _run_parallel_scan(context: ScanContext):
                      correlation_id[:12], start_batch, universe_version, len(eligible))
 
     if not resume or resume.get("status") != "running":
-        # P0 Governance: Lock active universe version
-        universe_version = active_universe_version
-        if not universe_version:
-            log.error("[%s] EMERGENCY FALLBACK: No active universe version found.", correlation_id[:12])
-            scan_state.complete(success=False, error_message="EMERGENCY FALLBACK: No active universe version.")
-            raise RuntimeError("EMERGENCY FALLBACK: No active universe version found. Scan aborted.")
-            
-        eligible_rows = db.get_eligible_universe(universe_version)
-        if not eligible_rows:
-            log.error("[%s] EMERGENCY FALLBACK: Frozen universe %s has 0 members.", correlation_id[:12], universe_version)
-            scan_state.complete(success=False, error_message=f"EMERGENCY FALLBACK: Frozen universe {universe_version} has 0 members.")
-            raise RuntimeError(f"EMERGENCY FALLBACK: Frozen universe {universe_version} has 0 members.")
-            
-        eligible = [row["symbol"] for row in eligible_rows]
+        if _use_fallback_universe:
+            # FALLBACK: Use candidate universe directly (EQ only, no ETF/NAV/MF)
+            log.warning("[%s] FALLBACK: Building scan universe from universe_catalog (EQ only)", correlation_id[:12])
+            try:
+                fallback_rows = db.execute_db(
+                    """SELECT symbol FROM universe_catalog 
+                       WHERE is_active = TRUE 
+                       AND instrument_type = 'EQ'
+                       ORDER BY symbol""",
+                    fetch="all"
+                )
+                eligible = [r["symbol"] for r in fallback_rows] if fallback_rows else []
+                universe_version = "FALLBACK_EQ"
+                log.info("[%s] FALLBACK universe: %d EQ stocks (filtered ETF/NAV/MF)",
+                         correlation_id[:12], len(eligible))
+            except Exception as exc:
+                log.error("[%s] FALLBACK universe query failed: %s", correlation_id[:12], exc)
+                eligible = []
+                universe_version = "FALLBACK_FAILED"
+        else:
+            # Normal path: use eligible_universe
+            universe_version = active_universe_version
+            if not universe_version:
+                log.error("[%s] EMERGENCY FALLBACK: No active universe version found.", correlation_id[:12])
+                scan_state.complete(success=False, error_message="EMERGENCY FALLBACK: No active universe version.")
+                raise RuntimeError("EMERGENCY FALLBACK: No active universe version found. Scan aborted.")
+                
+            eligible_rows = db.get_eligible_universe(universe_version)
+            if not eligible_rows:
+                log.error("[%s] EMERGENCY FALLBACK: Frozen universe %s has 0 members.", correlation_id[:12], universe_version)
+                scan_state.complete(success=False, error_message=f"EMERGENCY FALLBACK: Frozen universe {universe_version} has 0 members.")
+                raise RuntimeError(f"EMERGENCY FALLBACK: Frozen universe {universe_version} has 0 members.")
+                
+            eligible = [row["symbol"] for row in eligible_rows]
 
-    MIN_UNIVERSE_SIZE = 500
+    MIN_UNIVERSE_SIZE = 100  # Lowered from 500 — enrichment may still be in progress
     if not eligible or len(eligible) < MIN_UNIVERSE_SIZE:
         # P0.1A: Forensic log for resume corruption detection
         if resume and resume.get("status") == "running":
