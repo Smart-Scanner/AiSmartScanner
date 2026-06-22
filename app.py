@@ -177,6 +177,14 @@ if USE_UNIVERSE_ENGINE:
     
     # Background Boot Sequence (Master Sync -> Liquidity Worker -> Universe Build)
     def _boot_universe_prep():
+        # Reset stale locks from previous container (Railway deploy = new container)
+        try:
+            db.set_meta("master_sync_status", "idle")
+            db.set_meta("liquidity_worker_status", "idle")
+            log.info("[BootPrep] Reset stale master_sync + liquidity_worker locks")
+        except Exception:
+            pass
+
         # One-time data repair: fix symbols corrupted by old Phase 1
         # (last_synced_at was set but market_cap=0, meaning yfinance never ran)
         try:

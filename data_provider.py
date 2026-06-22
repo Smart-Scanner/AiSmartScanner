@@ -152,9 +152,16 @@ class AngelProvider(BrokerProvider):
             res = self.api.getCandleData(params)
             latency_ms = (time.time() - start_time) * 1000
             
-            if res and res.get("status") and res.get("data"):
-                self.stats.record_success(latency_ms)
-                return res["data"]
+            if res and res.get("status") and res.get("data") is not None:
+                data = res["data"]
+                if len(data) > 0:
+                    self.stats.record_success(latency_ms)
+                    return data
+                else:
+                    # API returned SUCCESS but empty data (e.g., index tokens)
+                    # This is "no data available", NOT an error
+                    logging.debug(f"[{self.name}] No data for token={symboltoken} (SUCCESS but empty)")
+                    return None
             elif res and res.get("errorcode") == "AB1019":
                 logging.warning(f"[{self.name}] Rate limited (AB1019) for token {symboltoken}")
                 self._handle_failure(is_429=True)
@@ -162,7 +169,7 @@ class AngelProvider(BrokerProvider):
             else:
                 err_code = res.get("errorcode", "?") if res else "no_response"
                 err_msg = res.get("message", "") if res else "None"
-                logging.warning(f"[{self.name}] Fetch failed for token={symboltoken}: errorcode={err_code} message={err_msg}")
+                logging.warning(f"[{self.name}] Fetch FAILED for token={symboltoken}: errorcode={err_code} message={err_msg}")
                 self._handle_failure(is_429=False)
                 return None
         except Exception as e:

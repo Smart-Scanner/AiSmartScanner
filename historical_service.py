@@ -76,10 +76,14 @@ def get_daily_history(symbol_token: str, days: int, exchange: str = "NSE", allow
             # Fetch via Angel API
             data = provider.fetch_historical(symbol_token, exchange=exchange, fromdate=fromdate, todate=todate, interval="ONE_DAY")
             
-            # 6. If Failure
-            if not data:
-                log.warning(f"[HistoricalService] Fetch failed for {symbol_token}. Activating {BACKOFF_MINUTES}m backoff.")
-                _refresh_backoff[symbol_token] = time.time() + (BACKOFF_MINUTES * 60)
+            # 6. If Failure (no data returned)
+            if data is None:
+                # Check if provider had an actual error vs just "no data for this token"
+                if provider.stats.consecutive_failures > 0:
+                    log.warning(f"[HistoricalService] Provider error for {symbol_token}. Activating {BACKOFF_MINUTES}m backoff.")
+                    _refresh_backoff[symbol_token] = time.time() + (BACKOFF_MINUTES * 60)
+                else:
+                    log.debug(f"[HistoricalService] No data for {symbol_token} (not an error, no backoff)")
                 return _serve_stale_fallback(symbol_token, exchange, timeframe, allow_stale)
             
             # 7. If Success
