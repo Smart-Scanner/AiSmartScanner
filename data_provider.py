@@ -69,9 +69,16 @@ class BrokerProvider:
     def login(self) -> bool:
         raise NotImplementedError()
 
-    def fetch_historical(self, symboltoken: str, exchange: str = "NSE") -> Optional[list]:
+    def fetch_historical(self, symboltoken: str, exchange: str = "NSE", fromdate: str = None, todate: str = None, interval: str = "ONE_DAY") -> Optional[list]:
         if self.role == "EXECUTION":
-            raise RuntimeError(f"[{self.name}] FATAL: Cannot fetch historical data using an EXECUTION provider!")
+            msg = f"[{self.name}] FATAL: Cannot fetch historical data using an EXECUTION provider!"
+            logging.critical(f"[ROLE_VIOLATION] {msg}")
+            try:
+                from db import audit_log
+                audit_log("ROLE_VIOLATION", f"Provider {self.name}", f"historical_fetch for {symboltoken}")
+            except Exception:
+                pass
+            raise RuntimeError(msg)
             
         if self.state == ProviderState.COOLDOWN:
             if self.stats.cooldown_until and datetime.now() > self.stats.cooldown_until:
@@ -85,9 +92,9 @@ class BrokerProvider:
         if self.state == ProviderState.FAILED:
             return None
 
-        return self._do_fetch(symboltoken, exchange)
+        return self._do_fetch(symboltoken, exchange, fromdate, todate, interval)
 
-    def _do_fetch(self, symboltoken: str, exchange: str) -> Optional[list]:
+    def _do_fetch(self, symboltoken: str, exchange: str, fromdate: str = None, todate: str = None, interval: str = "ONE_DAY") -> Optional[list]:
         raise NotImplementedError()
 
     def _handle_failure(self, is_429: bool):
@@ -125,15 +132,19 @@ class AngelProvider(BrokerProvider):
             self.state = ProviderState.FAILED
             return False
 
-    def _do_fetch(self, symboltoken: str, exchange: str) -> Optional[list]:
+    def _do_fetch(self, symboltoken: str, exchange: str, fromdate: str = None, todate: str = None, interval: str = "ONE_DAY") -> Optional[list]:
         start_time = time.time()
         try:
+            if not fromdate:
+                fromdate = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
+            if not todate:
+                todate = datetime.now().strftime("%Y-%m-%d %H:%M")
             params = {
                 "exchange": exchange,
                 "symboltoken": symboltoken,
-                "interval": "ONE_DAY",
-                "fromdate": (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d %H:%M"),
-                "todate": datetime.now().strftime("%Y-%m-%d %H:%M")
+                "interval": interval,
+                "fromdate": fromdate,
+                "todate": todate
             }
             res = self.api.getCandleData(params)
             latency_ms = (time.time() - start_time) * 1000

@@ -673,13 +673,27 @@ def _build_eligible_universe_impl() -> tuple[list[str], str]:
     if force_included:
         log.info("[UniverseBuilder] Force-included %d portfolio/watchlist stocks", force_included)
 
+    symbols = sorted(eligible_symbols)
+    
+    # 3.5 Fallback if eligible is too small
+    if len(symbols) < 100:
+        log.warning("[UniverseBuilder] Eligible universe too small (%d). Falling back to curated.", len(symbols))
+        from universe import get_active_universe
+        fallback_symbols = get_active_universe()
+        version = _next_version()
+        _save_fallback_universe(fallback_symbols, version)
+        import db
+        db.set_meta("active_universe_version", version)
+        return fallback_symbols, version
+
     # 4. Generate version
     version = _next_version()
 
     # 5. Save to DB
+    import db
     db.save_eligible_universe(eligible_data, version)
+    db.set_meta("active_universe_version", version)
 
-    symbols = sorted(eligible_symbols)
     log.info("[UniverseBuilder] Eligible universe: %d stocks, version=%s", len(symbols), version)
 
     # 6. Record rebuild history for Mission Control / drift debugging

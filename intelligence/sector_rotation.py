@@ -9,26 +9,29 @@ Sector Rotation Engine — RRG (Relative Rotation Graph) Proxy
 import time
 import logging
 import threading
-from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_download
+from historical_service import get_daily_history
+import pandas as pd
 import pandas as pd
 
 log = logging.getLogger("screener")
 
-BENCHMARK = "^NSEI"
+from constants.index_tokens import ANGEL_INDEX_TOKENS, BENCHMARK_TOKEN
+
+BENCHMARK = BENCHMARK_TOKEN
 
 NIFTY_SECTORS = {
-    "Bank Nifty":    "^NSEBANK",
-    "Nifty IT":      "^CNXIT",
-    "Nifty Pharma":  "^CNXPHARMA",
-    "Nifty Auto":    "^CNXAUTO",
-    "Nifty FMCG":    "^CNXFMCG",
-    "Nifty Metal":   "^CNXMETAL",
-    "Nifty Realty":  "^CNXREALTY",
-    "Nifty Energy":  "^CNXENERGY",
-    "Nifty Infra":   "^CNXINFRA",
-    "Nifty PSU":     "^CNXPSUBANK",
-    "Nifty Media":   "^CNXMEDIA",
-    "Nifty Midcap":  "^NSEMDCP50",
+    "Bank Nifty":    ANGEL_INDEX_TOKENS["Bank Nifty"],
+    "Nifty IT":      ANGEL_INDEX_TOKENS["Nifty IT"],
+    "Nifty Pharma":  ANGEL_INDEX_TOKENS["Nifty Pharma"],
+    "Nifty Auto":    ANGEL_INDEX_TOKENS["Nifty Auto"],
+    "Nifty FMCG":    ANGEL_INDEX_TOKENS["Nifty FMCG"],
+    "Nifty Metal":   ANGEL_INDEX_TOKENS["Nifty Metal"],
+    "Nifty Realty":  ANGEL_INDEX_TOKENS["Nifty Realty"],
+    "Nifty Energy":  ANGEL_INDEX_TOKENS["Nifty Energy"],
+    "Nifty Infra":   ANGEL_INDEX_TOKENS["Nifty Infra"],
+    "Nifty PSU":     ANGEL_INDEX_TOKENS["Nifty PSU"],
+    "Nifty Media":   ANGEL_INDEX_TOKENS["Nifty Media"],
+    "Nifty Midcap":  ANGEL_INDEX_TOKENS["Nifty Midcap"],
 }
 
 # sector string → Nifty index name — ordered from most specific to least specific
@@ -114,21 +117,25 @@ def scan_sector_rotation():
     results = {}
 
     try:
-        bench_df = get_yf_download(BENCHMARK, source="sector_rotation", period="6mo", interval="1d",
-                               progress=False, auto_adjust=True)
-        if bench_df.empty or len(bench_df) < 20:
+        def _fetch_to_series(token):
+            data = get_daily_history(token, days=180, exchange="NSE")
+            if not data: return pd.Series(dtype=float)
+            df = pd.DataFrame(data, columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            df.set_index("timestamp", inplace=True)
+            return df["Close"].squeeze()
+
+        bench = _fetch_to_series(BENCHMARK)
+        if bench.empty or len(bench) < 20:
             log.warning("Benchmark data empty, skipping RRG")
             _rrg_running = False
             return
-        bench = bench_df["Close"].squeeze()
 
         for name, ticker in NIFTY_SECTORS.items():
             try:
-                sec_df = get_yf_download(ticker, source="sector_rotation", period="6mo", interval="1d",
-                                     progress=False, auto_adjust=True)
-                if sec_df.empty or len(sec_df) < 20:
+                sec = _fetch_to_series(ticker)
+                if sec.empty or len(sec) < 20:
                     continue
-                sec = sec_df["Close"].squeeze()
 
                 # Align indices
                 aligned = pd.concat([sec, bench], axis=1, keys=["sec", "bench"]).dropna()
