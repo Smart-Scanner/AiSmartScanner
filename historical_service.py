@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 import threading
 
-from db import get_historical_cache, set_historical_cache, PG_ENABLED
+from db import get_historical_cache, set_historical_cache, is_pg_enabled
 from data_provider import provider_manager
 
 log = logging.getLogger("screener")
@@ -22,7 +22,7 @@ def _record_provider_stat(provider_name: str):
     """Record historical_calls for the provider to satisfy Provider Utilization Audit."""
     try:
         from db import get_pg_connection, _get_connection
-        if PG_ENABLED:
+        if is_pg_enabled():
             with get_pg_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute('''
