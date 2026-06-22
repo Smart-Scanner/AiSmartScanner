@@ -247,11 +247,21 @@ def discover_fyers_providers() -> dict:
     # Single Fyers account
     app_id = os.getenv("FYERS_APP_ID", "")
     if app_id:
+        import db
+        access_token = os.getenv("FYERS_ACCESS_TOKEN", "")
+        if not access_token:
+            try:
+                access_token = db.get_meta("fyers_access_token") or ""
+                if access_token:
+                    log.info("[FyersDiscovery] Loaded FYERS_1 access token from database meta")
+            except Exception as exc:
+                log.debug("[FyersDiscovery] Could not load token from db: %s", exc)
+
         config = {
             "APP_ID": app_id,
             "SECRET_KEY": os.getenv("FYERS_SECRET_KEY", ""),
             "REDIRECT_URI": os.getenv("FYERS_REDIRECT_URI", "https://www.aismartscan.in/"),
-            "ACCESS_TOKEN": os.getenv("FYERS_ACCESS_TOKEN", ""),
+            "ACCESS_TOKEN": access_token,
             "ROLE": "RESEARCH",
         }
         providers["FYERS_1"] = FyersProvider("FYERS_1", config)
@@ -261,11 +271,21 @@ def discover_fyers_providers() -> dict:
     for i in range(2, 10):
         app_id = os.getenv(f"FYERS_{i}_APP_ID", "")
         if app_id:
+            import db
+            access_token = os.getenv(f"FYERS_{i}_ACCESS_TOKEN", "")
+            if not access_token:
+                try:
+                    access_token = db.get_meta(f"fyers_{i}_access_token") or ""
+                    if access_token:
+                        log.info("[FyersDiscovery] Loaded %s access token from database meta", f"FYERS_{i}")
+                except Exception as exc:
+                    log.debug("[FyersDiscovery] Could not load token from db for FYERS_%d: %s", i, exc)
+
             config = {
                 "APP_ID": app_id,
                 "SECRET_KEY": os.getenv(f"FYERS_{i}_SECRET_KEY", ""),
                 "REDIRECT_URI": os.getenv(f"FYERS_{i}_REDIRECT_URI", "https://www.aismartscan.in/"),
-                "ACCESS_TOKEN": os.getenv(f"FYERS_{i}_ACCESS_TOKEN", ""),
+                "ACCESS_TOKEN": access_token,
                 "ROLE": "RESEARCH",
             }
             name = f"FYERS_{i}"
