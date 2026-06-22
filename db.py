@@ -6233,15 +6233,17 @@ def classify_instrument_types():
 # ── Candidate Universe Operations ─────────────────────────────
 
 def get_candidate_universe() -> list:
-    """Stage-1 query: active EQ symbols with market_cap >= 1500 Cr, not excluded.
-    Returns list of dicts with symbol, market_cap (in Cr).
+    """Stage-1 query: active EQ symbols not excluded.
+    Returns list of dicts with symbol, market_cap, price.
+    Sorted by market_cap DESC so known large-caps get enriched first.
+    No market_cap hard gate — liquidity worker uses Angel API (not yfinance)
+    and universe_builder Stage-3 applies proper filters after enrichment.
     """
     return execute_db(
         """SELECT symbol, market_cap, price
            FROM universe_catalog
            WHERE is_active = TRUE
              AND (instrument_type = 'EQ' OR instrument_type IS NULL)
-             AND market_cap >= 1500
              AND COALESCE(liquidity_excluded, FALSE) = FALSE
            ORDER BY market_cap DESC""",
         fetch="all"
