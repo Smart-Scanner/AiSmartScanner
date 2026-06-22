@@ -160,36 +160,43 @@ _IST = timezone(timedelta(hours=5, minutes=30))
 def _load_env():
     global _angel_accounts
     if ENV_FILE.exists():
-        for line in ENV_FILE.read_text().splitlines():
+        for line in ENV_FILE.read_text(encoding='utf-8').splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
         log.info("Loaded .env file from %s", ENV_FILE)
 
-    # Parse ANGEL_API_KEY_1, ANGEL_API_KEY_2, etc. or fallback to ANGEL_API_KEY
+    # Parse Angel One accounts — only load LIVEFEED providers (not RESEARCH)
+    # Provider 1&2 = RESEARCH (used by data_provider.py)
+    # Provider 3 = LIVEFEED (used here for WebSocket + live prices)
     _angel_accounts = []
     
-    # Check for numbered accounts
+    # Check for numbered accounts — skip RESEARCH providers
     for i in range(1, 10):
         ak = os.environ.get(f"PROVIDER_{i}_API_KEY") or os.environ.get(f"ANGEL_API_KEY_{i}")
-        if ak:
-            _angel_accounts.append({
-                "id": i,
-                "api_key": ak,
-                "client_id": os.environ.get(f"PROVIDER_{i}_CLIENT_ID", "") or os.environ.get(f"ANGEL_CLIENT_ID_{i}", ""),
-                "mpin": os.environ.get(f"PROVIDER_{i}_MPIN", "") or os.environ.get(f"ANGEL_MPIN_{i}", ""),
-                "totp_secret": os.environ.get(f"PROVIDER_{i}_TOTP_SECRET", "") or os.environ.get(f"PROVIDER_{i}_TOTP", "") or os.environ.get(f"ANGEL_TOTP_SECRET_{i}", ""),
-                "smart_api": None,
-                "last_login": 0,
-                "429_count": 0,
-                "429_window_start": 0.0,
-                "login_failures": 0,
-                "cooldown_until": 0.0,
-                "circuit_broken": False,
-                "circuit_error": "",
-                "feed_token": None
-            })
+        if not ak:
+            continue
+        role = os.environ.get(f"PROVIDER_{i}_ROLE", "").upper()
+        if role == "RESEARCH":
+            log.info("Skipping PROVIDER_%d (ROLE=RESEARCH, reserved for data_provider)", i)
+            continue
+        _angel_accounts.append({
+            "id": i,
+            "api_key": ak,
+            "client_id": os.environ.get(f"PROVIDER_{i}_CLIENT_ID", "") or os.environ.get(f"ANGEL_CLIENT_ID_{i}", ""),
+            "mpin": os.environ.get(f"PROVIDER_{i}_MPIN", "") or os.environ.get(f"ANGEL_MPIN_{i}", ""),
+            "totp_secret": os.environ.get(f"PROVIDER_{i}_TOTP_SECRET", "") or os.environ.get(f"PROVIDER_{i}_TOTP", "") or os.environ.get(f"ANGEL_TOTP_SECRET_{i}", ""),
+            "smart_api": None,
+            "last_login": 0,
+            "429_count": 0,
+            "429_window_start": 0.0,
+            "login_failures": 0,
+            "cooldown_until": 0.0,
+            "circuit_broken": False,
+            "circuit_error": "",
+            "feed_token": None
+        })
             
     # Fallback to single account
     if not _angel_accounts:

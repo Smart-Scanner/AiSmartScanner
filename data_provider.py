@@ -190,8 +190,15 @@ class ProviderManager:
 
         for prefix in sorted(list(prefixes)):
             ptype = os.getenv(f"{prefix}_TYPE", "ANGEL").upper()  # Default to ANGEL
+            role = os.getenv(f"{prefix}_ROLE", "").upper()
+            
+            # Skip non-RESEARCH providers (LIVEFEED/EXECUTION are for live_feed.py)
+            if role and role != "RESEARCH":
+                logging.info(f"Skipping {prefix} (ROLE={role}, not RESEARCH)")
+                continue
+            
             config = {
-                "ROLE": os.getenv(f"{prefix}_ROLE", "RESEARCH"),
+                "ROLE": "RESEARCH",  # Only RESEARCH providers reach here
                 "API_KEY": os.getenv(f"{prefix}_API_KEY", ""),
                 "CLIENT_ID": os.getenv(f"{prefix}_CLIENT_ID", ""),
                 "MPIN": os.getenv(f"{prefix}_MPIN", ""),
@@ -201,7 +208,7 @@ class ProviderManager:
             if ptype == "ANGEL":
                 provider = AngelProvider(prefix, config)
                 self.providers[prefix] = provider
-                logging.info(f"Discovered {prefix} (Type: {ptype}, Role: {config['ROLE']})")
+                logging.info(f"Discovered {prefix} (Type: {ptype}, Role: RESEARCH)")
                 
     def initialize_all(self):
         for name, p in self.providers.items():
