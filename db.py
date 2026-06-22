@@ -2403,6 +2403,38 @@ def _init_sqlite():
             ON CONFLICT (old_symbol) DO NOTHING;
         """)
 
+        # Phase 5.7: recommendation_history table for SQLite parity
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS recommendation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                scan_id TEXT,
+                version INTEGER DEFAULT 1,
+                entry_low REAL,
+                entry_high REAL,
+                stop_loss REAL,
+                target_price REAL,
+                target1 REAL,
+                target2 REAL,
+                target3 REAL,
+                risk_reward REAL,
+                score INTEGER DEFAULT 0,
+                grade TEXT DEFAULT '',
+                confidence_score REAL DEFAULT 0,
+                risk_score REAL DEFAULT 0,
+                technical_score REAL DEFAULT 0,
+                fundamental_score REAL DEFAULT 0,
+                price_at_analysis REAL,
+                analysis_timestamp TEXT DEFAULT (datetime('now')),
+                is_first_analysis BOOLEAN DEFAULT 0,
+                change_reason TEXT,
+                data_snapshot TEXT,
+                UNIQUE(symbol, version)
+            );
+            CREATE INDEX IF NOT EXISTS idx_rh_symbol ON recommendation_history(symbol);
+            CREATE INDEX IF NOT EXISTS idx_rh_first ON recommendation_history(symbol) WHERE is_first_analysis = 1;
+        """)
+
         log.info("SQLite Database initialized: %s", DB_PATH)
 
 
