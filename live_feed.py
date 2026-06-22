@@ -452,16 +452,23 @@ def _on_data(wsapp, message):
             try:
                 from execution_engine import on_tick
                 on_tick(symbol, round(ltp, 2), tick_time)
-            except Exception:
-                pass  # Never block WebSocket thread
+            except Exception as exc:
+                log.error("Execution engine on_tick failed: %s", exc)
 
     except Exception as exc:
         log.debug("Tick parse error: %s", exc)
 
 def _on_open(wsapp):
-    log.info("WebSocket connected")
+    log.info(
+        "WS OPEN | subscribers=%s",
+        len(_subscribers)
+    )
     if _subscribers:
-        subscribe(list(_subscribers))
+        log.info(
+            "WS RESUBSCRIBE | symbols=%s",
+            len(_subscribers)
+        )
+        _subscribe_symbols(list(_subscribers))
 
 def _on_error(wsapp, error):
     log.warning("WebSocket error: %s", error)
@@ -475,6 +482,11 @@ def _subscribe_symbols(symbols):
     global _sws
     if not _sws:
         return
+
+    log.info(
+        "SUBSCRIBE REQUEST | count=%s",
+        len(symbols)
+    )
 
     clean_symbols = []
     for sym in symbols:
@@ -497,6 +509,10 @@ def _subscribe_symbols(symbols):
             token_list = [{"exchangeType": 1, "tokens": batch_tokens}]
             _sws.subscribe(_correlation_id, _WS_MODE, token_list)
         log.info("Subscribed to %d symbols", len(clean_symbols))
+        log.info(
+            "SUBSCRIBE SUCCESS | count=%s",
+            len(clean_symbols)
+        )
     except Exception as exc:
         log.error("Subscribe error: %s", exc)
 
