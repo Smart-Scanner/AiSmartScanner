@@ -121,6 +121,18 @@ def fetch_gdelt_india_bulk(hours_back: int = 48) -> list:
     Returns list of dicts: {url, title, seendate}
     Zero API key. Zero cost. Single GET per query.
     """
+    # [NEW DB CACHE LOGIC] Check DB first to avoid multiple Railway workers hitting 429
+    try:
+        cached_raw = db.get_meta("gdelt_cache")
+        if cached_raw:
+            cached_data = json.loads(cached_raw)
+            cache_age = time.time() - cached_data.get("timestamp", 0)
+            if cache_age < 900:  # 15 minutes valid
+                log.info("GDELT fetched %d articles from DB Cache (age: %.1f min)", len(cached_data.get("articles", [])), cache_age / 60)
+                return cached_data.get("articles", [])
+    except Exception as e:
+        log.warning("GDELT DB Cache read failed: %s", e)
+
     if not _gdelt_is_available():
         log.info("GDELT circuit breaker open — returning empty (cached data used if available)")
         return []
@@ -176,7 +188,15 @@ def fetch_gdelt_india_bulk(hours_back: int = 48) -> list:
     elif articles:
         _gdelt_reset()  # Success — reset failure count
 
-    log.info("GDELT fetched %d unique articles", len(articles))
+    log.info("GDELT fetched %d unique articles from API", len(articles))
+    
+    # Save to DB cache if successful
+    if articles:
+        try:
+            db.set_meta("gdelt_cache", json.dumps({"timestamp": time.time(), "articles": articles}))
+        except Exception as e:
+            log.warning("GDELT DB Cache write failed: %s", e)
+
     return articles
 
 
