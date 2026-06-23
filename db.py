@@ -3581,9 +3581,14 @@ def save_results(results: list[dict], scan_id: str = 'legacy_fallback', meta: di
     to_save = []
     skipped = 0
     for r in results:
+        sym = r.get("symbol")
+        if not sym:
+            log.warning("[SAVE_RESULTS] Skipping result with missing 'symbol' key: %s", str(r)[:100])
+            skipped += 1
+            continue
         new_mode = r.get("scan_mode", "fast")
-        if new_mode == "fast" and r["symbol"] in deep_scanned_symbols:
-            log.debug("Staleness guard: skipping fast overwrite of deep scan for %s", r["symbol"])
+        if new_mode == "fast" and sym in deep_scanned_symbols:
+            log.debug("Staleness guard: skipping fast overwrite of deep scan for %s", sym)
             skipped += 1
             continue
         to_save.append(r)
