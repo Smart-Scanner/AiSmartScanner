@@ -1,1463 +1,955 @@
 {% extends "_app_base.html" %}
-
-{% block title %}{{ symbol }} — Symbol Workspace{% endblock %}
+{% block title %}{{ symbol }} — AI Smart Screener{% endblock %}
 
 {% block head %}
-<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
-<script src="{{ url_for('static', filename='js/marketos-core.js') }}"></script>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/symbol-workspace.css') }}">
+<style>
+    /* ── Stock Detail — Professional MarketOS Layout ─────────── */
+    .sd-back {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-muted);
+        text-decoration: none;
+        padding: 8px 0;
+        transition: color 0.2s;
+    }
+
+    .sd-back:hover {
+        color: var(--accent-cyan, var(--primary));
+    }
+
+    /* Header */
+    .sd-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .sd-symbol {
+        font-family: 'Outfit', sans-serif;
+        font-size: 28px;
+        font-weight: 800;
+        letter-spacing: -0.5px;
+    }
+
+    .sd-meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 4px;
+        flex-wrap: wrap;
+    }
+
+    .sd-sector {
+        font-size: 11px;
+        color: var(--text-muted);
+        background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+        padding: 3px 10px;
+        border-radius: 4px;
+    }
+
+    .sd-badge {
+        font-size: 9px;
+        font-weight: 800;
+        padding: 3px 8px;
+        border-radius: 4px;
+        letter-spacing: 0.5px;
+    }
+
+    .sd-badge-hc {
+        background: linear-gradient(135deg, #00C8FF, #0090FF);
+        color: #000;
+    }
+
+    .sd-badge-golden {
+        background: linear-gradient(135deg, #FFD700, #FFA500);
+        color: #000;
+    }
+
+    .sd-price-block {
+        text-align: right;
+    }
+
+    .sd-price {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 26px;
+        font-weight: 700;
+    }
+
+    .sd-change {
+        font-size: 13px;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 600;
+        margin-top: 2px;
+    }
+
+    .sd-recommended {
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-top: 4px;
+    }
+
+    .sd-cmp-tag {
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 4px;
+        margin-top: 4px;
+        display: inline-block;
+    }
+
+    .sd-cmp-above {
+        background: rgba(245, 158, 11, 0.2);
+        color: #f59e0b;
+    }
+
+    .sd-cmp-below {
+        background: rgba(234, 179, 8, 0.2);
+        color: #eab308;
+    }
+
+    .sd-cmp-in {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+    }
+
+    /* Main Chart */
+    .sd-chart-container {
+        width: 100%;
+        height: 420px;
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid var(--border-subtle, var(--border));
+        margin-bottom: 8px;
+        background: var(--bg-card, #111827);
+    }
+
+    /* Mini Charts Row */
+    .sd-mini-charts {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        margin-bottom: 16px;
+    }
+
+    .sd-mini-chart {
+        background: var(--bg-card, #111827);
+        border: 1px solid var(--border-subtle, var(--border));
+        border-radius: 8px;
+        padding: 8px 10px 4px;
+    }
+
+    .sd-mini-title {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .sd-mini-val {
+        font-size: 12px;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .sd-mini-canvas {
+        width: 100%;
+        height: 80px;
+    }
+
+    @media (max-width: 768px) {
+        .sd-mini-charts {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    /* Info Grid */
+    .sd-grid {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 16px;
+    }
+
+    @media (max-width: 900px) {
+        .sd-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    /* Panels */
+    .sd-panel {
+        background: var(--bg-card, #111827);
+        border: 1px solid var(--border-subtle, var(--border));
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 12px;
+    }
+
+    .sd-panel-title {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--accent-cyan, var(--primary));
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    /* Key-Value */
+    .sd-kv {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 12px;
+    }
+
+    .sd-kv-label {
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+
+    .sd-kv-value {
+        font-size: 12px;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+        text-align: right;
+    }
+
+    /* Trade Levels */
+    .sd-level {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+        border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.04));
+        font-size: 12px;
+    }
+
+    .sd-level:last-child {
+        border-bottom: none;
+    }
+
+    .sd-level-label {
+        color: var(--text-muted);
+    }
+
+    .sd-level-value {
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .sd-level-sl {
+        color: var(--danger, #ef4444);
+    }
+
+    .sd-level-tg {
+        color: var(--success, #10b981);
+    }
+
+    .sd-level-entry {
+        color: var(--accent-cyan, #00C8FF);
+    }
+
+    /* Score Ring */
+    .sd-score-ring {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 12px;
+        padding: 12px;
+        background: var(--bg-hover, rgba(255, 255, 255, 0.03));
+        border-radius: 8px;
+    }
+
+    .sd-score-val {
+        font-size: 32px;
+        font-weight: 800;
+        font-family: 'Outfit', sans-serif;
+    }
+
+    .sd-score-label {
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+
+    .sd-score-grade {
+        font-size: 14px;
+        font-weight: 700;
+    }
+
+    /* Cards */
+    .sd-card {
+        background: var(--bg-card, #111827);
+        border: 1px solid var(--border-subtle, var(--border));
+        border-radius: 10px;
+        padding: 14px;
+        margin-bottom: 12px;
+    }
+
+    .sd-card-title {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--text-muted);
+        margin-bottom: 10px;
+    }
+
+    /* Signal Bars */
+    .sd-signal-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0;
+        font-size: 12px;
+    }
+
+    .sd-signal-bar-bg {
+        width: 100px;
+        height: 4px;
+        background: var(--border-subtle, rgba(255, 255, 255, 0.08));
+        border-radius: 2px;
+        overflow: hidden;
+    }
+
+    .sd-signal-bar {
+        height: 100%;
+        border-radius: 2px;
+        transition: width 0.6s ease;
+    }
+
+    /* Summary */
+    .sd-summary {
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--text-secondary, var(--text-muted));
+    }
+
+    /* Financial Table */
+    .sd-fin-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+        margin-top: 8px;
+    }
+
+    .sd-fin-table th {
+        text-align: left;
+        font-weight: 700;
+        color: var(--text-muted);
+        padding: 6px 8px;
+        border-bottom: 1px solid var(--border-subtle, var(--border));
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .sd-fin-table td {
+        padding: 6px 8px;
+        border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.03));
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .sd-fin-table tr:last-child td {
+        border-bottom: none;
+    }
+
+    /* Valuation Grid */
+    .sd-val-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+
+    .sd-val-item {
+        text-align: center;
+        padding: 10px 6px;
+        background: var(--bg-hover, rgba(255, 255, 255, 0.02));
+        border-radius: 6px;
+    }
+
+    .sd-val-num {
+        font-size: 16px;
+        font-weight: 800;
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .sd-val-label {
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-top: 2px;
+    }
+
+    /* Updates */
+    .sd-update-item {
+        padding: 8px 12px;
+        border-left: 3px solid var(--accent-cyan, var(--primary));
+        margin-bottom: 6px;
+        background: var(--bg-hover, rgba(255, 255, 255, 0.02));
+        border-radius: 0 6px 6px 0;
+    }
+
+    .sd-update-date {
+        font-size: 10px;
+        color: var(--text-muted);
+        font-family: 'JetBrains Mono', monospace;
+        margin-bottom: 2px;
+    }
+
+    .sd-update-text {
+        font-size: 12px;
+        color: var(--text-secondary, var(--text-muted));
+    }
+</style>
 {% endblock %}
 
 {% block content %}
 <script>window.__MOS_USER_ID = '{{ user.id if user else "anonymous" }}';</script>
 
-<!-- ═══ SYMBOL WORKSPACE SHELL ═══════════════════════════════════════ -->
-<div class="sw-workspace" id="symbolWorkspace">
+<a href="/top-picks" class="sd-back">&larr; Back to Top Picks</a>
 
-    <!-- ── Symbol Header Bar ─────────────────────────────────────── -->
-    <header class="sw-header" id="swHeader">
-        <div class="sw-header-left">
-            <div class="sw-symbol-name" id="swSymbolName">{{ symbol }}</div>
-            <span class="sw-sector-tag" id="swSector">—</span>
-            <span class="sw-hc-badge" id="swHcBadge" style="display:none">HIGH CONVICTION</span>
-            <span class="sw-regime-badge" id="swRegimeBadge">REGIME: —</span>
+<!-- Header -->
+<div class="sd-header" id="sdHeader">
+    <div>
+        <div class="sd-symbol" id="sdSymbol">{{ symbol }}</div>
+        <div class="sd-meta">
+            <span class="sd-sector" id="sdSector">&mdash;</span>
+            <span class="sd-badge sd-badge-hc" id="sdBadgeHC" style="display:none">HIGH CONVICTION</span>
+            <span class="sd-badge sd-badge-golden" id="sdBadgeGolden" style="display:none">&#9733; GOLDEN</span>
         </div>
-        <div class="sw-header-right">
-            <div class="sw-price-display">
-                <span class="sw-price" id="swPrice">—</span>
-                <span class="sw-change" id="swChange"></span>
-            </div>
-            <a href="https://www.tradingview.com/chart/?symbol=NSE:{{ symbol }}" target="_blank" rel="noopener" class="sw-tv-link" title="Open in TradingView">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                TV
-            </a>
-        </div>
-    </header>
-
-    <!-- ── Workspace Tabs ────────────────────────────────────────── -->
-    <nav class="sw-tabs" id="swTabs">
-        <button class="sw-tab active" data-tab="research" id="tabResearch">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-            Research
-        </button>
-        <button class="sw-tab" data-tab="chart" id="tabChart">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
-            Chart
-        </button>
-        <button class="sw-tab" data-tab="portfolio" id="tabPortfolio">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>
-            Portfolio
-        </button>
-        <button class="sw-tab" data-tab="journal" id="tabJournal">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-            Journal
-        </button>
-        <button class="sw-tab" data-tab="analytics" id="tabAnalytics">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
-            Analytics
-        </button>
-        <button class="sw-tab" data-tab="timeline" id="tabTimeline">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            Timeline
-        </button>
-    </nav>
-
-    <!-- ── Main Content Area ─────────────────────────────────────── -->
-    <div class="sw-body">
-
-        <!-- ── Main Panel ────────────────────────────────────── -->
-        <div class="sw-main" id="swMain">
-
-            <!-- P0-3: Data Unavailable Warning Banner -->
-            <div class="sw-alert sw-alert-warning" id="swDataUnavailableAlert" style="display: {% if data_unavailable %}flex{% else %}none{% endif %}; background: rgba(245,158,11,0.1); border: 1px solid var(--warning); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; align-items: center; gap: 10px; color: var(--warning);">
-                <span style="font-size: 16px;">⚠️</span>
-                <div style="font-size: 13px; font-weight: 500;">
-                    Symbol data is not fully scanned or cached. Showing historical data if available.
-                </div>
-            </div>
-
-            <!-- Loading State -->
-            <div class="sw-loading" id="swLoading">
-                <div class="sw-spinner"></div>
-                <p>Loading {{ symbol }} workspace...</p>
-            </div>
-
-            <!-- ═══ RESEARCH TAB ═══ -->
-            <div class="sw-tab-content active" id="panelResearch">
-                <div class="sw-research-split">
-                    <!-- Left: Chart -->
-                    <div class="sw-research-chart">
-                        <div class="sw-chart-container" id="researchChartContainer"></div>
-                    </div>
-                    <!-- Right: Thesis Panel -->
-                    <div class="sw-research-thesis">
-                        <!-- Score Banner -->
-                        <div class="sw-score-strip" id="swScoreStrip"></div>
-
-                        <!-- Quant Blueprint -->
-                        <div class="sw-card" id="swBlueprintCard" style="display:none">
-                            <div class="sw-card-header">
-                                <span class="sw-card-icon">🎯</span>
-                                <h3>QUANT TRADING BLUEPRINT</h3>
-                            </div>
-                            <div class="sw-card-body" id="swBlueprintContent"></div>
-                        </div>
-
-                        <!-- 12-Layer Audit -->
-                        <div class="sw-card">
-                            <div class="sw-card-header">
-                                <span class="sw-card-icon">🧠</span>
-                                <h3>12-Layer Intelligence Audit</h3>
-                            </div>
-                            <div class="sw-card-body" id="swLayerAccordion"></div>
-                        </div>
-
-                        <!-- Why Recommended -->
-                        <div class="sw-card" id="swExplainCard" style="display:none">
-                            <div class="sw-card-header">
-                                <span class="sw-card-icon">💡</span>
-                                <h3>Why Recommended</h3>
-                            </div>
-                            <div class="sw-card-body">
-                                <div id="swExplainPositives"></div>
-                                <div id="swExplainRisks" style="display:none"></div>
-                            </div>
-                        </div>
-
-                        <!-- Signals -->
-                        <div class="sw-card" id="swSignalsCard" style="display:none">
-                            <div class="sw-card-header">
-                                <span class="sw-card-icon">⚠️</span>
-                                <h3>Scan Signals</h3>
-                            </div>
-                            <div class="sw-card-body" id="swSignalsList"></div>
-                        </div>
-
-                        <!-- Targets & S/R -->
-                        <div class="sw-card" id="swTargetsCard" style="display:none">
-                            <div class="sw-card-header">
-                                <span class="sw-card-icon">📏</span>
-                                <h3>Price Targets & Support/Resistance</h3>
-                            </div>
-                            <div class="sw-card-body">
-                                <div id="swTargetBar"></div>
-                                <div class="sw-sr-grid" id="swSrGrid"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ═══ CHART TAB ═══ -->
-            <div class="sw-tab-content" id="panelChart">
-                <div class="sw-fullchart-wrap">
-                    <div class="sw-chart-toolbar" id="swChartToolbar">
-                        <div class="sw-chart-toggles">
-                            <button class="sw-chip active" data-indicator="ema9" onclick="toggleIndicator(this)">EMA 9</button>
-                            <button class="sw-chip active" data-indicator="ema21" onclick="toggleIndicator(this)">EMA 21</button>
-                            <button class="sw-chip" data-indicator="ema200" onclick="toggleIndicator(this)">EMA 200</button>
-                            <button class="sw-chip" data-indicator="volume" onclick="toggleIndicator(this)">Volume</button>
-                        </div>
-                        <div class="sw-chart-overlays">
-                            <button class="sw-chip sw-chip-research active" data-overlay="research" onclick="toggleOverlay(this)">Research Overlay</button>
-                            <button class="sw-chip sw-chip-portfolio" data-overlay="portfolio" onclick="toggleOverlay(this)">Portfolio</button>
-                        </div>
-                    </div>
-                    <div class="sw-chart-container sw-chart-full" id="fullChartContainer"></div>
-                </div>
-            </div>
-
-            <!-- ═══ PORTFOLIO TAB ═══ -->
-            <div class="sw-tab-content" id="panelPortfolio">
-                <div class="sw-card">
-                    <div class="sw-card-header">
-                        <span class="sw-card-icon">💼</span>
-                        <h3>Positions for {{ symbol }}</h3>
-                    </div>
-                    <div class="sw-card-body" id="swPositionsList">
-                        <div class="sw-empty-state">
-                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>
-                            <p>No active positions for {{ symbol }}</p>
-                            <button class="sw-btn sw-btn-primary" onclick="showRailForm('paper-trade')">Create Paper Trade</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ═══ JOURNAL TAB ═══ -->
-            <div class="sw-tab-content" id="panelJournal">
-                <div class="sw-card">
-                    <div class="sw-card-header">
-                        <span class="sw-card-icon">📝</span>
-                        <h3>Trade Journal — {{ symbol }}</h3>
-                        <button class="sw-btn sw-btn-sm" onclick="addJournalEntry()">+ Add Note</button>
-                    </div>
-                    <div class="sw-card-body">
-                        <div class="sw-journal-composer" id="swJournalComposer">
-                            <textarea class="sw-textarea" id="swJournalText" placeholder="What's your thesis? How did the trade go? What did you learn?" rows="3"></textarea>
-                            <div class="sw-journal-meta">
-                                <select class="sw-select" id="swJournalEmotion">
-                                    <option value="neutral">😐 Neutral</option>
-                                    <option value="confident">😎 Confident</option>
-                                    <option value="uncertain">🤔 Uncertain</option>
-                                    <option value="fearful">😰 Fearful</option>
-                                    <option value="greedy">🤑 Greedy</option>
-                                    <option value="regret">😔 Regret</option>
-                                </select>
-                                <button class="sw-btn sw-btn-primary" onclick="saveJournalEntry()">Save Entry</button>
-                            </div>
-                        </div>
-                        <div class="sw-journal-feed" id="swJournalFeed"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ═══ ANALYTICS TAB ═══ -->
-            <div class="sw-tab-content" id="panelAnalytics">
-                <div class="sw-analytics-grid">
-                    <!-- Technical Parameters -->
-                    <div class="sw-card">
-                        <div class="sw-card-header">
-                            <span class="sw-card-icon">📈</span>
-                            <h3>Technical Parameters</h3>
-                        </div>
-                        <div class="sw-card-body">
-                            <div class="sw-params-grid" id="swParamsGrid"></div>
-                        </div>
-                    </div>
-                    <!-- News Sentiment -->
-                    <div class="sw-card" id="swNewsCard" style="display:none">
-                        <div class="sw-card-header">
-                            <span class="sw-card-icon">📰</span>
-                            <h3>News Sentiment (FinBERT AI)</h3>
-                        </div>
-                        <div class="sw-card-body" id="swNewsContent"></div>
-                    </div>
-                    <!-- Fundamentals -->
-                    <div class="sw-card" id="swFundamentalsCard" style="display:none">
-                        <div class="sw-card-header">
-                            <span class="sw-card-icon">📊</span>
-                            <h3>Key Fundamentals</h3>
-                        </div>
-                        <div class="sw-card-body" id="swFundamentalsContent"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ═══ TIMELINE TAB ═══ -->
-            <div class="sw-tab-content" id="panelTimeline">
-                <div class="sw-card">
-                    <div class="sw-card-header">
-                        <span class="sw-card-icon">⏱</span>
-                        <h3>Event Timeline — {{ symbol }}</h3>
-                    </div>
-                    <div class="sw-card-body">
-                        <div class="sw-timeline" id="swTimelineFeed"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ── Action Rail (Right) ───────────────────────────────── -->
-        <aside class="sw-action-rail" id="swActionRail">
-            <div class="sw-rail-header">
-                <span>Quick Actions</span>
-                <button class="sw-rail-toggle" onclick="toggleActionRail()" title="Toggle action rail">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-                </button>
-            </div>
-
-            <!-- Rail Action Buttons -->
-            <div class="sw-rail-actions" id="swRailActions">
-                <button class="sw-rail-btn" onclick="showRailForm('research')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                    <span>Create Research</span>
-                </button>
-                <button class="sw-rail-btn sw-rail-btn-primary" onclick="showRailForm('paper-trade')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    <span>Paper Trade</span>
-                </button>
-                <button class="sw-rail-btn" onclick="showRailForm('watchlist')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>
-                    <span>Add to Watchlist</span>
-                </button>
-                <button class="sw-rail-btn" onclick="showRailForm('alert')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-                    <span>Create Alert</span>
-                </button>
-            </div>
-
-            <!-- Rail Forms Container (slides in) -->
-            <div class="sw-rail-form-area" id="swRailFormArea" style="display:none"></div>
-
-            <!-- Research Snapshots -->
-            <div class="sw-rail-section" id="swSnapshotsSection">
-                <div class="sw-rail-section-header">
-                    <h4>Research Snapshots</h4>
-                </div>
-                <div class="sw-rail-section-body" id="swSnapshotsList">
-                    <div class="sw-empty-state sw-empty-sm">
-                        <p>No research snapshots yet</p>
-                    </div>
-                </div>
-            </div>
-        </aside>
+    </div>
+    <div class="sd-price-block">
+        <div class="sd-price" id="sdPrice">&mdash;</div>
+        <div class="sd-change" id="sdChange"></div>
+        <div class="sd-recommended" id="sdRecommended"></div>
+        <div id="sdCmpTag"></div>
     </div>
 </div>
 
-<!-- ═══ SYMBOL WORKSPACE JAVASCRIPT ══════════════════════════════════ -->
-<script>
-const SYMBOL = '{{ symbol }}';
-let stockData = null;
-let tvChart = null;
-let tvChartFull = null;
-let indicatorSeries = {};
-let overlaySeries = {};
+<!-- Main TradingView Chart -->
+<div class="sd-chart-container" id="mainChartContainer">
+    <div class="tradingview-widget-container" style="height:100%;width:100%">
+        <div class="tradingview-widget-container__widget" id="tvChartWidget" style="height:100%;width:100%"></div>
+    </div>
+</div>
 
-// ─────────────────────────────────────────────────────────────────
-// TAB SYSTEM
-// ─────────────────────────────────────────────────────────────────
+<!-- Mini Sparkline Charts -->
+<div class="sd-mini-charts">
+    <div class="sd-mini-chart">
+        <div class="sd-mini-title">RSI <span class="sd-mini-val" id="miniRsiVal">&mdash;</span></div>
+        <div class="sd-mini-canvas" id="miniRsi"></div>
+    </div>
+    <div class="sd-mini-chart">
+        <div class="sd-mini-title">MACD <span class="sd-mini-val" id="miniMacdVal">&mdash;</span></div>
+        <div class="sd-mini-canvas" id="miniMacd"></div>
+    </div>
+    <div class="sd-mini-chart">
+        <div class="sd-mini-title">Bollinger Bands <span class="sd-mini-val" id="miniBbVal">&mdash;</span></div>
+        <div class="sd-mini-canvas" id="miniBb"></div>
+    </div>
+    <div class="sd-mini-chart">
+        <div class="sd-mini-title">Volume <span class="sd-mini-val" id="miniVolVal">&mdash;</span></div>
+        <div class="sd-mini-canvas" id="miniVol"></div>
+    </div>
+</div>
 
-document.querySelectorAll('.sw-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-        const target = tab.dataset.tab;
-        document.querySelectorAll('.sw-tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.sw-tab-content').forEach(p => p.classList.remove('active'));
-        tab.classList.add('active');
-        const panel = document.getElementById('panel' + target.charAt(0).toUpperCase() + target.slice(1));
-        if (panel) panel.classList.add('active');
-
-        // Lazy init charts
-        if (target === 'chart' && stockData && !tvChartFull) {
-            setTimeout(() => initFullChart(stockData), 100);
-        }
-        if (target === 'journal') renderJournal();
-        if (target === 'timeline') renderTimeline();
-    });
-});
-
-
-// ─────────────────────────────────────────────────────────────────
-// ACTION RAIL
-// ─────────────────────────────────────────────────────────────────
-
-function toggleActionRail() {
-    document.getElementById('swActionRail').classList.toggle('collapsed');
-}
-
-function showRailForm(type) {
-    const area = document.getElementById('swRailFormArea');
-    area.style.display = 'block';
-
-    if (type === 'research') area.innerHTML = buildResearchForm();
-    else if (type === 'paper-trade') area.innerHTML = buildPaperTradeForm();
-    else if (type === 'watchlist') area.innerHTML = buildWatchlistForm();
-    else if (type === 'alert') area.innerHTML = buildAlertForm();
-
-    // Init portfolio selector for paper trade
-    if (type === 'paper-trade') initPortfolioSelector();
-}
-
-function closeRailForm() {
-    document.getElementById('swRailFormArea').style.display = 'none';
-    document.getElementById('swRailFormArea').innerHTML = '';
-}
-
-function buildResearchForm() {
-    const scan = stockData?.scan || {};
-    return `
-    <div class="sw-rail-form">
-        <div class="sw-form-header">
-            <h4>Create Research — ${SYMBOL}</h4>
-            <button class="sw-form-close" onclick="closeRailForm()">✕</button>
-        </div>
-        <div class="sw-form-body">
-            <label class="sw-label">Research Source</label>
-            <select class="sw-select" id="rfSource">
-                <option value="MANUAL">Manual</option>
-                <option value="AI">AI Generated</option>
-                <option value="HYBRID">Hybrid</option>
-            </select>
-            <div class="sw-form-row">
-                <div><label class="sw-label">Entry Low</label><input class="sw-input" id="rfEntryLow" type="number" step="0.01" value="${stockData?.targets?.entry_low || (scan.stop_loss ? (scan.stop_loss * 1.02).toFixed(2) : '')}"></div>
-                <div><label class="sw-label">Entry High</label><input class="sw-input" id="rfEntryHigh" type="number" step="0.01" value="${stockData?.targets?.entry_high || stockData?.price || ''}"></div>
+<!-- Grid: Left Thesis + Right Analysis -->
+<div class="sd-grid">
+    <!-- Left Column -->
+    <div>
+        <!-- Score -->
+        <div class="sd-score-ring" id="sdScoreRing">
+            <div class="sd-score-val" id="sdScore">&mdash;</div>
+            <div>
+                <div class="sd-score-grade" id="sdGrade">&mdash;</div>
+                <div class="sd-score-label">AI Conviction Score</div>
             </div>
-            <label class="sw-label">Stop Loss</label>
-            <input class="sw-input" id="rfStopLoss" type="number" step="0.01" value="${scan.stop_loss || ''}">
-            <div class="sw-form-row">
-                <div><label class="sw-label">Target 1</label><input class="sw-input" id="rfTarget1" type="number" step="0.01" value="${stockData?.targets?.t1 || scan.target_price || ''}"></div>
-                <div><label class="sw-label">Target 2</label><input class="sw-input" id="rfTarget2" type="number" step="0.01" value="${stockData?.targets?.t2 || (scan.target_price ? (scan.target_price * 1.1).toFixed(2) : '')}"></div>
+        </div>
+
+        <!-- Trade Thesis -->
+        <div class="sd-panel">
+            <div class="sd-panel-title">&#128274; Trade Thesis</div>
+            <div id="sdTradeLevels">
+                <div class="sd-level"><span class="sd-level-label">Entry Range</span><span
+                        class="sd-level-value sd-level-entry" id="sdEntry">&mdash;</span></div>
+                <div class="sd-level"><span class="sd-level-label">Stop Loss</span><span
+                        class="sd-level-value sd-level-sl" id="sdSL">&mdash;</span></div>
+                <div class="sd-level"><span class="sd-level-label">Target 1</span><span
+                        class="sd-level-value sd-level-tg" id="sdT1">&mdash;</span></div>
+                <div class="sd-level"><span class="sd-level-label">Target 2</span><span
+                        class="sd-level-value sd-level-tg" id="sdT2">&mdash;</span></div>
+                <div class="sd-level"><span class="sd-level-label">Target 3</span><span
+                        class="sd-level-value sd-level-tg" id="sdT3">&mdash;</span></div>
+                <div class="sd-level"><span class="sd-level-label">Risk : Reward</span><span class="sd-level-value"
+                        id="sdRR">&mdash;</span></div>
             </div>
-            <label class="sw-label">Target 3</label>
-            <input class="sw-input" id="rfTarget3" type="number" step="0.01" value="${stockData?.targets?.t3 || (scan.target_price ? (scan.target_price * 1.2).toFixed(2) : '')}">
-            <label class="sw-label">Thesis / Notes</label>
-            <textarea class="sw-textarea" id="rfThesis" rows="3" placeholder="Why are you taking this trade?">${scan.explain_positive ? scan.explain_positive.join('. ') : ''}</textarea>
-            <div class="sw-form-rr" id="rfRR"></div>
-            <div class="sw-form-validation" id="rfValidation"></div>
-            <button class="sw-btn sw-btn-primary sw-btn-full" onclick="submitResearch()" id="rfSubmitBtn">
-                ✅ Approve & Create Snapshot
-            </button>
         </div>
-    </div>`;
-}
 
-function buildPaperTradeForm() {
-    const scan = stockData?.scan || {};
-    return `
-    <div class="sw-rail-form">
-        <div class="sw-form-header">
-            <h4>Paper Trade — ${SYMBOL}</h4>
-            <button class="sw-form-close" onclick="closeRailForm()">✕</button>
-        </div>
-        <div class="sw-form-body">
-            <label class="sw-label">Portfolio <span class="sw-required">*</span></label>
-            <select class="sw-select" id="ptPortfolio"><option value="">Loading portfolios...</option></select>
-            <div class="sw-form-row">
-                <div><label class="sw-label">Entry Price</label><input class="sw-input" id="ptEntry" type="number" step="0.01" value="${stockData?.price || ''}"></div>
-                <div><label class="sw-label">Quantity</label><input class="sw-input" id="ptQty" type="number" value="1" min="1"></div>
+        <!-- Key Metrics -->
+        <div class="sd-panel">
+            <div class="sd-panel-title">&#128202; Key Metrics</div>
+            <div class="sd-kv">
+                <span class="sd-kv-label">RSI</span><span class="sd-kv-value" id="sdRSI">&mdash;</span>
+                <span class="sd-kv-label">ADX</span><span class="sd-kv-value" id="sdADX">&mdash;</span>
+                <span class="sd-kv-label">MACD</span><span class="sd-kv-value" id="sdMACD">&mdash;</span>
+                <span class="sd-kv-label">Volume Ratio</span><span class="sd-kv-value" id="sdVolRatio">&mdash;</span>
+                <span class="sd-kv-label">Delivery %</span><span class="sd-kv-value" id="sdDelivery">&mdash;</span>
+                <span class="sd-kv-label">Weekly Trend</span><span class="sd-kv-value" id="sdTrend">&mdash;</span>
+                <span class="sd-kv-label">RS vs Nifty</span><span class="sd-kv-value" id="sdRS">&mdash;</span>
+                <span class="sd-kv-label">Risk Score</span><span class="sd-kv-value" id="sdRisk">&mdash;</span>
             </div>
-            <label class="sw-label">Stop Loss <span class="sw-required">*</span></label>
-            <input class="sw-input" id="ptStopLoss" type="number" step="0.01" value="${stockData?.targets?.sl || scan.stop_loss || ''}">
-            <label class="sw-label">Target Price</label>
-            <input class="sw-input" id="ptTarget" type="number" step="0.01" value="${stockData?.targets?.t1 || scan.target_price || ''}">
-            <label class="sw-label">Position Size % of Portfolio</label>
-            <input class="sw-input" id="ptSize" type="number" step="0.1" value="5" min="0.1" max="100">
-            <div class="sw-form-validation" id="ptValidation"></div>
-            <button class="sw-btn sw-btn-primary sw-btn-full" onclick="submitPaperTrade()" id="ptSubmitBtn" disabled>
-                📄 Create Paper Trade
-            </button>
         </div>
-    </div>`;
-}
 
-function buildWatchlistForm() {
-    return `
-    <div class="sw-rail-form">
-        <div class="sw-form-header">
-            <h4>Add to Watchlist — ${SYMBOL}</h4>
-            <button class="sw-form-close" onclick="closeRailForm()">✕</button>
-        </div>
-        <div class="sw-form-body">
-            <label class="sw-label">Watchlist</label>
-            <select class="sw-select" id="wlList">
-                <option value="Personal">Personal</option>
-                <option value="Momentum">Momentum</option>
-                <option value="Sector">Sector</option>
-                <option value="Earnings">Earnings</option>
-            </select>
-            <label class="sw-label">Label (optional)</label>
-            <input class="sw-input" id="wlLabel" type="text" placeholder="e.g. breakout candidate">
-            <button class="sw-btn sw-btn-primary sw-btn-full" onclick="submitWatchlist()">
-                ⭐ Add to Watchlist
-            </button>
-        </div>
-    </div>`;
-}
-
-function buildAlertForm() {
-    return `
-    <div class="sw-rail-form">
-        <div class="sw-form-header">
-            <h4>Create Alert — ${SYMBOL}</h4>
-            <button class="sw-form-close" onclick="closeRailForm()">✕</button>
-        </div>
-        <div class="sw-form-body">
-            <label class="sw-label">Alert Type</label>
-            <select class="sw-select" id="alType">
-                <option value="price_above">Price Above</option>
-                <option value="price_below">Price Below</option>
-                <option value="breakout">Breakout</option>
-                <option value="volume_surge">Volume Surge</option>
-            </select>
-            <label class="sw-label">Trigger Value</label>
-            <input class="sw-input" id="alValue" type="number" step="0.01" value="${stockData?.price || ''}">
-            <label class="sw-label">Note</label>
-            <input class="sw-input" id="alNote" type="text" placeholder="Optional reminder">
-            <button class="sw-btn sw-btn-primary sw-btn-full" onclick="submitAlert()">
-                🔔 Create Alert
-            </button>
-        </div>
-    </div>`;
-}
-
-
-// ─────────────────────────────────────────────────────────────────
-// FORM SUBMISSIONS (Using Frozen Contracts)
-// ─────────────────────────────────────────────────────────────────
-
-async function initPortfolioSelector() {
-    const select = document.getElementById('ptPortfolio');
-    if (!select) return;
-    const portfolios = await MarketOS.getPortfolios();
-    select.innerHTML = '<option value="">— Select Portfolio —</option>' +
-        portfolios.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
-    // Enable submit only when portfolio selected
-    select.addEventListener('change', validatePaperTrade);
-    // Also validate on other inputs
-    ['ptEntry', 'ptStopLoss', 'ptSize', 'ptQty'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener('input', validatePaperTrade);
-    });
-}
-
-function validatePaperTrade() {
-    const portfolioId = document.getElementById('ptPortfolio')?.value;
-    const size = parseFloat(document.getElementById('ptSize')?.value) || 0;
-    const stopLoss = parseFloat(document.getElementById('ptStopLoss')?.value) || 0;
-    const btn = document.getElementById('ptSubmitBtn');
-    const validEl = document.getElementById('ptValidation');
-
-    const result = MarketOS.checkRiskLimits(portfolioId, SYMBOL, size, stopLoss);
-
-    let html = '';
-    result.errors.forEach(e => { html += `<div class="sw-validation-error">❌ ${e}</div>`; });
-    result.warnings.forEach(w => { html += `<div class="sw-validation-warn">⚠️ ${w}</div>`; });
-    if (result.allowed) html += `<div class="sw-validation-ok">✅ Risk check passed</div>`;
-    validEl.innerHTML = html;
-
-    btn.disabled = !result.allowed;
-}
-
-function submitResearch() {
-    const entryLow = parseFloat(document.getElementById('rfEntryLow')?.value) || 0;
-    const entryHigh = parseFloat(document.getElementById('rfEntryHigh')?.value) || 0;
-    const stopLoss = parseFloat(document.getElementById('rfStopLoss')?.value) || 0;
-    const target1 = parseFloat(document.getElementById('rfTarget1')?.value) || 0;
-    const thesis = document.getElementById('rfThesis')?.value || '';
-    const source = document.getElementById('rfSource')?.value || 'MANUAL';
-
-    // Validate R:R >= 1.5
-    const avgEntry = (entryLow + entryHigh) / 2;
-    const risk = avgEntry - stopLoss;
-    const reward = target1 - avgEntry;
-    const rr = risk > 0 ? (reward / risk) : 0;
-
-    if (rr < 1.5) {
-        document.getElementById('rfValidation').innerHTML = `<div class="sw-validation-error">❌ R:R ${rr.toFixed(2)} is below minimum 1.5. Adjust targets or stop loss.</div>`;
-        return;
-    }
-
-    if (!stopLoss || !target1) {
-        document.getElementById('rfValidation').innerHTML = `<div class="sw-validation-error">❌ Stop loss and at least one target are required.</div>`;
-        return;
-    }
-
-    const result = MarketOS.createResearchSnapshot({
-        symbol: SYMBOL,
-        source: source,
-        entry_low: entryLow,
-        entry_high: entryHigh,
-        stop_loss: stopLoss,
-        target_1: target1,
-        target_2: document.getElementById('rfTarget2')?.value,
-        target_3: document.getElementById('rfTarget3')?.value,
-        risk_reward: rr,
-        thesis_text: thesis,
-        confidence_technical: stockData?.scan?.score || 0,
-        confidence_fundamental: stockData?.scan?.fundamental_score || 0,
-        confidence_ai: stockData?.scan?.ai_score || 0,
-        confidence_total: stockData?.scan?.score || 0,
-    });
-
-    if (!result.success) {
-        document.getElementById('rfValidation').innerHTML = `<div class="sw-validation-error">❌ ${result.error}</div>`;
-        return;
-    }
-
-    const snapshot = result.snapshot;
-
-    // Phase 4D.4.4: Snapshot starts as 'draft'. RESEARCH_APPROVED emitted on explicit approval only.
-
-    document.getElementById('rfValidation').innerHTML = `<div class="sw-validation-ok">✅ Research snapshot created as DRAFT (v${snapshot.version}). Approve to activate.</div>`;
-    closeRailForm();
-    renderSnapshots();
-    showToast('Draft research snapshot created for ' + SYMBOL, 'success');
-}
-
-function submitPaperTrade() {
-    const portfolioId = document.getElementById('ptPortfolio')?.value;
-    const entry = parseFloat(document.getElementById('ptEntry')?.value) || 0;
-    const qty = parseInt(document.getElementById('ptQty')?.value) || 0;
-    const stopLoss = parseFloat(document.getElementById('ptStopLoss')?.value) || 0;
-    const target = parseFloat(document.getElementById('ptTarget')?.value) || 0;
-    const size = parseFloat(document.getElementById('ptSize')?.value) || 0;
-
-    // Risk validation (already done on UI, but enforce again)
-    const riskCheck = MarketOS.checkRiskLimits(portfolioId, SYMBOL, size, stopLoss);
-    if (!riskCheck.allowed) {
-        showToast('Risk check failed. Cannot create paper trade.', 'error');
-        return;
-    }
-
-    const positionId = 'pt_' + Date.now();
-
-    // Phase 4D.4.5: Consume PositionCreationIntent if this trade originated from Research handoff
-    const intentId = window._activeIntentId;
-    if (intentId) {
-        const consumeResult = MarketOS.consumePositionIntent(intentId, positionId);
-        if (!consumeResult.success) {
-            showToast(consumeResult.error, 'error');
-            return;
-        }
-        window._activeIntentId = null; // Clear after consumption
-    }
-
-    // Emit POSITION_OPENED event (Portfolio domain owns this)
-    MarketOS.createEvent('POSITION_OPENED', 'portfolio', {
-        entity_type: 'Position',
-        entity_id: SYMBOL,
-        source: intentId ? 'research' : 'manual',
-        metadata: {
-            position_id: positionId,
-            portfolio_id: portfolioId,
-            entry_price: entry,
-            quantity: qty,
-            stop_loss: stopLoss,
-            target_price: target,
-            position_size_pct: size,
-            trade_type: 'paper',
-            intent_id: intentId || null,
-        }
-    });
-
-    closeRailForm();
-    showToast('Paper trade created for ' + SYMBOL + (intentId ? ' (from research thesis)' : ''), 'success');
-}
-
-function submitWatchlist() {
-    const list = document.getElementById('wlList')?.value || 'Personal';
-    const label = document.getElementById('wlLabel')?.value || '';
-    const added = MarketOS.WatchlistRepository.addSymbol(list, SYMBOL, label);
-    closeRailForm();
-    showToast(added ? `${SYMBOL} added to ${list} watchlist` : `${SYMBOL} already in ${list} watchlist`, added ? 'success' : 'info');
-}
-
-function submitAlert() {
-    const type = document.getElementById('alType')?.value;
-    const value = parseFloat(document.getElementById('alValue')?.value) || 0;
-    const note = document.getElementById('alNote')?.value || '';
-
-    MarketOS.createEvent('ALERT_CREATED', 'alerts', {
-        entity_type: 'Alert',
-        entity_id: SYMBOL,
-        source: 'manual',
-        metadata: { alert_id: 'alert_' + Date.now(), alert_type: type, trigger_value: value, note }
-    });
-
-    closeRailForm();
-    showToast(`Alert created: ${type} at ₹${value}`, 'success');
-}
-
-
-// ─────────────────────────────────────────────────────────────────
-// TRADINGVIEW LIGHTWEIGHT CHARTS
-// ─────────────────────────────────────────────────────────────────
-
-function getChartTheme() {
-    const isDark = (document.documentElement.getAttribute('data-theme') || 'dark') === 'dark';
-    return {
-        layout: {
-            background: { type: 'solid', color: isDark ? '#0d111a' : '#ffffff' },
-            textColor: isDark ? '#9ca3af' : '#475569',
-        },
-        grid: {
-            vertLines: { color: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.04)' },
-            horzLines: { color: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.04)' },
-        },
-        crosshair: { mode: 0 },
-        rightPriceScale: { borderColor: isDark ? '#182235' : '#e2e8f0' },
-        timeScale: {
-            borderColor: isDark ? '#182235' : '#e2e8f0',
-            timeVisible: false,
-        },
-    };
-}
-
-function initResearchChart(data) {
-    const container = document.getElementById('researchChartContainer');
-    if (!container || !data.ohlcv || !data.ohlcv.length) return;
-    container.innerHTML = '';
-
-    const theme = getChartTheme();
-    const chart = LightweightCharts.createChart(container, {
-        ...theme,
-        width: container.clientWidth,
-        height: 360,
-        handleScroll: { mouseWheel: true, pressedMouseMove: true },
-        handleScale: { mouseWheel: true, pinch: true },
-    });
-
-    // Base Layer — Market Data Domain (Candlesticks)
-    const candleSeries = chart.addCandlestickSeries({
-        upColor: '#05ffc7', downColor: '#ff4b72',
-        borderUpColor: '#05ffc7', borderDownColor: '#ff4b72',
-        wickUpColor: '#05ffc788', wickDownColor: '#ff4b7288',
-    });
-    const candles = data.ohlcv.map(d => ({
-        time: d.date, open: d.o, high: d.h, low: d.l, close: d.c
-    }));
-    candleSeries.setData(candles);
-
-    // Volume sub-pane
-    const volumeSeries = chart.addHistogramSeries({
-        priceFormat: { type: 'volume' },
-        priceScaleId: 'vol',
-    });
-    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    volumeSeries.setData(data.ohlcv.map(d => ({
-        time: d.date, value: d.v,
-        color: d.c >= d.o ? 'rgba(5,255,199,0.15)' : 'rgba(255,75,114,0.15)',
-    })));
-
-    // Indicator Layer — Analytics Domain (EMA)
-    if (data.ema_9) {
-        const ema9 = chart.addLineSeries({ color: 'rgba(79,168,255,0.7)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-        ema9.setData(data.ema_9.map((v, i) => v !== null ? { time: data.ohlcv[i]?.date, value: v } : null).filter(Boolean));
-    }
-    if (data.ema_21) {
-        const ema21 = chart.addLineSeries({ color: 'rgba(0,200,255,0.7)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-        ema21.setData(data.ema_21.map((v, i) => v !== null ? { time: data.ohlcv[i]?.date, value: v } : null).filter(Boolean));
-    }
-
-    // Research Overlay — Research Domain (Entry, Stop, Targets)
-    const tgt = data.targets || {};
-    if (tgt.sl) {
-        candleSeries.createPriceLine({ price: tgt.sl, color: '#ff4b72', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
-    }
-    if (tgt.t1) {
-        candleSeries.createPriceLine({ price: tgt.t1, color: '#05ffc7', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T1' });
-    }
-    if (tgt.t2) {
-        candleSeries.createPriceLine({ price: tgt.t2, color: '#05ffc799', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T2' });
-    }
-    if (tgt.t3) {
-        candleSeries.createPriceLine({ price: tgt.t3, color: '#05ffc755', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T3' });
-    }
-
-    chart.timeScale().fitContent();
-    tvChart = chart;
-
-    new ResizeObserver(() => {
-        chart.applyOptions({ width: container.clientWidth });
-    }).observe(container);
-}
-
-function initFullChart(data) {
-    const container = document.getElementById('fullChartContainer');
-    if (!container || !data.ohlcv || !data.ohlcv.length) return;
-    container.innerHTML = '';
-
-    const theme = getChartTheme();
-    const chart = LightweightCharts.createChart(container, {
-        ...theme,
-        width: container.clientWidth,
-        height: container.clientHeight || 500,
-        handleScroll: { mouseWheel: true, pressedMouseMove: true },
-        handleScale: { mouseWheel: true, pinch: true },
-    });
-
-    // Base Layer — Market Data Domain
-    const candleSeries = chart.addCandlestickSeries({
-        upColor: '#05ffc7', downColor: '#ff4b72',
-        borderUpColor: '#05ffc7', borderDownColor: '#ff4b72',
-        wickUpColor: '#05ffc788', wickDownColor: '#ff4b7288',
-    });
-    candleSeries.setData(data.ohlcv.map(d => ({
-        time: d.date, open: d.o, high: d.h, low: d.l, close: d.c
-    })));
-
-    // Volume
-    const vol = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
-    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    vol.setData(data.ohlcv.map(d => ({
-        time: d.date, value: d.v,
-        color: d.c >= d.o ? 'rgba(5,255,199,0.12)' : 'rgba(255,75,114,0.12)',
-    })));
-    indicatorSeries.volume = vol;
-
-    // Indicator Layer — Analytics Domain
-    if (data.ema_9) {
-        const s = chart.addLineSeries({ color: 'rgba(79,168,255,0.7)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-        s.setData(data.ema_9.map((v, i) => v !== null ? { time: data.ohlcv[i]?.date, value: v } : null).filter(Boolean));
-        indicatorSeries.ema9 = s;
-    }
-    if (data.ema_21) {
-        const s = chart.addLineSeries({ color: 'rgba(0,200,255,0.7)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-        s.setData(data.ema_21.map((v, i) => v !== null ? { time: data.ohlcv[i]?.date, value: v } : null).filter(Boolean));
-        indicatorSeries.ema21 = s;
-    }
-    if (data.ema_200) {
-        const s = chart.addLineSeries({ color: 'rgba(255,82,82,0.5)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, visible: false });
-        s.setData(data.ema_200.map((v, i) => v !== null ? { time: data.ohlcv[i]?.date, value: v } : null).filter(Boolean));
-        indicatorSeries.ema200 = s;
-    }
-
-    // Research Overlay — Research Domain
-    const tgtFull = data.targets || {};
-    if (tgtFull.sl) {
-        overlaySeries.sl = candleSeries.createPriceLine({ price: tgtFull.sl, color: '#ff4b72', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
-    }
-    if (tgtFull.t1) {
-        overlaySeries.t1 = candleSeries.createPriceLine({ price: tgtFull.t1, color: '#05ffc7', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T1' });
-    }
-    if (tgtFull.t2) {
-        overlaySeries.t2 = candleSeries.createPriceLine({ price: tgtFull.t2, color: '#05ffc799', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T2' });
-    }
-    if (tgtFull.t3) {
-        overlaySeries.t3 = candleSeries.createPriceLine({ price: tgtFull.t3, color: '#05ffc755', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'T3' });
-    }
-
-    chart.timeScale().fitContent();
-    tvChartFull = chart;
-
-    new ResizeObserver(() => {
-        chart.applyOptions({ width: container.clientWidth, height: container.clientHeight || 500 });
-    }).observe(container);
-}
-
-function toggleIndicator(btn) {
-    btn.classList.toggle('active');
-    const key = btn.dataset.indicator;
-    const visible = btn.classList.contains('active');
-    if (indicatorSeries[key]) {
-        indicatorSeries[key].applyOptions({ visible });
-    }
-}
-
-function toggleOverlay(btn) {
-    btn.classList.toggle('active');
-    // Overlay visibility toggling would require chart reconstruction
-    // For now, visual toggle only
-}
-
-
-// ─────────────────────────────────────────────────────────────────
-// DATA LOADING & RENDERING
-// ─────────────────────────────────────────────────────────────────
-
-async function loadWorkspace() {
-    try {
-        const resp = await fetch('/api/stock/' + SYMBOL);
-        if (!resp.ok) throw new Error('API error ' + resp.status);
-        stockData = await resp.json();
-        if (stockData.error) throw new Error(stockData.error);
-
-        document.getElementById('swLoading').style.display = 'none';
-
-        // P0-3: Sync warning banner with API response
-        if (stockData.data_unavailable) {
-            document.getElementById('swDataUnavailableAlert').style.display = 'flex';
-        } else {
-            document.getElementById('swDataUnavailableAlert').style.display = 'none';
-        }
-
-        renderHeader(stockData);
-        renderScoreStrip(stockData);
-        renderResearch(stockData);
-        initResearchChart(stockData);
-        renderAnalytics(stockData);
-        renderSnapshots();
-    } catch (e) {
-        document.getElementById('swLoading').innerHTML = `<p style="color:var(--danger)">Failed to load: ${e.message}</p>`;
-    }
-}
-
-function renderHeader(data) {
-    const scan = data.scan || {};
-    document.getElementById('swSector').textContent = scan.sector || data.sector || '—';
-    document.getElementById('swPrice').textContent = '₹' + (data.price || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
-    const chg = scan.pct_1w || 0;
-    const chgEl = document.getElementById('swChange');
-    chgEl.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(1) + '% 1W';
-    chgEl.className = 'sw-change ' + (chg >= 0 ? 'positive' : 'negative');
-
-    if (scan.high_conviction) {
-        document.getElementById('swHcBadge').style.display = 'inline-flex';
-    }
-
-    const regime = (data.market_regime || 'unknown').toLowerCase();
-    const regBadge = document.getElementById('swRegimeBadge');
-    regBadge.textContent = 'REGIME: ' + regime.toUpperCase();
-    regBadge.className = 'sw-regime-badge regime-' + regime;
-}
-
-function renderScoreStrip(data) {
-    const scan = data.scan;
-    if (!scan) { document.getElementById('swScoreStrip').innerHTML = '<div class="sw-score-item"><span class="sw-score-label">Status</span><span class="sw-score-value" style="color:var(--text-muted)">Not in scan</span></div>'; return; }
-    const sc = scan.score >= 70 ? 'var(--success)' : scan.score >= 40 ? 'var(--warning)' : 'var(--text-muted)';
-    const rc = scan.risk_score < 40 ? 'var(--success)' : scan.risk_score < 65 ? 'var(--warning)' : 'var(--danger)';
-    const rrc = scan.risk_reward >= 2.5 ? 'var(--success)' : scan.risk_reward >= 1.5 ? 'var(--warning)' : 'var(--danger)';
-    document.getElementById('swScoreStrip').innerHTML = `
-        <div class="sw-score-item"><span class="sw-score-label">Score</span><span class="sw-score-value" style="color:${sc}">${scan.score}/100</span></div>
-        <div class="sw-score-item"><span class="sw-score-label">Risk</span><span class="sw-score-value" style="color:${rc}">${scan.risk_score}/100</span></div>
-        <div class="sw-score-item"><span class="sw-score-label">R:R</span><span class="sw-score-value" style="color:${rrc}">${scan.risk_reward ? '1:' + scan.risk_reward.toFixed(1) : '—'}</span></div>
-        <div class="sw-score-item"><span class="sw-score-label">Target</span><span class="sw-score-value" style="color:var(--success)">${data.targets?.t1 ? '₹' + data.targets.t1.toLocaleString() : (scan.target_price ? '₹' + scan.target_price.toLocaleString() : '—')}</span></div>
-        <div class="sw-score-item"><span class="sw-score-label">Stop Loss</span><span class="sw-score-value" style="color:var(--danger)">${data.targets?.sl ? '₹' + data.targets.sl.toLocaleString() : (scan.stop_loss ? '₹' + scan.stop_loss.toLocaleString() : '—')}</span></div>`;
-}
-
-// P0-16: Safe value formatter
-function safeVal(v) {
-    const n = parseFloat(v);
-    return Number.isFinite(n) ? n : null;
-}
-function fmtPrice(v) {
-    const n = safeVal(v);
-    return n !== null ? '₹' + n.toLocaleString('en-IN', {maximumFractionDigits: 2}) : '—';
-}
-
-function renderResearch(data) {
-    const scan = data.scan;
-    if (!scan) return;
-
-    // D1-B: Read targets from normalized API payload (single source of truth)
-    const tgt = data.targets || {};
-    const trade = scan.trade || {};
-    const T1 = safeVal(tgt.t1) ?? safeVal(trade.target1) ?? safeVal(scan.target_price) ?? null;
-    const T2 = safeVal(tgt.t2) ?? safeVal(trade.target2) ?? null;
-    const T3 = safeVal(tgt.t3) ?? safeVal(trade.target3) ?? null;
-    const SL = safeVal(tgt.sl) ?? safeVal(scan.stop_loss) ?? null;
-    const entryLow = safeVal(tgt.entry_low) ?? safeVal(trade.entry_low) ?? SL;
-    const entryHigh = safeVal(tgt.entry_high) ?? safeVal(trade.entry_high) ?? data.price;
-    const RR = safeVal(scan.risk_reward);
-
-    // Blueprint with D1-B normalization
-    if (trade.entry || T1 !== null) {
-        document.getElementById('swBlueprintCard').style.display = 'block';
-
-        // D1-B: CMP vs Entry Zone Badge
-        let entryBadge = '';
-        const cmp = data.price;
-        if (cmp && entryLow && entryHigh) {
-            if (cmp < entryLow) {
-                entryBadge = '<span class="sw-entry-badge sw-entry-below">CMP BELOW ENTRY</span>';
-            } else if (cmp >= entryLow && cmp <= entryHigh) {
-                entryBadge = '<span class="sw-entry-badge sw-entry-in">CMP IN ENTRY ZONE</span>';
-            } else {
-                entryBadge = '<span class="sw-entry-badge sw-entry-above">CMP ABOVE ENTRY</span>';
-            }
-        }
-
-        const err = tgt.entry_rr || {};
-        const entryRR_t1 = err.t1 !== undefined && err.t1 !== null ? '1:' + err.t1.toFixed(1) : '—';
-        const entryRR_t2 = err.t2 !== undefined && err.t2 !== null ? '1:' + err.t2.toFixed(1) : '—';
-        const entryRR_t3 = err.t3 !== undefined && err.t3 !== null ? '1:' + err.t3.toFixed(1) : '—';
-
-        document.getElementById('swBlueprintContent').innerHTML = `
-            ${entryBadge}
-            <div class="sw-blueprint-grid">
-                <div class="sw-bp-item"><span class="sw-bp-label">Entry Zone</span><span class="sw-bp-value">${fmtPrice(entryLow)} — ${fmtPrice(entryHigh)}</span></div>
-                <div class="sw-bp-item"><span class="sw-bp-label">Stop Loss</span><span class="sw-bp-value sw-danger">${fmtPrice(SL)}</span></div>
-                <div class="sw-bp-item"><span class="sw-bp-label">Target 1</span><span class="sw-bp-value sw-success">${fmtPrice(T1)}</span></div>
-                ${T2 !== null ? `<div class="sw-bp-item"><span class="sw-bp-label">Target 2</span><span class="sw-bp-value sw-success">${fmtPrice(T2)}</span></div>` : ''}
-                ${T3 !== null ? `<div class="sw-bp-item"><span class="sw-bp-label">Target 3</span><span class="sw-bp-value sw-success">${fmtPrice(T3)}</span></div>` : ''}
-                <div class="sw-bp-item"><span class="sw-bp-label">Legacy R:R</span><span class="sw-bp-value">${RR !== null ? '1:' + RR.toFixed(1) : '—'}</span></div>
-                <div class="sw-bp-item"><span class="sw-bp-label">Entry R:R (T1)</span><span class="sw-bp-value" style="color:var(--accent-cyan)">${entryRR_t1}</span></div>
-                ${T2 !== null ? `<div class="sw-bp-item"><span class="sw-bp-label">Entry R:R (T2)</span><span class="sw-bp-value" style="color:var(--accent-cyan)">${entryRR_t2}</span></div>` : ''}
-                ${T3 !== null ? `<div class="sw-bp-item"><span class="sw-bp-label">Entry R:R (T3)</span><span class="sw-bp-value" style="color:var(--accent-cyan)">${entryRR_t3}</span></div>` : ''}
-            </div>`;
-    }
-
-    // Explainability
-    renderExplainability(data);
-
-    // Signals
-    if (scan.signals && scan.signals.length) {
-        document.getElementById('swSignalsCard').style.display = 'block';
-        document.getElementById('swSignalsList').innerHTML = scan.signals.map(s =>
-            `<div class="sw-signal"><span class="sw-signal-dot ${s[2]}"></span><strong>${s[0]}</strong> <span>${s[1]}</span></div>`
-        ).join('');
-    }
-
-    // Targets
-    renderTargets(data, {T1, T2, T3, SL});
-
-    // 12-Layer Audit
-    renderLayerAccordion(data);
-}
-
-function renderExplainability(data) {
-    const scan = data.scan || {};
-    const positives = [], risks = [];
-    if (scan.fundamental_score > 5) positives.push('Strong fundamentals (score: ' + scan.fundamental_score + ')');
-    if (scan.is_breakout) positives.push('Breakout above resistance');
-    if (scan.adx > 25) positives.push('Strong trending momentum (ADX: ' + scan.adx + ')');
-    if (scan.rsi < 40 && scan.rsi > 20) positives.push('Oversold bounce potential (RSI: ' + scan.rsi + ')');
-    if (scan.volume_ratio > 2) positives.push('Unusual volume surge (' + scan.volume_ratio + 'x)');
-    if (scan.weekly_trend === 'up') positives.push('Weekly uptrend confirmed');
-    if (scan.high_conviction) positives.push('High conviction pick');
-    const rr = (scan.trade || {}).risk_reward || scan.risk_reward || 0;
-    if (rr >= 3) positives.push('Excellent R:R (1:' + rr.toFixed(1) + ')');
-
-    if (scan.risk_score > 65) risks.push('Elevated risk score (' + scan.risk_score + '/100)');
-    if (rr > 0 && rr < 1.5) risks.push('Unfavorable R:R (1:' + rr.toFixed(1) + ')');
-    if (scan.rsi > 70) risks.push('Overbought territory (RSI: ' + scan.rsi + ')');
-    if (scan.weekly_trend === 'down') risks.push('Weekly downtrend active');
-
-    if (!positives.length && !risks.length) return;
-    document.getElementById('swExplainCard').style.display = 'block';
-    document.getElementById('swExplainPositives').innerHTML = positives.slice(0, 4).map(r =>
-        `<div class="sw-explain-item positive">✓ ${r}</div>`
-    ).join('');
-    if (risks.length) {
-        document.getElementById('swExplainRisks').style.display = 'block';
-        document.getElementById('swExplainRisks').innerHTML = '<h4 class="sw-risk-header">⚠ Risks</h4>' +
-            risks.slice(0, 3).map(r => `<div class="sw-explain-item negative">⚠ ${r}</div>`).join('');
-    }
-}
-
-function renderTargets(data, targets) {
-    const scan = data.scan || {};
-    const sr = scan.support_resistance || {};
-    const {T1, T2, T3, SL} = targets || {};
-
-    // P0-14: Collect all points with priority order
-    const PRIORITY = ['S2','SL','S1','PRICE','PIVOT','R1','T1','T2','T3','R2'];
-    const colorMap = {
-        S2: 'var(--danger)', SL: 'var(--danger)', S1: '#ff9f43',
-        PRICE: 'var(--primary)', PIVOT: 'var(--text-muted)',
-        R1: '#48dbfb', T1: 'var(--success)', T2: 'var(--success)', T3: 'var(--success)', R2: '#48dbfb'
-    };
-
-    const rawPoints = [
-        {name: 'S2', val: safeVal(sr.s2)},
-        {name: 'SL', val: SL},
-        {name: 'S1', val: safeVal(sr.s1)},
-        {name: 'PRICE', val: safeVal(data.price)},
-        {name: 'PIVOT', val: safeVal(sr.pivot)},
-        {name: 'R1', val: safeVal(sr.r1)},
-        {name: 'T1', val: T1},
-        {name: 'T2', val: T2},
-        {name: 'T3', val: T3},
-        {name: 'R2', val: safeVal(sr.r2)},
-    ].filter(p => p.val !== null);
-
-    // P0-15: Fail-safe — need at least 2 valid points
-    if (rawPoints.length < 2) {
-        document.getElementById('swTargetsCard').style.display = 'none';
-        return;
-    }
-
-    // Sort by value
-    rawPoints.sort((a, b) => a.val - b.val);
-    const minVal = rawPoints[0].val;
-    const maxVal = rawPoints[rawPoints.length - 1].val;
-
-    // P0-15: Fail-safe — range must be positive
-    if (maxVal <= minVal) {
-        document.getElementById('swTargetsCard').style.display = 'none';
-        console.warn('[TARGETS] Invalid range: max <= min', maxVal, minVal);
-        return;
-    }
-
-    document.getElementById('swTargetsCard').style.display = 'block';
-
-    // P0-14: Group markers within 0.25% of each other
-    const groups = [];
-    let currentGroup = [rawPoints[0]];
-    for (let i = 1; i < rawPoints.length; i++) {
-        const prev = currentGroup[currentGroup.length - 1];
-        if ((rawPoints[i].val - prev.val) / prev.val < 0.0025) {
-            currentGroup.push(rawPoints[i]);
-        } else {
-            groups.push(currentGroup);
-            currentGroup = [rawPoints[i]];
-        }
-    }
-    groups.push(currentGroup);
-
-    // Merge groups: label by priority order, position by average
-    const markers = groups.map(g => {
-        g.sort((a, b) => PRIORITY.indexOf(a.name) - PRIORITY.indexOf(b.name));
-        const label = g.map(p => p.name).join('/');
-        const avgVal = g.reduce((s, p) => s + p.val, 0) / g.length;
-        const primaryColor = colorMap[g[0].name] || 'var(--text-primary)';
-        return {label, val: avgVal, color: primaryColor};
-    });
-
-    // Render visual target bar
-    const range = maxVal - minVal;
-    const pad = range * 0.05;
-    const barMin = minVal - pad;
-    const barMax = maxVal + pad;
-    const barRange = barMax - barMin;
-
-    let barHTML = '<div class="sw-target-bar">';
-    barHTML += '<div class="sw-target-bar-track"></div>';
-    markers.forEach(m => {
-        const pct = ((m.val - barMin) / barRange) * 100;
-        barHTML += `<div class="sw-target-marker" style="left:${pct}%">`;
-        barHTML += `<div class="sw-target-line" style="background:${m.color}"></div>`;
-        barHTML += `<div class="sw-target-label" style="color:${m.color}">${m.label}<br>${fmtPrice(m.val)}</div>`;
-        barHTML += `</div>`;
-    });
-    barHTML += '</div>';
-    document.getElementById('swTargetBar').innerHTML = barHTML;
-
-    // S/R Grid (always show what we have)
-    const srItems = [
-        {l: 'S2', v: sr.s2, c: 'var(--danger)'},
-        {l: 'S1', v: sr.s1, c: ''},
-        {l: 'Pivot', v: sr.pivot, c: ''},
-        {l: 'R1', v: sr.r1, c: ''},
-        {l: 'R2', v: sr.r2, c: 'var(--success)'},
-    ].filter(x => safeVal(x.v) !== null);
-
-    if (srItems.length) {
-        document.getElementById('swSrGrid').innerHTML = srItems.map(x =>
-            `<div class="sw-sr-item"><span class="sw-sr-label">${x.l}</span><span class="sw-sr-value" ${x.c ? 'style="color:'+x.c+'"' : ''}>₹${safeVal(x.v).toLocaleString('en-IN', {maximumFractionDigits:2})}</span></div>`
-        ).join('');
-    }
-}
-
-function renderLayerAccordion(data) {
-    const scan = data.scan || {};
-    const layers = [
-        { name: 'Technical Indicators', score: scan.score || 0, max: 100, color: 'var(--primary)' },
-        { name: 'Multi-Timeframe', score: scan.mtf_score || 0, max: 6, color: scan.mtf_score > 0 ? 'var(--success)' : 'var(--danger)' },
-        { name: 'Support/Resistance', score: 10, max: 10, color: 'var(--purple)' },
-        { name: 'Fundamentals', score: scan.fundamentals?.fund_score || 0, max: 32, color: 'var(--info)' },
-        { name: 'Seasonal Intelligence', score: scan.seasonal?.score || 0, max: 30, color: 'var(--purple)' },
-        { name: 'News Sentiment', score: scan.news?.score || 0, max: 20, color: 'var(--warning)' },
-    ];
-
-    document.getElementById('swLayerAccordion').innerHTML = layers.map((l, i) => {
-        const pct = l.max > 0 ? Math.min(100, (l.score / l.max) * 100) : 0;
-        return `<div class="sw-layer">
-            <div class="sw-layer-header">
-                <span class="sw-layer-num">${i + 1}</span>
-                <span class="sw-layer-name">${l.name}</span>
-                <span class="sw-layer-score" style="color:${l.color}">${l.score}/${l.max}</span>
-                <div class="sw-layer-bar"><div class="sw-layer-fill" style="width:${pct}%;background:${l.color}"></div></div>
+        <!-- Analysis History -->
+        <div class="sd-panel">
+            <div class="sd-panel-title">&#128336; Analysis History</div>
+            <div class="sd-kv">
+                <span class="sd-kv-label">First Analysed</span><span class="sd-kv-value" id="sdFirstDate">&mdash;</span>
+                <span class="sd-kv-label">Recommended at</span><span class="sd-kv-value" id="sdRecPrice">&mdash;</span>
+                <span class="sd-kv-label">Rescan Count</span><span class="sd-kv-value" id="sdRescanCount">&mdash;</span>
             </div>
-        </div>`;
-    }).join('');
-}
-
-
-// ─────────────────────────────────────────────────────────────────
-// ANALYTICS TAB
-// ─────────────────────────────────────────────────────────────────
-
-function renderAnalytics(data) {
-    const scan = data.scan || {};
-    const last = k => { const a = data[k]; return a ? a.filter(v => v !== null).pop() : null; };
-    const rsi = last('rsi'), adx = last('adx');
-    const macdBull = (last('macd_line') || 0) > (last('macd_signal') || 0);
-    const emaBull = (last('ema_9') || 0) > (last('ema_21') || 0);
-
-    const params = [
-        { l: 'Price', v: '₹' + (data.price || 0).toLocaleString(), c: 'var(--text-primary)' },
-        { l: '52W High', v: '₹' + (data.high_52w || 0).toLocaleString(), c: 'var(--success)' },
-        { l: '52W Low', v: '₹' + (data.low_52w || 0).toLocaleString(), c: 'var(--danger)' },
-        { l: 'RSI (14)', v: rsi ? rsi.toFixed(1) : '—', c: rsi < 30 ? 'var(--success)' : rsi > 70 ? 'var(--danger)' : 'var(--text-primary)' },
-        { l: 'ADX', v: adx ? adx.toFixed(1) : '—', c: adx > 25 ? 'var(--success)' : 'var(--text-primary)' },
-        { l: 'MACD', v: macdBull ? 'Bullish' : 'Bearish', c: macdBull ? 'var(--success)' : 'var(--danger)' },
-        { l: 'EMA 9/21', v: emaBull ? '9>21 (Bull)' : '9<21 (Bear)', c: emaBull ? 'var(--success)' : 'var(--danger)' },
-        { l: 'Regime', v: (data.market_regime || 'unknown').toUpperCase(), c: data.market_regime === 'bullish' ? 'var(--success)' : data.market_regime === 'bearish' ? 'var(--danger)' : 'var(--warning)' },
-    ];
-
-    document.getElementById('swParamsGrid').innerHTML = params.map(p =>
-        `<div class="sw-param"><span class="sw-param-label">${p.l}</span><span class="sw-param-value" style="color:${p.c}">${p.v}</span></div>`
-    ).join('');
-
-    // News
-    if (scan.news_sentiment && scan.news_sentiment.length) {
-        document.getElementById('swNewsCard').style.display = 'block';
-        document.getElementById('swNewsContent').innerHTML = scan.news_sentiment.slice(0, 5).map(n =>
-            `<div class="sw-news-item"><span class="sw-news-sentiment ${n.sentiment}">${n.sentiment}</span><span class="sw-news-headline">${n.headline}</span></div>`
-        ).join('');
-    }
-
-    // Fundamentals
-    if (scan.fundamentals) {
-        const f = scan.fundamentals;
-        document.getElementById('swFundamentalsCard').style.display = 'block';
-        document.getElementById('swFundamentalsContent').innerHTML = `
-            <div class="sw-fund-grid">
-                <div class="sw-fund-item"><span>PE</span><span>${f.pe || '—'}</span></div>
-                <div class="sw-fund-item"><span>PB</span><span>${f.pb || '—'}</span></div>
-                <div class="sw-fund-item"><span>ROE</span><span>${f.roe ? f.roe + '%' : '—'}</span></div>
-                <div class="sw-fund-item"><span>D/E</span><span>${f.debt_to_equity || '—'}</span></div>
-                <div class="sw-fund-item"><span>Promoters</span><span>${f.promoter_pct ? f.promoter_pct + '%' : '—'}</span></div>
-                <div class="sw-fund-item"><span>Score</span><span>${f.fund_score || 0}/32</span></div>
-            </div>`;
-    }
-}
-
-
-// ─────────────────────────────────────────────────────────────────
-// JOURNAL TAB (Via JournalRepository)
-// ─────────────────────────────────────────────────────────────────
-
-function renderJournal() {
-    const entries = MarketOS.JournalRepository.getEntries(SYMBOL);
-    const feed = document.getElementById('swJournalFeed');
-    if (!entries.length) {
-        feed.innerHTML = '<div class="sw-empty-state sw-empty-sm"><p>No journal entries yet. Start writing!</p></div>';
-        return;
-    }
-    feed.innerHTML = entries.map(e => `
-        <div class="sw-journal-entry">
-            <div class="sw-journal-entry-header">
-                <span class="sw-journal-emotion">${emotionEmoji(e.emotion)}</span>
-                <span class="sw-journal-date">${new Date(e.created_at).toLocaleString()}</span>
-                <button class="sw-journal-delete" onclick="deleteJournalEntry('${e.id}')" title="Delete">✕</button>
-            </div>
-            <div class="sw-journal-entry-body">${escapeHtml(e.text)}</div>
         </div>
-    `).join('');
-}
+    </div>
 
-function saveJournalEntry() {
-    const text = document.getElementById('swJournalText')?.value?.trim();
-    if (!text) return;
-    const emotion = document.getElementById('swJournalEmotion')?.value || 'neutral';
-    MarketOS.JournalRepository.addEntry({ symbol: SYMBOL, text, emotion });
+    <!-- Right Column -->
+    <div>
+        <!-- Trade Summary -->
+        <div class="sd-card">
+            <div class="sd-card-title">Trade Summary</div>
+            <div class="sd-summary" id="sdSummary">Loading analysis...</div>
+        </div>
 
-    // Emit journal event
-    MarketOS.createEvent('JOURNAL_ENTRY', 'analytics', {
-        entity_type: 'Asset',
-        entity_id: SYMBOL,
-        source: 'manual',
-        metadata: { emotion }
-    });
-
-    document.getElementById('swJournalText').value = '';
-    renderJournal();
-    showToast('Journal entry saved', 'success');
-}
-
-function deleteJournalEntry(id) {
-    MarketOS.JournalRepository.deleteEntry(SYMBOL, id);
-    renderJournal();
-}
-
-function emotionEmoji(emotion) {
-    const map = { neutral: '😐', confident: '😎', uncertain: '🤔', fearful: '😰', greedy: '🤑', regret: '😔' };
-    return map[emotion] || '😐';
-}
-
-
-// ─────────────────────────────────────────────────────────────────
-// TIMELINE TAB (Via TimelineRepository)
-// ─────────────────────────────────────────────────────────────────
-
-function renderTimeline() {
-    const events = MarketOS.TimelineRepository.getEvents(SYMBOL);
-    const feed = document.getElementById('swTimelineFeed');
-    if (!events.length) {
-        feed.innerHTML = '<div class="sw-empty-state sw-empty-sm"><p>No events recorded yet for ' + SYMBOL + '</p></div>';
-        return;
-    }
-    feed.innerHTML = events.slice(0, 50).map(e => {
-        const icon = { RESEARCH_CREATED: '🔬', RESEARCH_APPROVED: '✅', POSITION_OPENED: '📈', ALERT_CREATED: '⏰', WATCHLIST_ADDED: '⭐', JOURNAL_ENTRY: '📝' }[e.event_type] || '📋';
-        return `<div class="sw-timeline-item">
-            <div class="sw-timeline-dot">${icon}</div>
-            <div class="sw-timeline-content">
-                <div class="sw-timeline-type">${e.event_type.replace(/_/g, ' ')}</div>
-                <div class="sw-timeline-time">${new Date(e.timestamp).toLocaleString()}</div>
-            </div>
-        </div>`;
-    }).join('');
-}
-
-
-// ─────────────────────────────────────────────────────────────────
-// RESEARCH SNAPSHOTS
-// ─────────────────────────────────────────────────────────────────
-
-function renderSnapshots() {
-    let snapshots = MarketOS.getSnapshots(SYMBOL);
-    const container = document.getElementById('swSnapshotsList');
-    if (!snapshots.length) {
-        container.innerHTML = '<div class="sw-empty-state sw-empty-sm"><p>No snapshots yet</p></div>';
-        return;
-    }
-
-    // Sort by version descending (newest first)
-    snapshots = [...snapshots].sort((a, b) => (b.version || 1) - (a.version || 1));
-
-    const statusColors = {
-        draft: '#f59e0b',
-        active: '#05ffc7',
-        rejected: '#ff4b72',
-        superseded: '#6b7280',
-        archived: '#4b5563',
-    };
-
-    container.innerHTML = snapshots.slice(0, 10).map(s => {
-        const color = statusColors[s.snapshot_status] || '#6b7280';
-        const isDraft = s.snapshot_status === 'draft';
-        const isActive = s.snapshot_status === 'active';
-        const isInactive = s.snapshot_status === 'superseded' || s.snapshot_status === 'archived' || s.snapshot_status === 'rejected';
-
-        // Phase 4D.4.4: Action buttons based on status
-        let actions = '';
-        if (isDraft) {
-            actions = `
-                <button class="sw-btn sw-btn-sm" onclick="approveSnapshot('${s.snapshot_id}')" style="background:rgba(5,255,199,0.15); color:#05ffc7; border:1px solid rgba(5,255,199,0.3); padding:2px 8px; font-size:10px; cursor:pointer; border-radius:4px;">✓ Approve</button>
-                <button class="sw-btn sw-btn-sm" onclick="rejectSnapshot('${s.snapshot_id}')" style="background:rgba(255,75,114,0.15); color:#ff4b72; border:1px solid rgba(255,75,114,0.3); padding:2px 8px; font-size:10px; cursor:pointer; border-radius:4px;">✕ Reject</button>`;
-        } else if (isActive) {
-            actions = `
-                <button class="sw-btn sw-btn-sm" onclick="executeTradeFromSnapshot('${s.snapshot_id}')" style="background:rgba(79,168,255,0.15); color:#4fa8ff; border:1px solid rgba(79,168,255,0.3); padding:2px 8px; font-size:10px; cursor:pointer; border-radius:4px;">⚡ Execute Trade</button>
-                <button class="sw-btn sw-btn-sm" onclick="archiveSnapshot('${s.snapshot_id}')" style="padding:2px 6px; font-size:10px; cursor:pointer; border-radius:4px;">Archive</button>`;
-        } else if (s.snapshot_status === 'superseded') {
-            actions = `<button class="sw-btn sw-btn-sm" onclick="archiveSnapshot('${s.snapshot_id}')" style="padding:2px 6px; font-size:10px; cursor:pointer; border-radius:4px;">Archive</button>`;
-        }
-
-        return `
-        <div class="sw-snapshot-card" style="border-left: 3px solid ${color}; ${isInactive ? 'opacity: 0.6;' : ''}; margin-bottom: 8px; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 6px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
-                <div style="display:flex; align-items:center; gap: 6px;">
-                    <span style="font-weight:600; font-size:12px; color:var(--text-primary);">v${s.version || 1}</span>
-                    <span style="font-size:10px; color:${color}; padding:1px 6px; border-radius:3px; background:${color}22; text-transform:uppercase; font-weight:600;">${s.snapshot_status || 'draft'}</span>
-                    <span style="font-size:10px; color:var(--text-muted);">${s.source}</span>
+        <!-- Score Breakdown -->
+        <div class="sd-card">
+            <div class="sd-card-title">Score Breakdown</div>
+            <div id="sdSignals">
+                <div class="sd-signal-row"><span>Technical</span><span id="sdTechScore">&mdash;</span>
+                    <div class="sd-signal-bar-bg">
+                        <div class="sd-signal-bar" id="sdTechBar" style="width:0%;background:var(--accent-cyan)"></div>
+                    </div>
                 </div>
-                <span style="font-size:10px; color:var(--text-muted);">${new Date(s.created_at).toLocaleDateString()}</span>
+                <div class="sd-signal-row"><span>Fundamental</span><span id="sdFundScore">&mdash;</span>
+                    <div class="sd-signal-bar-bg">
+                        <div class="sd-signal-bar" id="sdFundBar" style="width:0%;background:var(--success)"></div>
+                    </div>
+                </div>
+                <div class="sd-signal-row"><span>Sentiment</span><span id="sdSentScore">&mdash;</span>
+                    <div class="sd-signal-bar-bg">
+                        <div class="sd-signal-bar" id="sdSentBar" style="width:0%;background:var(--warning)"></div>
+                    </div>
+                </div>
+                <div class="sd-signal-row"><span>Smart Money</span><span id="sdSmartScore">&mdash;</span>
+                    <div class="sd-signal-bar-bg">
+                        <div class="sd-signal-bar" id="sdSmartBar" style="width:0%;background:var(--purple, #9333EA)">
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:3px; font-size:11px; color:var(--text-muted); margin-bottom:6px;">
-                <span>Entry: ₹${s.entry_range?.low}–₹${s.entry_range?.high}</span>
-                <span>SL: ₹${s.stop_loss}</span>
-                <span>T1: ₹${s.targets?.[0] || '—'}</span>
-                <span>R:R: 1:${s.risk_reward_ratio?.toFixed(1)}</span>
+        </div>
+
+        <!-- Valuation Metrics -->
+        <div class="sd-card">
+            <div class="sd-card-title">&#128200; Valuation</div>
+            <div class="sd-val-grid" id="sdValuation">
+                <div class="sd-val-item">
+                    <div class="sd-val-num" id="sdPE">&mdash;</div>
+                    <div class="sd-val-label">Stock PE</div>
+                </div>
+                <div class="sd-val-item">
+                    <div class="sd-val-num" id="sdSectorPE">&mdash;</div>
+                    <div class="sd-val-label">Sector PE</div>
+                </div>
+                <div class="sd-val-item">
+                    <div class="sd-val-num" id="sdPB">&mdash;</div>
+                    <div class="sd-val-label">P/B Ratio</div>
+                </div>
+                <div class="sd-val-item">
+                    <div class="sd-val-num" id="sdMCap">&mdash;</div>
+                    <div class="sd-val-label">Market Cap</div>
+                </div>
             </div>
-            ${s.thesis_text ? `<div style="font-size:11px; color:var(--text-muted); margin-bottom:6px; font-style:italic; border-left:2px solid rgba(255,255,255,0.1); padding-left:6px;">${s.thesis_text.substring(0, 80)}${s.thesis_text.length > 80 ? '...' : ''}</div>` : ''}
-            ${s.parent_snapshot_id ? '<div style="font-size:10px; color:var(--text-muted); margin-bottom:4px;">↳ Revision of previous version</div>' : ''}
-            <div style="display:flex; gap:4px; flex-wrap:wrap;">${actions}</div>
-        </div>`;
-    }).join('');
+        </div>
 
-    // Phase 4D.4.3: Version Lineage Panel
-    const groups = {};
-    snapshots.forEach(s => {
-        const gid = s.snapshot_group_id || 'ungrouped';
-        if (!groups[gid]) groups[gid] = [];
-        groups[gid].push(s);
-    });
+        <!-- Quarterly Results -->
+        <div class="sd-card">
+            <div class="sd-card-title">&#128203; Quarterly Results</div>
+            <div id="sdQuarterly" style="font-size:12px;color:var(--text-muted)">Loading financials...</div>
+        </div>
 
-    const lineageGroups = Object.values(groups).filter(g => g.length > 1);
-    if (lineageGroups.length > 0) {
-        container.innerHTML += `
-        <div style="margin-top:12px; padding:8px; background:rgba(255,255,255,0.02); border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
-            <div style="font-size:11px; font-weight:600; color:var(--text-muted); margin-bottom:6px;">VERSION LINEAGE</div>
-            ${lineageGroups.map(group => {
-                const sorted = [...group].sort((a, b) => (b.version || 1) - (a.version || 1));
-                return sorted.map((s, i) => {
-                    const color = statusColors[s.snapshot_status] || '#6b7280';
-                    const connector = i < sorted.length - 1 ? '<div style="text-align:center; color:var(--text-muted); font-size:10px;">↑</div>' : '';
-                    return `<div style="display:flex; align-items:center; gap:6px; font-size:11px; padding:2px 0;">
-                        <span style="color:${color}; font-weight:600;">V${s.version}</span>
-                        <span style="color:${color}; text-transform:uppercase; font-size:10px;">${s.snapshot_status}</span>
-                        <span style="color:var(--text-muted); font-size:10px;">${new Date(s.created_at).toLocaleDateString()}</span>
-                    </div>${connector}`;
-                }).join('');
-            }).join('')}
-        </div>`;
-    }
-}
+        <!-- HC Reasons -->
+        <div class="sd-card" id="sdHCCard" style="display:none">
+            <div class="sd-card-title">Why High Conviction?</div>
+            <div id="sdHCReasons" style="font-size:12px;line-height:1.8"></div>
+        </div>
 
-// Phase 4D.5.5: Create user actor for command dispatch
-const _actor = MarketOS.createActor({ actor_type: 'user' });
+        <!-- Updates -->
+        <div class="sd-card">
+            <div class="sd-card-title">&#128221; Rescan Updates</div>
+            <div id="sdUpdates">
+                <div style="font-size:12px;color:var(--text-muted)">No updates yet. Updates will appear here when the
+                    stock is rescanned.</div>
+            </div>
+        </div>
+    </div>
+</div>
 
-// Phase 4D.4.4 + 4D.5.5: Approval Workflow via Command Bus
-window.approveSnapshot = function(snapshotId) {
-    const cmd = MarketOS.dispatchCommand('APPROVE_SNAPSHOT', _actor, {
-        snapshot_id: snapshotId,
-        symbol: SYMBOL,
-    });
-    if (cmd.success) {
-        renderSnapshots();
-        showToast('Research snapshot approved & activated', 'success');
-    } else {
-        showToast(cmd.error, 'error');
-    }
-};
+{% endblock %}
 
-window.rejectSnapshot = function(snapshotId) {
-    if (confirm('Reject this research thesis? This action is permanent.')) {
-        const cmd = MarketOS.dispatchCommand('REJECT_SNAPSHOT', _actor, {
-            snapshot_id: snapshotId,
-            symbol: SYMBOL,
+{% block scripts %}
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+    const SYMBOL = '{{ symbol }}';
+
+    // ── Helpers ──────────────────────────────────────────
+    const lastVal = (v) => Array.isArray(v) ? (v[v.length - 1] || 0) : (v || 0);
+    const safeNum = (v) => Number(lastVal(v)) || 0;
+    const fmtINR = (v) => '\u20B9' + Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    // ── TradingView Advanced Chart Widget ──────────────────
+    function initTVChart() {
+        const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+        const container = document.getElementById('tvChartWidget');
+        const script = document.createElement('script');
+        script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+        script.type = 'text/javascript';
+        script.async = true;
+        script.innerHTML = JSON.stringify({
+            "autosize": true,
+            "symbol": "NSE:" + SYMBOL,
+            "interval": "D",
+            "timezone": "Asia/Kolkata",
+            "theme": dark ? "dark" : "light",
+            "style": "1",
+            "locale": "en",
+            "backgroundColor": dark ? "rgba(17, 24, 39, 1)" : "rgba(255, 255, 255, 1)",
+            "gridColor": dark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.06)",
+            "hide_top_toolbar": false,
+            "hide_legend": false,
+            "allow_symbol_change": false,
+            "save_image": false,
+            "calendar": false,
+            "studies": ["STD;Bollinger_Bands", "STD;RSI"],
+            "support_host": "https://www.tradingview.com"
         });
-        if (cmd.success) {
-            renderSnapshots();
-            showToast('Research snapshot rejected', 'info');
-        } else {
-            showToast(cmd.error, 'error');
+        container.appendChild(script);
+    }
+
+    // ── Mini Sparklines ──────────────────────────────────
+    function miniLine(id, dates, vals, color, zones) {
+        const el = document.getElementById(id);
+        const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+        const c = LightweightCharts.createChart(el, {
+            width: el.clientWidth, height: 80,
+            layout: { background: { type: 'solid', color: 'transparent' }, textColor: dark ? '#6B7280' : '#9CA3AF', fontSize: 9 },
+            grid: { vertLines: { visible: false }, horzLines: { color: dark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.04)' } },
+            rightPriceScale: { visible: false }, timeScale: { visible: false },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Hidden }, handleScroll: false, handleScale: false,
+        });
+        const s = c.addLineSeries({ color, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        s.setData(dates.map((d, i) => ({ time: d, value: vals[i] || 0 })).filter(d => d.value));
+        if (zones) zones.forEach(z => s.createPriceLine({ price: z.v, color: z.c || 'rgba(255,255,255,0.15)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false }));
+        c.timeScale().fitContent();
+        new ResizeObserver(() => c.applyOptions({ width: el.clientWidth })).observe(el);
+    }
+
+    function miniHist(id, dates, vals, posC, negC) {
+        const el = document.getElementById(id);
+        const c = LightweightCharts.createChart(el, {
+            width: el.clientWidth, height: 80,
+            layout: { background: { type: 'solid', color: 'transparent' }, fontSize: 9 },
+            grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+            rightPriceScale: { visible: false }, timeScale: { visible: false },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Hidden }, handleScroll: false, handleScale: false,
+        });
+        const s = c.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false });
+        s.setData(dates.map((d, i) => ({ time: d, value: vals[i] || 0, color: (vals[i] || 0) >= 0 ? posC : negC })));
+        c.timeScale().fitContent();
+        new ResizeObserver(() => c.applyOptions({ width: el.clientWidth })).observe(el);
+    }
+
+    function miniBB(id, dates, upper, lower, close) {
+        const el = document.getElementById(id);
+        const c = LightweightCharts.createChart(el, {
+            width: el.clientWidth, height: 80,
+            layout: { background: { type: 'solid', color: 'transparent' }, fontSize: 9 },
+            grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+            rightPriceScale: { visible: false }, timeScale: { visible: false },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Hidden }, handleScroll: false, handleScale: false,
+        });
+        const mk = (a) => dates.map((d, i) => ({ time: d, value: a[i] || 0 })).filter(d => d.value > 0);
+        c.addLineSeries({ color: '#00C8FF', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(mk(close));
+        c.addLineSeries({ color: 'rgba(239,68,68,0.4)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(mk(upper));
+        c.addLineSeries({ color: 'rgba(16,185,129,0.4)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(mk(lower));
+        c.timeScale().fitContent();
+        new ResizeObserver(() => c.applyOptions({ width: el.clientWidth })).observe(el);
+    }
+
+    function miniVol(id, dates, vols) {
+        const el = document.getElementById(id);
+        const c = LightweightCharts.createChart(el, {
+            width: el.clientWidth, height: 80,
+            layout: { background: { type: 'solid', color: 'transparent' }, fontSize: 9 },
+            grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+            rightPriceScale: { visible: false }, timeScale: { visible: false },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Hidden }, handleScroll: false, handleScale: false,
+        });
+        const avg = vols.reduce((a, b) => a + (b || 0), 0) / (vols.length || 1);
+        const s = c.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false });
+        s.setData(dates.map((d, i) => ({ time: d, value: vols[i] || 0, color: (vols[i] || 0) > avg ? 'rgba(0,200,255,0.4)' : 'rgba(255,255,255,0.08)' })));
+        c.timeScale().fitContent();
+        new ResizeObserver(() => c.applyOptions({ width: el.clientWidth })).observe(el);
+    }
+
+    // ── Load Stock Data ────────────────────────────────────
+    async function loadStockData() {
+        try {
+            const resp = await fetch('/api/stock/' + SYMBOL);
+            if (!resp.ok) throw new Error('API error');
+            const data = await resp.json();
+            const raw = data.stock_detail || data;
+            const scan = raw.scan || {};
+            const fa = raw.first_analysis || {};
+            const s = { ...raw, ...scan };
+            if (!s.stop_loss && fa.stop_loss) s.stop_loss = fa.stop_loss;
+            if (!s.target_price && fa.target_price) s.target_price = fa.target_price;
+            if (!s.score && fa.score) s.score = fa.score;
+            if (!s.grade && fa.grade) s.grade = fa.grade;
+            if (!s.risk_reward && fa.risk_reward) s.risk_reward = fa.risk_reward;
+            if (!s.risk_score && fa.risk_score) s.risk_score = fa.risk_score;
+
+            // Header
+            document.getElementById('sdSector').textContent = s.sector || '\u2014';
+            if (s.high_conviction) document.getElementById('sdBadgeHC').style.display = 'inline-block';
+            if (s.is_golden) document.getElementById('sdBadgeGolden').style.display = 'inline-block';
+
+            // Price
+            const price = s.price || 0;
+            document.getElementById('sdPrice').textContent = fmtINR(price);
+            const chg1w = safeNum(s.pct_1w);
+            const chgEl = document.getElementById('sdChange');
+            chgEl.textContent = (chg1w >= 0 ? '+' : '') + chg1w.toFixed(2) + '% (1W)';
+            chgEl.style.color = chg1w >= 0 ? 'var(--success)' : 'var(--danger)';
+
+            // Targets
+            const tgt = raw.targets || {};
+            const trade = s.trade || {};
+            const entryLow = tgt.entry_low || trade.entry_low || fa.entry_low || 0;
+            const entryHigh = tgt.entry_high || trade.entry_high || fa.entry_high || 0;
+            const sl = tgt.sl || s.stop_loss || 0;
+            const t1 = tgt.t1 || trade.target1 || s.target_price || 0;
+            const t2 = tgt.t2 || trade.target2 || 0;
+            const t3 = tgt.t3 || trade.target3 || 0;
+
+            // CMP vs Entry tag
+            const cmpTag = document.getElementById('sdCmpTag');
+            if (entryLow > 0 && entryHigh > 0 && price > 0) {
+                if (price > entryHigh) cmpTag.innerHTML = '<span class="sd-cmp-tag sd-cmp-above">\u26A0 CMP above entry range</span>';
+                else if (price < entryLow) cmpTag.innerHTML = '<span class="sd-cmp-tag sd-cmp-below">\u2713 CMP below entry range</span>';
+                else cmpTag.innerHTML = '<span class="sd-cmp-tag sd-cmp-in">\u25CF CMP in entry range</span>';
+            }
+
+            // Recommended
+            const faDate = s.first_analysis_date || (fa.analysis_date ? fa.analysis_date.substring(0, 10) : null);
+            const faPrice = s.recommended_price || fa.price_at_analysis;
+            const recEl = document.getElementById('sdRecommended');
+            if (faDate) recEl.textContent = 'Recommended at ' + (faPrice ? fmtINR(faPrice) : '\u2014') + ' on ' + faDate;
+
+            // Score
+            const score = Math.round(s.score || 0);
+            document.getElementById('sdScore').textContent = score;
+            document.getElementById('sdScore').style.color = score >= 70 ? 'var(--success)' : score >= 50 ? 'var(--warning)' : 'var(--danger)';
+            document.getElementById('sdGrade').textContent = s.grade || (score >= 80 ? 'A+' : score >= 70 ? 'A' : score >= 60 ? 'B+' : score >= 50 ? 'B' : 'C');
+
+            // Trade Levels
+            document.getElementById('sdEntry').textContent = entryLow > 0 ? fmtINR(entryLow) + ' \u2014 ' + fmtINR(entryHigh) : '\u2014';
+            const slPct = entryHigh > 0 && sl > 0 ? ((sl - entryHigh) / entryHigh * 100).toFixed(1) : '0.0';
+            document.getElementById('sdSL').textContent = sl > 0 ? fmtINR(sl) + ' (' + slPct + '%)' : '\u2014';
+            document.getElementById('sdT1').textContent = t1 > 0 ? fmtINR(t1) : '\u2014';
+            document.getElementById('sdT2').textContent = t2 > 0 ? fmtINR(t2) : '\u2014';
+            document.getElementById('sdT3').textContent = t3 > 0 ? fmtINR(t3) : '\u2014';
+
+            // R:R — 1:X format, calculated from Entry/SL/Target1
+            const midEntry = (entryLow > 0 && entryHigh > 0) ? (entryLow + entryHigh) / 2 : price;
+            const risk = midEntry - sl;
+            const reward = t1 - midEntry;
+            const rrEl = document.getElementById('sdRR');
+            if (risk > 0 && reward > 0) {
+                const ratio = reward / risk;
+                if (ratio >= 1) { rrEl.textContent = '1:' + ratio.toFixed(1); }
+                else { rrEl.textContent = (1 / ratio).toFixed(1) + ':1'; }
+                rrEl.style.color = ratio >= 2 ? 'var(--success)' : ratio >= 1 ? 'var(--warning)' : 'var(--danger)';
+            } else { rrEl.textContent = '\u2014'; }
+
+            // Key Metrics
+            document.getElementById('sdRSI').textContent = safeNum(s.rsi).toFixed(1);
+            document.getElementById('sdADX').textContent = safeNum(s.adx).toFixed(1);
+            document.getElementById('sdMACD').textContent = typeof s.macd_signal === 'string' ? s.macd_signal : safeNum(s.macd_signal).toFixed(1);
+            document.getElementById('sdVolRatio').textContent = (Number(s.volume_ratio) || 0).toFixed(2) + 'x';
+            document.getElementById('sdDelivery').textContent = safeNum(s.delivery_pct || s.delivery).toFixed(1) + '%';
+            const trend = s.weekly_trend || '\u2014';
+            const trendEl = document.getElementById('sdTrend');
+            trendEl.textContent = (trend === 'up' ? '\u2197 ' : trend === 'down' ? '\u2198 ' : '\u2192 ') + trend;
+            trendEl.style.color = trend === 'up' ? 'var(--success)' : trend === 'down' ? 'var(--danger)' : '';
+            document.getElementById('sdRS').textContent = (Number(s.rs_vs_nifty) || 0).toFixed(2);
+            document.getElementById('sdRisk').textContent = (Number(s.risk_score) || 0).toFixed(0);
+
+            // Analysis History
+            document.getElementById('sdFirstDate').textContent = faDate || '\u2014';
+            document.getElementById('sdRecPrice').textContent = faPrice ? fmtINR(faPrice) : '\u2014';
+            document.getElementById('sdRescanCount').textContent = s.rescan_count || (raw.analysis_history ? raw.analysis_history.length : '0');
+
+            // Trade Summary
+            document.getElementById('sdSummary').textContent = s.trade_summary || trade.booking_plan || 'Analysis not available.';
+
+            // Score Breakdown
+            const techPct = Math.min(100, (Number(s.technical_score) || 0) * 2.5);
+            const fundPct = Math.min(100, (Number(s.fundamental_score) || 0) * 10);
+            const sentPct = Math.min(100, Math.abs(Number(s.news_sentiment_score) || 0) * 10);
+            const smartPct = Math.min(100, (Number(s.smart_money_score) || 0) * 10);
+            document.getElementById('sdTechScore').textContent = (Number(s.technical_score) || 0).toFixed(1);
+            document.getElementById('sdFundScore').textContent = (Number(s.fundamental_score) || 0).toFixed(1);
+            document.getElementById('sdSentScore').textContent = (Number(s.news_sentiment_score) || 0).toFixed(1);
+            document.getElementById('sdSmartScore').textContent = (Number(s.smart_money_score) || 0).toFixed(1);
+            setTimeout(() => {
+                document.getElementById('sdTechBar').style.width = techPct + '%';
+                document.getElementById('sdFundBar').style.width = fundPct + '%';
+                document.getElementById('sdSentBar').style.width = sentPct + '%';
+                document.getElementById('sdSmartBar').style.width = smartPct + '%';
+            }, 100);
+
+            // HC Reasons
+            if (s.high_conviction && s.hc_reasons && s.hc_reasons.length > 0) {
+                document.getElementById('sdHCCard').style.display = 'block';
+                document.getElementById('sdHCReasons').innerHTML = s.hc_reasons.map(r => '<div style="padding:3px 0;color:var(--success)">\u2713 ' + r + '</div>').join('');
+            }
+
+            // Locked Thesis override
+            const lt = s.locked_thesis;
+            if (lt && lt.thesis_status === 'ACTIVE') {
+                document.getElementById('sdEntry').textContent = fmtINR(lt.entry_low || 0) + ' \u2014 ' + fmtINR(lt.entry_high || 0);
+                document.getElementById('sdSL').textContent = fmtINR(lt.stop_loss || 0);
+                document.getElementById('sdT1').textContent = fmtINR(lt.target1 || 0);
+                document.getElementById('sdT2').textContent = fmtINR(lt.target2 || 0);
+                document.getElementById('sdT3').textContent = fmtINR(lt.target3 || 0);
+                document.getElementById('sdRecPrice').textContent = fmtINR(lt.recommended_price || 0);
+                document.getElementById('sdFirstDate').textContent = lt.locked_at || '\u2014';
+            }
+
+            // Thesis updates
+            const updates = s.thesis_updates || (lt && lt.updates) || [];
+            if (updates.length > 0) {
+                document.getElementById('sdUpdates').innerHTML = updates.slice().reverse().map(u =>
+                    '<div class="sd-update-item"><div class="sd-update-date">' + (u.date || '') + '</div><div class="sd-update-text">' + (u.text || '') + '</div></div>'
+                ).join('');
+            }
+
+            // ── Render Charts ──────────────────────────────────
+            const ohlcv = raw.ohlcv || [];
+            const dates = raw.dates || [];
+            // Initialize TradingView chart (doesn't need OHLCV data — it fetches its own)
+            initTVChart();
+
+            if (dates.length > 0) {
+                const rsiA = raw.rsi || [];
+                if (rsiA.length) {
+                    const rv = safeNum(rsiA);
+                    document.getElementById('miniRsiVal').textContent = rv.toFixed(1);
+                    document.getElementById('miniRsiVal').style.color = rv > 70 ? 'var(--danger)' : rv < 30 ? 'var(--success)' : '';
+                    miniLine('miniRsi', dates, rsiA, '#00C8FF', [{ v: 70, c: 'rgba(239,68,68,0.3)' }, { v: 30, c: 'rgba(16,185,129,0.3)' }]);
+                }
+                const macdH = raw.macd_hist || [];
+                if (macdH.length) {
+                    const mv = safeNum(macdH);
+                    document.getElementById('miniMacdVal').textContent = mv.toFixed(2);
+                    document.getElementById('miniMacdVal').style.color = mv >= 0 ? 'var(--success)' : 'var(--danger)';
+                    miniHist('miniMacd', dates, macdH, 'rgba(16,185,129,0.6)', 'rgba(239,68,68,0.6)');
+                }
+                const bbU = raw.bb_upper || [], bbL = raw.bb_lower || [], clA = raw.close || [];
+                if (bbU.length && bbL.length) {
+                    const bw = ((safeNum(bbU) - safeNum(bbL)) / safeNum(clA) * 100).toFixed(1);
+                    document.getElementById('miniBbVal').textContent = bw + '%';
+                    miniBB('miniBb', dates, bbU, bbL, clA);
+                }
+                const volA = raw.volume || [];
+                if (volA.length) {
+                    const lv = volA[volA.length - 1] || 0;
+                    document.getElementById('miniVolVal').textContent = lv > 1e6 ? (lv / 1e6).toFixed(1) + 'M' : lv > 1e3 ? (lv / 1e3).toFixed(0) + 'K' : lv;
+                    miniVol('miniVol', dates, volA);
+                }
+            }
+
+            // Load financials
+            loadFinancials();
+        } catch (err) {
+            console.error('Failed to load stock data:', err);
+            document.getElementById('sdSummary').textContent = 'Failed to load analysis. Please try again.';
         }
     }
-};
 
-window.archiveSnapshot = function(snapshotId) {
-    if (confirm('Archive this snapshot?')) {
-        // Archive is not yet a Command Bus command — uses direct call (Option B)
-        const result = MarketOS.updateSnapshotStatus(SYMBOL, snapshotId, 'archived');
-        if (result.success) {
-            renderSnapshots();
-        } else {
-            showToast(result.error, 'error');
+    // ── Financials ──────────────────────────────────────
+    async function loadFinancials() {
+        try {
+            const resp = await fetch('/api/stock/' + SYMBOL + '/financials');
+            if (!resp.ok) { document.getElementById('sdQuarterly').innerHTML = '<div style="font-size:12px;color:var(--text-muted)">Financial data not available.</div>'; return; }
+            const fin = await resp.json();
+            const f = fin.fundamentals || fin;
+            if (f.pe_ratio || f.pe) document.getElementById('sdPE').textContent = (f.pe_ratio || f.pe || 0).toFixed(1);
+            if (f.sector_pe) document.getElementById('sdSectorPE').textContent = f.sector_pe.toFixed(1);
+            if (f.pb_ratio || f.pb) document.getElementById('sdPB').textContent = (f.pb_ratio || f.pb || 0).toFixed(1);
+            const mcap = f.market_cap || 0;
+            if (mcap > 0) document.getElementById('sdMCap').textContent = mcap >= 10000 ? (mcap / 10000).toFixed(0) + 'L Cr' : mcap >= 100 ? (mcap / 100).toFixed(0) + 'K Cr' : mcap.toFixed(0) + ' Cr';
+
+            const quarters = f.quarterly_results || f.quarters || [];
+            if (quarters.length > 0) {
+                let h = '<table class="sd-fin-table"><thead><tr><th>Quarter</th><th>Revenue</th><th>Profit</th><th>EPS</th></tr></thead><tbody>';
+                quarters.slice(0, 4).forEach(q => {
+                    const rev = q.revenue || q.sales || 0;
+                    const profit = q.net_profit || q.profit || 0;
+                    const eps = q.eps || 0;
+                    h += '<tr><td>' + (q.quarter || q.period || '\u2014') + '</td>' +
+                        '<td>' + (rev > 0 ? '\u20B9' + rev.toLocaleString('en-IN') + ' Cr' : '\u2014') + '</td>' +
+                        '<td style="color:' + (profit >= 0 ? 'var(--success)' : 'var(--danger)') + '">' + (profit !== 0 ? '\u20B9' + profit.toLocaleString('en-IN') + ' Cr' : '\u2014') + '</td>' +
+                        '<td>' + (eps !== 0 ? '\u20B9' + eps.toFixed(2) : '\u2014') + '</td></tr>';
+                });
+                h += '</tbody></table>';
+                document.getElementById('sdQuarterly').innerHTML = h;
+            } else {
+                document.getElementById('sdQuarterly').innerHTML = '<div style="font-size:12px;color:var(--text-muted)">Quarterly data not available.</div>';
+            }
+        } catch (e) {
+            document.getElementById('sdQuarterly').innerHTML = '<div style="font-size:12px;color:var(--text-muted)">Financial data not available.</div>';
         }
     }
-};
 
-// Phase 4D.4.5 + 4D.5.5: Research → Portfolio Handoff via Command Bus
-window.executeTradeFromSnapshot = function(snapshotId) {
-    const cmd = MarketOS.dispatchCommand('CREATE_POSITION_INTENT', _actor, {
-        snapshot_id: snapshotId,
-        symbol: SYMBOL,
-    });
-
-    if (!cmd.success) {
-        showToast(cmd.error, 'error');
-        return;
+    // ── Live Price ─────────────────────────────────────────
+    async function updatePrice() {
+        try {
+            const resp = await fetch('/api/live-prices');
+            if (!resp.ok) return;
+            const prices = await resp.json();
+            const d = prices[SYMBOL] || prices[SYMBOL.replace('.NS', '')];
+            if (d && d.ltp) {
+                document.getElementById('sdPrice').textContent = fmtINR(d.ltp);
+                if (d.change_pct !== undefined) {
+                    const ce = document.getElementById('sdChange');
+                    ce.textContent = (d.change_pct >= 0 ? '+' : '') + d.change_pct.toFixed(2) + '%';
+                    ce.style.color = d.change_pct >= 0 ? 'var(--success)' : 'var(--danger)';
+                }
+            }
+        } catch (e) { }
     }
 
-    const intent = cmd.result.intent;
-
-    // Pre-populate and open Paper Trade form
-    showRailForm('paper-trade');
-
-    // Wait for DOM render, then populate from intent
-    setTimeout(() => {
-        const entryEl = document.getElementById('ptEntry');
-        const slEl = document.getElementById('ptStopLoss');
-        const targetEl = document.getElementById('ptTarget');
-
-        if (entryEl) entryEl.value = intent.entry_price;
-        if (slEl) slEl.value = intent.stop_loss;
-        if (targetEl && intent.targets?.[0]) targetEl.value = intent.targets[0];
-
-        // Store intent_id for consumption on submission
-        window._activeIntentId = intent.intent_id;
-
-        showToast(`Trade intent created from v${intent.snapshot_version} thesis. Complete the trade form.`, 'info');
-    }, 100);
-};
-
-
-// ─────────────────────────────────────────────────────────────────
-// UTILITIES
-// ─────────────────────────────────────────────────────────────────
-
-function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
-
-function showToast(msg, type) {
-    const toast = document.createElement('div');
-    toast.className = 'sw-toast sw-toast-' + (type || 'info');
-    toast.textContent = msg;
-    document.body.appendChild(toast);
-    requestAnimationFrame(() => toast.classList.add('visible'));
-    setTimeout(() => { toast.classList.remove('visible'); setTimeout(() => toast.remove(), 300); }, 3000);
-}
-
-
-// ─────────────────────────────────────────────────────────────────
-// INIT
-// ─────────────────────────────────────────────────────────────────
-loadWorkspace();
+    // ── Init ───────────────────────────────────────────────
+    loadStockData();
+    setInterval(updatePrice, 5000);
 </script>
 {% endblock %}

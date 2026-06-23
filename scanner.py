@@ -1539,24 +1539,29 @@ def _persistent_scan_worker(worker_id: str, scan_id: str,
                     if r:
                         # ── Phase 5.7: Immutable First Analysis Lock ──
                         try:
+                            # Only overlay if recommendation lock is ACTIVE
+                            locked_thesis = db.get_locked_thesis(sym)
+                            is_active = (locked_thesis is not None and locked_thesis.get("thesis_status") == "ACTIVE")
+
                             first = db.get_first_analysis(sym)
                             if first is None:
                                 # First time — lock this analysis permanently
                                 db.save_first_analysis(sym, r, scan_id=correlation_id)
                             else:
-                                # Rescan — save as new version, overlay locked values
+                                # Rescan — save as new version
                                 db.save_rescan_analysis(sym, r, scan_id=correlation_id,
                                                         change_reason="rescan")
-                                # Overlay first analysis values onto current result
-                                # so frontend always shows the original recommendation
-                                for lock_key in ("entry_low", "entry_high", "stop_loss",
-                                                 "target_price", "target1", "target2", "target3",
-                                                 "risk_reward", "score", "grade",
-                                                 "confidence_score", "risk_score"):
-                                    if first.get(lock_key) is not None:
-                                        r[lock_key] = first[lock_key]
-                                r["first_analysis_date"] = str(first.get("analysis_timestamp", ""))
-                                r["rescan_count"] = (first.get("version", 1))
+                                if is_active:
+                                    # Overlay first analysis values onto current result
+                                    # so frontend always shows the original recommendation
+                                    for lock_key in ("entry_low", "entry_high", "stop_loss",
+                                                     "target_price", "target1", "target2", "target3",
+                                                     "risk_reward", "score", "grade",
+                                                     "confidence_score", "risk_score"):
+                                        if first.get(lock_key) is not None:
+                                            r[lock_key] = first[lock_key]
+                                    r["first_analysis_date"] = str(first.get("analysis_timestamp", ""))
+                                    r["rescan_count"] = (first.get("version", 1))
                         except Exception as fa_exc:
                             log.debug("[%s] First analysis lock failed for %s: %s",
                                       correlation_id[:12], sym, fa_exc)
@@ -1594,3 +1599,4 @@ def _persistent_scan_worker(worker_id: str, scan_id: str,
         results_queue.put((batch_idx, batch_results))
 
     log.info("[%s][%s] Worker exiting", correlation_id[:12], worker_id)
+

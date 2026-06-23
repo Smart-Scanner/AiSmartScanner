@@ -522,7 +522,7 @@ def execute_db(query: str, params=None, fetch: str = None, require_pg: bool = Fa
 
     _last_pg_exc = None  # Track for require_pg error reporting
 
-    if is_postgresql():
+    if is_postgresql() and not pg_cooldown_active():
         pool = _get_pg_pool()
         if pool:
             conn = None
@@ -532,6 +532,7 @@ def execute_db(query: str, params=None, fetch: str = None, require_pg: bool = Fa
                 conn.autocommit = True
                 query_pg = query.replace("?", "%s")
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("SET statement_timeout = '15s'")
                     _t0 = time.perf_counter()
                     cur.execute(query_pg, params or ())
                     result = _collect_result(cur, fetch)
@@ -565,6 +566,7 @@ def execute_db(query: str, params=None, fetch: str = None, require_pg: bool = Fa
                         conn.autocommit = True
                         query_pg = query.replace("?", "%s")
                         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                            cur.execute("SET statement_timeout = '15s'")
                             cur.execute(query_pg, params or ())
                             return _collect_result(cur, fetch)
                     except Exception as retry_exc:
@@ -1626,6 +1628,30 @@ def _run_init_db_logic():
                 except Exception as exc:
                     log.warning("Phase 5.7: recommendation_history migration failed (non-fatal): %s", exc)
 
+                # ── Phase 5.7b: Recommendation Locks (thesis state tracking) ──
+                try:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS recommendation_locks (
+                            symbol TEXT PRIMARY KEY,
+                            locked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            recommended_price REAL,
+                            entry_low REAL,
+                            entry_high REAL,
+                            stop_loss REAL,
+                            target1 REAL,
+                            target2 REAL,
+                            target3 REAL,
+                            risk_reward REAL,
+                            thesis_status TEXT DEFAULT 'ACTIVE',
+                            score_at_lock INTEGER DEFAULT 0,
+                            updates JSONB DEFAULT '[]'::jsonb
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_rl_status ON recommendation_locks(thesis_status);
+                    """)
+                    log.info("Phase 5.7b: recommendation_locks table verified")
+                except Exception as exc:
+                    log.warning("Phase 5.7b: recommendation_locks migration failed (non-fatal): %s", exc)
+
                 # ── Phase 5.8: Add universe_version to scan_runs ─────────
                 try:
                     cur.execute("ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS universe_version TEXT;")
@@ -2067,6 +2093,49 @@ def _init_sqlite():
                 nifty_level REAL DEFAULT 0,
                 model_version TEXT DEFAULT '',
                 created_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS recommendation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                scan_id TEXT,
+                version INTEGER DEFAULT 1,
+                entry_low REAL,
+                entry_high REAL,
+                stop_loss REAL,
+                target_price REAL,
+                target1 REAL,
+                target2 REAL,
+                target3 REAL,
+                risk_reward REAL,
+                score INTEGER DEFAULT 0,
+                grade TEXT DEFAULT '',
+                confidence_score REAL DEFAULT 0,
+                risk_score REAL DEFAULT 0,
+                technical_score REAL DEFAULT 0,
+                fundamental_score REAL DEFAULT 0,
+                price_at_analysis REAL,
+                analysis_timestamp TEXT DEFAULT (datetime('now')),
+                is_first_analysis INTEGER DEFAULT 0,
+                change_reason TEXT,
+                data_snapshot TEXT,
+                UNIQUE(symbol, version)
+            );
+
+            CREATE TABLE IF NOT EXISTS recommendation_locks (
+                symbol TEXT PRIMARY KEY,
+                locked_at TEXT DEFAULT (datetime('now')),
+                recommended_price REAL,
+                entry_low REAL,
+                entry_high REAL,
+                stop_loss REAL,
+                target1 REAL,
+                target2 REAL,
+                target3 REAL,
+                risk_reward REAL,
+                thesis_status TEXT DEFAULT 'ACTIVE',
+                score_at_lock INTEGER DEFAULT 0,
+                updates TEXT DEFAULT '[]'
             );
         """)
 
@@ -3602,6 +3671,28 @@ def save_results(results: list[dict], scan_id: str = 'legacy_fallback', meta: di
                 set_meta(k, v)
         return
 
+    # ── Thesis Locking Integration ──
+    try:
+        init_recommendation_locks()
+        for r in to_save:
+            sym = r.get("symbol", "")
+            if not sym:
+                continue
+            price = r.get("price", 0)
+            # Try to lock thesis (first analysis)
+            was_locked = lock_thesis(sym, r)
+            if was_locked:
+                log.info("[THESIS] Locked new thesis for %s at ₹%.2f", sym, price)
+            else:
+                # Already has active thesis — append rescan update
+                rsi_val = r.get("rsi", 0)
+                score_val = r.get("score", 0)
+                append_thesis_update(sym, f"Rescan: CMP ₹{price:.2f}, Score {score_val:.0f}, RSI {rsi_val:.1f}")
+                # Check if SL or Target hit
+                check_thesis_completion(sym, price)
+    except Exception as exc:
+        log.warning("[THESIS] Thesis lock integration error: %s", exc)
+
     # ── Try PostgreSQL bulk path ──
     if is_postgresql() and not pg_cooldown_active():
         pool = _get_pg_pool()
@@ -4379,6 +4470,161 @@ def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
     log.info("[DB PERF] load_results limit=%d mode=%s | query=%s ms | parse_json=%s ms | total_rows=%d", limit, mode, t_query, t_parse, len(results))
     print(f"[DB PERF] load_results limit={limit} mode={mode} | query={t_query} ms | parse_json={t_parse} ms | total_rows={len(results)}")
     return results
+
+
+def get_stock_from_results(symbol: str) -> dict | None:
+    """Fetch a single stock's data from latest scan results by symbol."""
+    try:
+        row = execute_db(
+            "SELECT data FROM scan_results WHERE symbol = %s LIMIT 1",
+            (symbol.upper(),),
+            fetch="one",
+        )
+        if row:
+            val = row[0] if isinstance(row, (tuple, list)) else row.get("data")
+            if isinstance(val, str):
+                return json.loads(val)
+            if isinstance(val, dict):
+                return val
+    except Exception:
+        pass
+    return None
+
+
+# ── Thesis Locking (Recommendation Freeze) ─────────────────────────────
+def init_recommendation_locks():
+    """Create recommendation_locks table if not exists."""
+    try:
+        execute_db("""
+            CREATE TABLE IF NOT EXISTS recommendation_locks (
+                symbol TEXT PRIMARY KEY,
+                locked_at TEXT,
+                recommended_price REAL,
+                entry_low REAL,
+                entry_high REAL,
+                stop_loss REAL,
+                target1 REAL,
+                target2 REAL,
+                target3 REAL,
+                risk_reward REAL,
+                thesis_status TEXT DEFAULT 'ACTIVE',
+                score_at_lock REAL,
+                updates TEXT DEFAULT '[]'
+            )
+        """)
+    except Exception as exc:
+        log.warning("[THESIS] Failed to create recommendation_locks: %s", exc)
+
+
+def lock_thesis(symbol: str, data: dict) -> bool:
+    """Lock a thesis for a symbol. Returns True if newly locked, False if already locked."""
+    try:
+        existing = execute_db(
+            "SELECT thesis_status FROM recommendation_locks WHERE symbol = %s",
+            (symbol.upper(),), fetch="one"
+        )
+        if existing and existing[0] == 'ACTIVE':
+            return False  # Already locked, don't overwrite
+
+        trade = data.get("trade", {})
+        now = datetime.now(_IST).strftime("%Y-%m-%d %H:%M:%S") if '_IST' in dir() else __import__('datetime').datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        execute_db("""
+            INSERT INTO recommendation_locks (symbol, locked_at, recommended_price, entry_low, entry_high,
+                stop_loss, target1, target2, target3, risk_reward, thesis_status, score_at_lock, updates)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'ACTIVE', %s, '[]')
+            ON CONFLICT (symbol) DO UPDATE SET
+                locked_at = EXCLUDED.locked_at, recommended_price = EXCLUDED.recommended_price,
+                entry_low = EXCLUDED.entry_low, entry_high = EXCLUDED.entry_high,
+                stop_loss = EXCLUDED.stop_loss, target1 = EXCLUDED.target1,
+                target2 = EXCLUDED.target2, target3 = EXCLUDED.target3,
+                risk_reward = EXCLUDED.risk_reward, thesis_status = 'ACTIVE',
+                score_at_lock = EXCLUDED.score_at_lock, updates = '[]'
+        """, (
+            symbol.upper(), now, data.get("price", 0),
+            trade.get("entry_low", 0), trade.get("entry_high", 0),
+            data.get("stop_loss", trade.get("stop_loss", 0)),
+            trade.get("target1", data.get("target_price", 0)),
+            trade.get("target2", 0), trade.get("target3", 0),
+            data.get("risk_reward", trade.get("risk_reward", 0)),
+            data.get("score", 0),
+        ))
+        return True
+    except Exception as exc:
+        log.warning("[THESIS] Failed to lock thesis for %s: %s", symbol, exc)
+        return False
+
+
+def get_locked_thesis(symbol: str) -> dict | None:
+    """Get locked thesis for a symbol."""
+    try:
+        row = execute_db(
+            "SELECT symbol, locked_at, recommended_price, entry_low, entry_high, stop_loss, target1, target2, target3, risk_reward, thesis_status, score_at_lock, updates FROM recommendation_locks WHERE symbol = %s",
+            (symbol.upper(),), fetch="one"
+        )
+        if row:
+            cols = ["symbol", "locked_at", "recommended_price", "entry_low", "entry_high", "stop_loss", "target1", "target2", "target3", "risk_reward", "thesis_status", "score_at_lock", "updates"]
+            result = dict(zip(cols, row)) if isinstance(row, (tuple, list)) else row
+            if isinstance(result.get("updates"), str):
+                result["updates"] = json.loads(result["updates"])
+            return result
+    except Exception:
+        pass
+    return None
+
+
+def append_thesis_update(symbol: str, update_text: str):
+    """Append a timestamped update to an active thesis."""
+    try:
+        thesis = get_locked_thesis(symbol)
+        if not thesis or thesis.get("thesis_status") != "ACTIVE":
+            return
+        updates = thesis.get("updates", [])
+        if not isinstance(updates, list):
+            updates = []
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d %H:%M:%S")
+        updates.append({"date": now, "text": update_text})
+        # Keep last 50 updates max
+        updates = updates[-50:]
+        execute_db(
+            "UPDATE recommendation_locks SET updates = %s WHERE symbol = %s",
+            (json.dumps(updates), symbol.upper())
+        )
+    except Exception as exc:
+        log.warning("[THESIS] Failed to append update for %s: %s", symbol, exc)
+
+
+def check_thesis_completion(symbol: str, current_price: float):
+    """Check if current price has hit SL or Target, auto-close thesis."""
+    try:
+        thesis = get_locked_thesis(symbol)
+        if not thesis or thesis.get("thesis_status") != "ACTIVE":
+            return
+        sl = thesis.get("stop_loss", 0)
+        tg = thesis.get("target1", 0)
+        if sl and current_price <= sl:
+            execute_db(
+                "UPDATE recommendation_locks SET thesis_status = 'SL_HIT' WHERE symbol = %s",
+                (symbol.upper(),)
+            )
+            execute_db(
+                "UPDATE recommendation_history SET is_first_analysis = FALSE WHERE symbol = %s",
+                (symbol.upper(),)
+            )
+            append_thesis_update(symbol, f"SL Hit at ₹{current_price:.2f}")
+        elif tg and current_price >= tg:
+            execute_db(
+                "UPDATE recommendation_locks SET thesis_status = 'TG_HIT' WHERE symbol = %s",
+                (symbol.upper(),)
+            )
+            execute_db(
+                "UPDATE recommendation_history SET is_first_analysis = FALSE WHERE symbol = %s",
+                (symbol.upper(),)
+            )
+            append_thesis_update(symbol, f"Target 1 Hit at ₹{current_price:.2f}")
+    except Exception as exc:
+        log.warning("[THESIS] Completion check failed for %s: %s", symbol, exc)
 
 
 def load_golden_results(limit: int = 100) -> list[dict]:
@@ -6337,6 +6583,66 @@ def upsert_universe_catalog(symbols_data: list, set_synced_at: bool = True):
                    should pass False so Phase 2 (yfinance) still picks them up.
     """
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Batch upserts to avoid pool starvation (was: 1 INSERT per symbol × 2346 symbols)
+    BATCH_SIZE = 50
+    use_pg = is_postgresql() and not pg_cooldown_active()
+
+    if use_pg:
+        pool = _get_pg_pool()
+        if pool:
+            conn = None
+            try:
+                from psycopg2.extras import RealDictCursor
+                conn = pool.getconn()
+                conn.autocommit = False
+                with conn.cursor() as cur:
+                    for i in range(0, len(symbols_data), BATCH_SIZE):
+                        batch = symbols_data[i:i + BATCH_SIZE]
+                        for s in batch:
+                            sync_fail_count = s.get("sync_fail_count")
+                            synced_at_value = now if set_synced_at else None
+                            query_pg = """INSERT INTO universe_catalog
+               (symbol, company_name, market_cap, market_cap_bucket, sector, industry,
+                is_active, avg_volume_20d, avg_turnover_20d, instrument_type,
+                exchange, price, last_synced_at, sync_fail_count)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (symbol) DO UPDATE SET
+                 company_name = COALESCE(EXCLUDED.company_name, universe_catalog.company_name),
+                 market_cap = CASE WHEN EXCLUDED.market_cap > 0 THEN EXCLUDED.market_cap ELSE universe_catalog.market_cap END,
+                 market_cap_bucket = COALESCE(EXCLUDED.market_cap_bucket, universe_catalog.market_cap_bucket),
+                 sector = CASE WHEN EXCLUDED.sector != '' THEN EXCLUDED.sector ELSE universe_catalog.sector END,
+                 industry = CASE WHEN EXCLUDED.industry != '' THEN EXCLUDED.industry ELSE universe_catalog.industry END,
+                 is_active = EXCLUDED.is_active,
+                 avg_volume_20d = CASE WHEN EXCLUDED.avg_volume_20d > 0 THEN EXCLUDED.avg_volume_20d ELSE universe_catalog.avg_volume_20d END,
+                 avg_turnover_20d = CASE WHEN EXCLUDED.avg_turnover_20d > 0 THEN EXCLUDED.avg_turnover_20d ELSE universe_catalog.avg_turnover_20d END,
+                 instrument_type = COALESCE(EXCLUDED.instrument_type, universe_catalog.instrument_type),
+                 exchange = COALESCE(EXCLUDED.exchange, universe_catalog.exchange),
+                 price = CASE WHEN EXCLUDED.price > 0 THEN EXCLUDED.price ELSE universe_catalog.price END,
+                 sync_fail_count = COALESCE(EXCLUDED.sync_fail_count, universe_catalog.sync_fail_count),
+                 last_synced_at = CASE WHEN EXCLUDED.last_synced_at IS NOT NULL THEN EXCLUDED.last_synced_at ELSE universe_catalog.last_synced_at END"""
+                            cur.execute(query_pg, (
+                                s.get("symbol"), s.get("company_name"), s.get("market_cap"),
+                                s.get("market_cap_bucket"), s.get("sector"), s.get("industry"),
+                                s.get("is_active", True), s.get("avg_volume_20d", 0),
+                                s.get("avg_turnover_20d", 0), s.get("instrument_type", "EQ"),
+                                s.get("exchange", "NSE"), s.get("price", 0), synced_at_value,
+                                sync_fail_count if sync_fail_count is not None else 0))
+                        conn.commit()
+                conn.autocommit = True
+                log.info("[Phase 5.5] Upserted %d symbols into universe_catalog via PG batch (synced_at=%s)", len(symbols_data), set_synced_at)
+                return
+            except Exception as exc:
+                log.warning("[Phase 5.5] PG batch upsert failed: %s, falling back to individual", exc)
+                if conn:
+                    try: conn.rollback()
+                    except: pass
+            finally:
+                if conn:
+                    try: pool.putconn(conn)
+                    except: pass
+
+    # Fallback: individual inserts (SQLite path or PG failure)
     for s in symbols_data:
         sync_fail_count = s.get("sync_fail_count")
         synced_at_value = now if set_synced_at else None

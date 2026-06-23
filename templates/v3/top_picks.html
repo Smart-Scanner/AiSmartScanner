@@ -4,501 +4,607 @@
 
 {% block head %}
 <style>
-    .tp-why-container {
+    /* ── Top Picks Clean List Design ─────────────────────────── */
+    .tp-header {
         display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
         flex-wrap: wrap;
-        gap: 6px;
-        margin-top: 10px;
-        margin-bottom: 4px;
-        padding-top: 8px;
-        border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+        gap: 12px;
     }
-    .tp-why-tag {
-        font-size: 10px;
-        font-weight: 600;
-        padding: 3px 8px;
-        border-radius: 4px;
-        background: rgba(16, 185, 129, 0.08);
-        color: var(--success);
+
+    .tp-title {
+        font-family: 'Outfit', sans-serif;
+        font-size: 22px;
+        font-weight: 700;
+    }
+
+    .tp-subtitle {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 2px;
+    }
+
+    .tp-controls {
         display: flex;
         align-items: center;
-        gap: 4px;
-        font-family: 'Inter', sans-serif;
-        letter-spacing: -0.01em;
+        gap: 10px;
     }
-    .tp-why-tag-check {
+
+    .tp-search {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle, var(--border));
+        border-radius: 8px;
+        padding: 8px 14px;
+        font-size: 13px;
+        color: var(--text-primary, var(--text));
+        width: 220px;
+        outline: none;
+        font-family: inherit;
+    }
+
+    .tp-search:focus {
+        border-color: var(--accent-cyan, var(--primary));
+        box-shadow: 0 0 0 3px rgba(0, 200, 255, 0.1);
+    }
+
+    .tp-search::placeholder {
+        color: var(--text-muted);
+    }
+
+    .tp-filter-select {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle, var(--border));
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: var(--text-primary, var(--text));
+        font-family: inherit;
+        cursor: pointer;
+    }
+
+    /* Stats Bar */
+    .tp-stats {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 14px;
+        flex-wrap: wrap;
+    }
+
+    .tp-stat {
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+
+    .tp-stat strong {
+        color: var(--text-primary, var(--text));
+        font-weight: 600;
+    }
+
+    /* Table */
+    .tp-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+
+    .tp-table thead th {
         font-size: 10px;
-        color: var(--success);
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--text-muted);
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border-subtle, var(--border));
+        text-align: left;
+        position: sticky;
+        top: 0;
+        background: var(--bg-primary, #0B1220);
+        z-index: 10;
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+    }
+
+    .tp-table thead th:hover {
+        color: var(--accent-cyan, var(--primary));
+    }
+
+    .tp-table tbody tr {
+        cursor: pointer;
+        transition: background 0.15s ease;
+    }
+
+    .tp-table tbody tr:hover {
+        background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+    }
+
+    .tp-table tbody td {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.04));
+        font-size: 13px;
+        white-space: nowrap;
+    }
+
+    /* Stock Cell */
+    .tp-stock-cell {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .tp-stock-name {
+        font-weight: 600;
+        color: var(--text-primary, var(--text));
+        font-size: 13px;
+    }
+
+    .tp-stock-sector {
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-top: 1px;
+    }
+
+    .tp-badge-hc {
+        font-size: 9px;
+        font-weight: 800;
+        background: linear-gradient(135deg, #00C8FF, #0090FF);
+        color: #000;
+        padding: 2px 6px;
+        border-radius: 3px;
+        letter-spacing: 0.5px;
+    }
+
+    .tp-badge-golden {
+        font-size: 9px;
+        font-weight: 800;
+        background: linear-gradient(135deg, #FFD700, #FFA500);
+        color: #000;
+        padding: 2px 6px;
+        border-radius: 3px;
+        letter-spacing: 0.5px;
+    }
+
+    /* Score */
+    .tp-score {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 36px;
+        padding: 3px 8px;
+        border-radius: 6px;
+        font-weight: 700;
+        font-size: 13px;
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .tp-score-high {
+        background: rgba(16, 185, 129, 0.12);
+        color: var(--success, #10b981);
+    }
+
+    .tp-score-mid {
+        background: rgba(245, 158, 11, 0.12);
+        color: var(--warning, #f59e0b);
+    }
+
+    .tp-score-low {
+        background: rgba(239, 68, 68, 0.12);
+        color: var(--danger, #ef4444);
+    }
+
+    /* Price */
+    .tp-price {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 500;
+    }
+
+    .tp-change {
+        font-size: 11px;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 600;
+    }
+
+    .tp-change-up {
+        color: var(--success, #10b981);
+    }
+
+    .tp-change-down {
+        color: var(--danger, #ef4444);
+    }
+
+    /* Pagination */
+    .tp-pagination {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 8px;
+        margin-top: 20px;
+        padding: 16px 0;
+    }
+
+    .tp-page-btn {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle, var(--border));
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary, var(--text));
+        cursor: pointer;
+        transition: all 0.15s ease;
+        font-family: inherit;
+    }
+
+    .tp-page-btn:hover:not(:disabled) {
+        background: var(--accent-cyan, var(--primary));
+        color: #000;
+        border-color: var(--accent-cyan, var(--primary));
+    }
+
+    .tp-page-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+
+    .tp-page-info {
+        font-size: 12px;
+        color: var(--text-muted);
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Loading */
+    .tp-loading-bar {
+        height: 2px;
+        background: linear-gradient(90deg, transparent, var(--accent-cyan, var(--primary)), transparent);
+        animation: tp-shimmer 1.5s infinite;
+        border-radius: 1px;
+    }
+
+    @keyframes tp-shimmer {
+        0% {
+            opacity: 0.3;
+        }
+
+        50% {
+            opacity: 1;
+        }
+
+        100% {
+            opacity: 0.3;
+        }
+    }
+
+    .tp-empty {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-muted);
+    }
+
+    /* RR Badge */
+    .tp-rr {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 600;
+        font-size: 12px;
+    }
+
+    .tp-rr-good {
+        color: var(--success, #10b981);
+    }
+
+    .tp-rr-ok {
+        color: var(--warning, #f59e0b);
+    }
+
+    .tp-rr-bad {
+        color: var(--danger, #ef4444);
+    }
+
+    /* Thesis values */
+    .tp-entry {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        color: var(--accent-cyan, #00C8FF);
+    }
+
+    .tp-sl {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        color: var(--danger, #ef4444);
+    }
+
+    .tp-tg {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        color: var(--success, #10b981);
+    }
+
+    .tp-mono {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .tp-search {
+            width: 140px;
+        }
+
+        .tp-controls {
+            flex-wrap: wrap;
+        }
+
+        .tp-table thead th,
+        .tp-table tbody td {
+            padding: 8px 6px;
+            font-size: 11px;
+        }
+
+        .tp-hide-mobile {
+            display: none !important;
+        }
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="v3-page-header">
-    <div class="v3-page-title">Top Picks</div>
-    <div class="v3-page-subtitle">AI-ranked research candidates with conviction and risk analysis</div>
-</div>
-
-<!-- Loading State -->
-<div id="tpLoading" class="v3-loading-state">
-    <div class="v3-loading-steps">
-        <div class="v3-loading-step active" id="tpStep1"><span class="v3-loading-step-icon">&#9658;</span> Loading Research Results...</div>
-        <div class="v3-loading-step" id="tpStep2"><span class="v3-loading-step-icon">&#9675;</span> Scoring Universe...</div>
-        <div class="v3-loading-step" id="tpStep3"><span class="v3-loading-step-icon">&#9675;</span> Applying Filters...</div>
+<div class="tp-header">
+    <div>
+        <div class="tp-title">Top Picks</div>
+        <div class="tp-subtitle">AI-ranked stocks • Sorted by conviction score • Click any stock for detailed analysis
+        </div>
     </div>
-</div>
-
-<!-- Filter Bar -->
-<div id="tpFilters" class="tp-filter-bar" style="display:none">
-    <div class="tp-filter-group">
-        <label class="tp-filter-label">Score</label>
-        <select id="filterScore" class="tp-filter-select" onchange="applyFilters()">
-            <option value="0">All</option>
-            <option value="80">80+</option>
-            <option value="60">60+</option>
-            <option value="50">50+</option>
-        </select>
-    </div>
-    <div class="tp-filter-group">
-        <label class="tp-filter-label">Sector</label>
-        <select id="filterSector" class="tp-filter-select" onchange="applyFilters()">
+    <div class="tp-controls">
+        <input type="text" class="tp-search" id="tpSearch" placeholder="Search stocks..." oninput="handleSearch()">
+        <select class="tp-filter-select" id="filterSector" onchange="handleFilter()">
             <option value="">All Sectors</option>
         </select>
-    </div>
-    <div class="tp-filter-group">
-        <label class="tp-filter-label">Type</label>
-        <select id="filterType" class="tp-filter-select" onchange="applyFilters()">
-            <option value="">All</option>
+        <select class="tp-filter-select" id="filterType" onchange="handleFilter()">
+            <option value="">All Types</option>
             <option value="hc">High Conviction</option>
             <option value="golden">Golden</option>
             <option value="breakout">Breakout</option>
         </select>
     </div>
-    <div class="tp-filter-group">
-        <label class="tp-filter-label">Sort</label>
-        <select id="filterSort" class="tp-filter-select" onchange="applyFilters()">
-            <option value="score">Score</option>
-            <option value="risk_reward">R:R</option>
-            <option value="confidence">Confidence</option>
-            <option value="price">Price</option>
-        </select>
-    </div>
-    <div class="tp-view-toggle">
-        <button class="tp-view-btn active" id="btnCards" onclick="setView('cards')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-            Cards
-        </button>
-        <button class="tp-view-btn" id="btnCompact" onclick="setView('compact')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-            Compact
-        </button>
-    </div>
-    <div class="tp-result-count" id="resultCount"></div>
 </div>
 
-<!-- Hero Card (#1) -->
-<div id="heroCard" style="display:none"></div>
+<!-- Stats -->
+<div class="tp-stats" id="tpStats">
+    <div class="tp-stat">Universe: <strong id="statUniverse">—</strong></div>
+    <div class="tp-stat">Showing: <strong id="statShowing">—</strong></div>
+    <div class="tp-stat">HC Picks: <strong id="statHC">—</strong></div>
+    <div class="tp-stat">Last Scan: <strong id="statLastScan">—</strong></div>
+    <div class="tp-stat">Regime: <strong id="statRegime">—</strong></div>
+</div>
 
-<!-- Cards Grid -->
-<div id="cardsView" class="tp-cards-grid" style="display:none"></div>
+<!-- Loading -->
+<div id="tpLoading" class="tp-loading-bar"></div>
 
-<!-- Compact Table -->
-<div id="compactView" class="tp-compact-wrap" style="display:none">
-    <div class="table-responsive">
-    <table class="tp-compact-table">
+<!-- Table -->
+<div style="overflow-x:auto">
+    <table class="tp-table" id="tpTable" style="display:none">
         <thead>
             <tr>
-                <th>#</th>
-                <th>Symbol</th>
-                <th>Score</th>
-                <th>Confidence</th>
-                <th>R:R</th>
-                <th>Price</th>
-                <th>Sector</th>
+                <th onclick="sortBy('rank')">#</th>
+                <th onclick="sortBy('symbol')">Stock</th>
+                <th onclick="sortBy('score')">Score</th>
+                <th onclick="sortBy('price')">CMP</th>
+                <th onclick="sortBy('pct_1d')" class="tp-hide-mobile">1D%</th>
+                <th onclick="sortBy('pct_1w')" class="tp-hide-mobile">1W%</th>
+                <th onclick="sortBy('pct_1m')" class="tp-hide-mobile">1M%</th>
+                <th onclick="sortBy('adx')" class="tp-hide-mobile">ADX</th>
+                <th class="tp-hide-mobile">Entry</th>
+                <th class="tp-hide-mobile">SL</th>
+                <th class="tp-hide-mobile">Target</th>
+                <th onclick="sortBy('risk_reward')">R:R</th>
+                <th class="tp-hide-mobile">Trend</th>
             </tr>
         </thead>
-        <tbody id="compactBody"></tbody>
+        <tbody id="tpBody"></tbody>
     </table>
-    </div>
 </div>
 
+<!-- Empty State -->
+<div class="tp-empty" id="tpEmpty" style="display:none">
+    <div style="font-size:18px;margin-bottom:8px">No results found</div>
+    <div style="font-size:13px">Try adjusting your filters or wait for the next scan.</div>
+</div>
 
+<!-- Pagination -->
+<div class="tp-pagination" id="tpPagination" style="display:none">
+    <button class="tp-page-btn" id="btnPrev" onclick="changePage(-1)">← Previous</button>
+    <span class="tp-page-info" id="pageInfo">Page 1 / 1</span>
+    <button class="tp-page-btn" id="btnNext" onclick="changePage(1)">Next →</button>
+</div>
 
+{% endblock %}
+
+{% block scripts %}
 <script>
-let allResults = [];
-let filteredResults = [];
-let currentView = 'cards';
-let totalUniverse = 0;
+    let allResults = [];
+    let filteredResults = [];
+    let currentPage = 1;
+    let totalPages = 1;
+    const PER_PAGE = 25;
+    let currentSort = 'score';
+    let sortDesc = true;
+    let liveInterval = null;
 
-// ── Confidence Score Computation ──────────────────────────
-// confidence_score is computed client-side from sub-scores
-// The analyzer provides weighted sub-scores (max totals):
-//   technical_score (max 30), earnings_momentum_score (max 15),
-//   smart_money_score (max 10), sector_rotation_score (max 10),
-//   fundamental_score (max 10)
-// We normalize the key quality factors to 0-100
-function calcConfidence(s) {
-    const tech100 = Math.min(100, (s.technical_score || 0) / 30 * 100);
-    const earn100 = Math.min(100, (s.earnings_momentum_score || 0) / 15 * 100);
-    const sm100 = s.smart_money_100 || Math.min(100, (s.smart_money_score || 0) / 10 * 100);
-    const fund100 = Math.min(100, (s.fundamental_score || 0) / 10 * 100);
-    // Weighted: tech 30%, earnings 25%, smart money 25%, fundamentals 20%
-    const conf = tech100 * 0.30 + earn100 * 0.25 + sm100 * 0.25 + fund100 * 0.20;
-    return Math.round(Math.min(100, Math.max(0, conf)));
-}
+    // ── Load Data ──────────────────────────────────────
+    async function loadResults(page = 1) {
+        const loading = document.getElementById('tpLoading');
+        loading.style.display = 'block';
+        try {
+            const resp = await fetch(`/api/results?page=${page}&per_page=${PER_PAGE}&sort=${currentSort}&order=${sortDesc ? 'desc' : 'asc'}`);
+            const data = await resp.json();
+            allResults = data.results || [];
+            filteredResults = [...allResults];
 
-function confLevel(c) { return c >= 80 ? 'high' : c >= 50 ? 'medium' : 'low'; }
-function confLabel(c) { return c >= 80 ? 'HIGH' : c >= 50 ? 'MED' : 'LOW'; }
+            const pg = data.pagination || {};
+            currentPage = pg.page || 1;
+            totalPages = pg.total_pages || 1;
 
-function scoreClass(s) { return s >= 80 ? 'excellent' : s >= 65 ? 'good' : s >= 50 ? 'average' : 'poor'; }
+            // Stats
+            document.getElementById('statUniverse').textContent = (data.universe_size || data.total_analyzed || '—') + ' stocks';
+            document.getElementById('statShowing').textContent = `${pg.total_results || allResults.length} results`;
+            document.getElementById('statHC').textContent = data.total_hc || allResults.filter(s => s.high_conviction).length;
+            document.getElementById('statLastScan').textContent = data.last_scan || '—';
+            const regime = data.market_regime || 'unknown';
+            const regimeEl = document.getElementById('statRegime');
+            regimeEl.textContent = regime.charAt(0).toUpperCase() + regime.slice(1);
+            regimeEl.style.color = regime === 'bullish' ? 'var(--success)' : regime === 'bearish' ? 'var(--danger)' : 'var(--warning)';
 
-// ── Opportunity Type Badges ───────────────────────────────
-function getOpportunityBadges(s) {
-    const badges = [];
-    const earn100 = Math.min(100, (s.earnings_momentum_score || 0) / 15 * 100);
-    const sm100 = s.smart_money_100 || Math.min(100, (s.smart_money_score || 0) / 10 * 100);
-    const sect100 = Math.min(100, (s.sector_rotation_score || 0) / 10 * 100);
-    if (s.high_conviction) badges.push({label: 'HIGH CONVICTION', cls: 'high-conviction'});
-    if (s.is_golden) badges.push({label: 'GOLDEN', cls: 'high-conviction'});
-    if (earn100 > 70) badges.push({label: 'EARNINGS', cls: 'earnings'});
-    if (sm100 > 70) badges.push({label: 'SMART MONEY', cls: 'smart-money'});
-    if (s.is_breakout) badges.push({label: 'BREAKOUT', cls: 'breakout'});
-    if (sect100 > 70) badges.push({label: 'SECTOR LEADER', cls: 'sector-leader'});
-    return badges.slice(0, 3);
-}
+            // Populate sectors
+            if (currentPage === 1) {
+                const sel = document.getElementById('filterSector');
+                const existing = new Set([...sel.options].map(o => o.value));
+                const sectors = [...new Set(allResults.map(s => s.sector).filter(Boolean))].sort();
+                sectors.forEach(s => { if (!existing.has(s)) { const opt = document.createElement('option'); opt.value = s; opt.textContent = s; sel.appendChild(opt); } });
+            }
 
-// ── Why Ranked #1 Reasons ─────────────────────────────────
-function getRankReasons(s) {
-    const reasons = [];
-    const earn100 = Math.min(100, (s.earnings_momentum_score || 0) / 15 * 100);
-    const sm100 = s.smart_money_100 || Math.min(100, (s.smart_money_score || 0) / 10 * 100);
-    const sect100 = Math.min(100, (s.sector_rotation_score || 0) / 10 * 100);
-    if (earn100 > 70) reasons.push('Strong Earnings Momentum');
-    if (sm100 > 70) reasons.push('Smart Money Accumulation');
-    if (sect100 > 70) reasons.push('Sector Leader');
-    if (s.high_conviction) reasons.push('High Conviction');
-    if ((s.risk_reward || 0) > 2.0) reasons.push(`Risk Reward 1:${(s.risk_reward || 0).toFixed(1)}`);
-    if (s.is_breakout) reasons.push('Breakout Pattern');
-    if (s.is_golden) reasons.push('Golden Stock');
-    const fund100 = Math.min(100, (s.fundamental_score || 0) / 10 * 100);
-    if (fund100 > 60) reasons.push('Strong Fundamentals');
-    return reasons.length ? reasons : ['Highest composite score across all research factors'];
-}
-
-function calcEntryRR(ts) {
-    if (!ts) return null;
-    const entryLow = parseFloat(ts.entry_low);
-    const entryHigh = parseFloat(ts.entry_high);
-    const sl = parseFloat(ts.stop_loss);
-    const t1 = parseFloat(ts.target1);
-    
-    if (isNaN(entryLow) || isNaN(entryHigh) || isNaN(sl) || isNaN(t1)) return null;
-    
-    const entryMid = (entryLow + entryHigh) / 2.0;
-    const risk = entryMid - sl;
-    if (risk <= 0) return null;
-    
-    return parseFloat(((t1 - entryMid) / risk).toFixed(1));
-}
-
-const THESIS_RULES = [
-    {
-        reason: "Strong Earnings Momentum",
-        source: "earnings_momentum_score",
-        evaluate: (s) => (s.earnings_momentum_score || 0) >= 10 || (s.earnings_momentum_100 || 0) > 70
-    },
-    {
-        reason: "Smart Money Accumulation",
-        source: "smart_money_score",
-        evaluate: (s) => (s.smart_money_score || 0) >= 7 || (s.smart_money_100 || 0) > 70
-    },
-    {
-        reason: "Sector Leadership",
-        source: "sector_rotation_score",
-        evaluate: (s) => (s.sector_rotation_score || 0) >= 75
-    },
-    {
-        reason: "Weekly Uptrend",
-        source: "weekly_trend",
-        evaluate: (s) => s.weekly_trend && String(s.weekly_trend).toLowerCase().includes('bull')
-    },
-    {
-        reason: "Volume Expansion",
-        source: "volume_ratio",
-        evaluate: (s) => (s.volume_ratio || 0) >= 1.5
-    },
-    {
-        reason: "Breakout Pattern",
-        source: "is_breakout",
-        evaluate: (s) => !!s.is_breakout
-    }
-];
-
-function getWhyReasons(s) {
-    const reasons = [];
-    
-    // 1. HC Reasons (dynamic, highest priority)
-    if (s.hc_reasons) {
-        if (Array.isArray(s.hc_reasons)) {
-            reasons.push(...s.hc_reasons);
-        } else if (typeof s.hc_reasons === 'string' && s.hc_reasons.trim()) {
-            reasons.push(s.hc_reasons);
-        }
-    }
-    
-    // 2. Evaluate rules mapping
-    for (const rule of THESIS_RULES) {
-        if (rule.evaluate(s)) {
-            reasons.push(rule.reason);
-        }
-    }
-    
-    return [...new Set(reasons)].slice(0, 3);
-}
-
-function renderWhyTags(s) {
-    const reasons = getWhyReasons(s);
-    if (!reasons || reasons.length === 0) return '';
-    return `<div class="tp-why-container">
-        ${reasons.map(r => `<span class="tp-why-tag"><span class="tp-why-tag-check">✓</span> ${r}</span>`).join('')}
-    </div>`;
-}
-
-// ── Watchlist Helpers (via MarketOS Repository) ──────────
-function getWatchlist() {
-    try { return JSON.parse(MarketOS.SystemRepository.getPreference('v3_watchlist', null) || '[]'); } catch { return []; }
-}
-function isInWatchlist(sym) { return getWatchlist().some(w => w.symbol === sym); }
-function toggleWatchlist(sym, score, e) {
-    if (e) { e.stopPropagation(); e.preventDefault(); }
-    let wl = getWatchlist();
-    const idx = wl.findIndex(w => w.symbol === sym);
-    if (idx >= 0) { wl.splice(idx, 1); }
-    else { wl.push({ symbol: sym, addedAt: new Date().toISOString(), addedScore: score, notes: '' }); }
-    MarketOS.SystemRepository.setPreference('v3_watchlist', JSON.stringify(wl));
-    renderResults();
-}
-
-// ── Render Hero Card ──────────────────────────────────────
-function renderHero(s, rank) {
-    const conf = calcConfidence(s);
-    const cl = confLevel(conf);
-    const badges = getOpportunityBadges(s);
-    const reasons = getRankReasons(s);
-    const pctile = totalUniverse > 0 ? ((rank / totalUniverse) * 100).toFixed(1) : '0.1';
-    const inWL = isInWatchlist(s.symbol);
-
-    return `<div class="tp-hero" onclick="window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())" style="cursor: pointer;">
-        <div class="tp-hero-top">
-            <div class="tp-hero-left">
-                <div class="tp-hero-rank">\u2605 WHY RANKED #${rank}</div>
-                <div class="tp-hero-symbol">${s.symbol}</div>
-                <div class="tp-hero-sector">${s.sector || 'Other'} &middot; \u20b9${(s.price || 0).toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
-                <div class="tp-hero-percentile">Top ${pctile}% of ${totalUniverse.toLocaleString()} stocks scanned</div>
-                <ul class="tp-hero-reasons">
-                    ${reasons.map(r => `<li><span class="check">\u2713</span> ${r}</li>`).join('')}
-                </ul>
-            </div>
-            <div class="tp-hero-right">
-                <div class="tp-score-arc large ${scoreClass(s.score)}" style="--pct:${s.score}">
-                    <div class="inner">${s.score}</div>
-                </div>
-                <div class="tp-conf ${cl}"><span class="dot"></span> ${conf}% ${confLabel(conf)}</div>
-                <div class="tp-hero-badges">
-                    ${badges.map(b => `<span class="tp-opp-badge ${b.cls}">${b.label}</span>`).join('')}
-                </div>
-                <div class="tp-hero-actions">
-                    <button class="tp-btn-analyze" onclick="event.stopPropagation(); window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())">Analyze</button>
-                    <button class="tp-btn-star ${inWL ? 'active' : ''}" onclick="toggleWatchlist('${s.symbol}', ${s.score}, event)">\u2605</button>
-                </div>
-            </div>
-        </div>
-    </div>`;
-}
-
-// ── Render Stock Card ─────────────────────────────────────
-function renderCard(s, rank) {
-    const conf = calcConfidence(s);
-    const cl = confLevel(conf);
-    const badges = getOpportunityBadges(s);
-    const inWL = isInWatchlist(s.symbol);
-    const entryRRVal = calcEntryRR(s.trade_summary);
-    const rr = entryRRVal !== null ? '1:' + entryRRVal.toFixed(1) : ((s.risk_reward || 0) > 0 ? '1:' + (s.risk_reward || 0).toFixed(1) : '--');
-    const target = s.target_price ? '\u20b9' + s.target_price.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
-    const sl = s.stop_loss ? '\u20b9' + s.stop_loss.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
-
-    return `<div class="tp-card" onclick="window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())">
-        <div class="tp-card-top">
-            <div class="tp-card-info">
-                <div class="tp-card-rank">#${rank}</div>
-                <div class="tp-card-symbol">${s.symbol}</div>
-                <div class="tp-card-sector">${s.sector || 'Other'}</div>
-                <div class="tp-card-conf">
-                    <span class="tp-conf ${cl}"><span class="dot"></span> ${conf}% ${confLabel(conf)}</span>
-                </div>
-            </div>
-            <div class="tp-score-arc ${scoreClass(s.score)}" style="--pct:${s.score}">
-                <div class="inner">${s.score}</div>
-            </div>
-        </div>
-        <div class="tp-card-badges">
-            ${badges.map(b => `<span class="tp-opp-badge ${b.cls}">${b.label}</span>`).join('')}
-        </div>
-        ${renderWhyTags(s)}
-        <div class="tp-card-metrics">
-            <div class="tp-card-metric">
-                <div class="tp-card-metric-label">R:R</div>
-                <div class="tp-card-metric-value">${rr}</div>
-            </div>
-            <div class="tp-card-metric">
-                <div class="tp-card-metric-label">Target</div>
-                <div class="tp-card-metric-value" style="color:var(--success)">${target}</div>
-            </div>
-            <div class="tp-card-metric">
-                <div class="tp-card-metric-label">Stop</div>
-                <div class="tp-card-metric-value" style="color:var(--danger)">${sl}</div>
-            </div>
-        </div>
-        <div class="tp-card-actions">
-            <button class="tp-btn-analyze" onclick="event.stopPropagation(); window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())">Analyze</button>
-            <button class="tp-btn-star ${inWL ? 'active' : ''}" onclick="toggleWatchlist('${s.symbol}', ${s.score}, event)">\u2605</button>
-        </div>
-    </div>`;
-}
-
-// ── Render Compact Row ────────────────────────────────────
-function renderCompactRow(s, rank) {
-    const conf = calcConfidence(s);
-    const cl = confLevel(conf);
-    const entryRRVal = calcEntryRR(s.trade_summary);
-    const rr = entryRRVal !== null ? '1:' + entryRRVal.toFixed(1) : ((s.risk_reward || 0) > 0 ? '1:' + (s.risk_reward || 0).toFixed(1) : '--');
-    return `<tr onclick="window.location.href='/symbol/' + encodeURIComponent(('${s.symbol}' || '').toUpperCase())">
-        <td>${rank}</td>
-        <td>${s.symbol}</td>
-        <td><span class="v3-score ${scoreClass(s.score)}" style="font-size:12px;padding:2px 8px">${s.score}</span></td>
-        <td><span class="tp-conf ${cl}" style="font-size:10px;padding:2px 8px"><span class="dot"></span> ${conf}% ${confLabel(conf)}</span></td>
-        <td style="font-family:'JetBrains Mono',monospace">${rr}</td>
-        <td style="font-family:'JetBrains Mono',monospace">\u20b9${(s.price || 0).toLocaleString('en-IN', {maximumFractionDigits:2})}</td>
-        <td>${s.sector || 'Other'}</td>
-    </tr>`;
-}
-
-// ── Filter & Sort ─────────────────────────────────────────
-function applyFilters() {
-    const minScore = parseInt(document.getElementById('filterScore').value) || 0;
-    const sector = document.getElementById('filterSector').value;
-    const type = document.getElementById('filterType').value;
-    const sort = document.getElementById('filterSort').value;
-
-    filteredResults = allResults.filter(s => {
-        if (s.score < minScore) return false;
-        if (sector && s.sector !== sector) return false;
-        if (type === 'hc' && !s.high_conviction) return false;
-        if (type === 'golden' && !s.is_golden) return false;
-        if (type === 'breakout' && !s.is_breakout) return false;
-        return true;
-    });
-
-    if (sort === 'risk_reward') filteredResults.sort((a, b) => (b.risk_reward || 0) - (a.risk_reward || 0));
-    else if (sort === 'confidence') filteredResults.sort((a, b) => calcConfidence(b) - calcConfidence(a));
-    else if (sort === 'price') filteredResults.sort((a, b) => (b.price || 0) - (a.price || 0));
-    else filteredResults.sort((a, b) => (b.score || 0) - (a.score || 0));
-
-    renderResults();
-}
-
-function renderResults() {
-    const hero = document.getElementById('heroCard');
-    const cards = document.getElementById('cardsView');
-    const compact = document.getElementById('compactView');
-    const count = document.getElementById('resultCount');
-
-    count.textContent = `${filteredResults.length} stocks`;
-
-    if (filteredResults.length === 0) {
-        hero.style.display = 'none';
-        cards.innerHTML = '<div class="v3-empty-state"><div class="v3-empty-title">No stocks match filters</div><div class="v3-empty-desc">Try adjusting your score, sector, or type filters.</div></div>';
-        cards.style.display = currentView === 'cards' ? 'block' : 'none';
-        compact.style.display = currentView === 'compact' ? 'block' : 'none';
-        return;
-    }
-
-    // Hero card (always #1 regardless of view)
-    hero.innerHTML = renderHero(filteredResults[0], 1);
-    hero.style.display = 'block';
-
-    // Remaining stocks
-    const rest = filteredResults.slice(1);
-
-    if (currentView === 'cards') {
-        cards.innerHTML = rest.map((s, i) => renderCard(s, i + 2)).join('');
-        cards.style.display = 'grid';
-        compact.style.display = 'none';
-    } else {
-        document.getElementById('compactBody').innerHTML =
-            filteredResults.map((s, i) => renderCompactRow(s, i + 1)).join('');
-        cards.style.display = 'none';
-        compact.style.display = 'block';
-        // In compact view, hero is hidden to avoid duplication
-        hero.style.display = 'none';
-    }
-}
-
-function setView(v) {
-    currentView = v;
-    document.getElementById('btnCards').classList.toggle('active', v === 'cards');
-    document.getElementById('btnCompact').classList.toggle('active', v === 'compact');
-    renderResults();
-}
-
-// ── Loading Steps ─────────────────────────────────────────
-function setStep(n) {
-    for (let i = 1; i <= 3; i++) {
-        const el = document.getElementById('tpStep' + i);
-        if (i < n) { el.className = 'v3-loading-step done'; el.querySelector('.v3-loading-step-icon').textContent = '\u2713'; }
-        else if (i === n) { el.className = 'v3-loading-step active'; el.querySelector('.v3-loading-step-icon').textContent = '\u25BA'; }
-        else { el.className = 'v3-loading-step'; el.querySelector('.v3-loading-step-icon').textContent = '\u25CB'; }
-    }
-}
-
-// ── Data Load ─────────────────────────────────────────────
-async function loadPageData() {
-    const loading = document.getElementById('tpLoading');
-    const filters = document.getElementById('tpFilters');
-    loading.style.display = 'block';
-    filters.style.display = 'none';
-
-    try {
-        setStep(1);
-        const resp = await fetch('/api/results');
-        const data = await resp.json();
-        const results = data.results || (Array.isArray(data) ? data : []);
-        totalUniverse = data.universe_size || data.total_analyzed || results.length;
-
-        setStep(2);
-        allResults = results.sort((a, b) => (b.score || 0) - (a.score || 0));
-
-        // Populate sector dropdown
-        const sectors = [...new Set(allResults.map(s => s.sector).filter(Boolean))].sort();
-        const sel = document.getElementById('filterSector');
-        sectors.forEach(s => { const opt = document.createElement('option'); opt.value = s; opt.textContent = s; sel.appendChild(opt); });
-
-        setStep(3);
-        filteredResults = [...allResults];
-
-        // Show content
-        setTimeout(() => {
+            renderTable();
+            updatePagination();
+        } catch (err) {
+            console.error('Failed to load:', err);
+            document.getElementById('tpEmpty').style.display = 'block';
+        } finally {
             loading.style.display = 'none';
-            filters.style.display = 'flex';
-            renderResults();
-        }, 300);
-
-    } catch (err) {
-        console.error('Failed to load results:', err);
-        loading.innerHTML = '<div class="v3-empty-state"><div class="v3-empty-title">Failed to load results</div><div class="v3-empty-desc">Check that the server is running and a scan has completed.</div></div>';
+        }
     }
-}
 
-loadPageData();
+    // ── Render Table ────────────────────────────────────
+    function renderTable() {
+        const tbody = document.getElementById('tpBody');
+        const table = document.getElementById('tpTable');
+        const empty = document.getElementById('tpEmpty');
+
+        const data = getFilteredData();
+        if (data.length === 0) { table.style.display = 'none'; empty.style.display = 'block'; return; }
+        table.style.display = 'table'; empty.style.display = 'none';
+
+        tbody.innerHTML = data.map((s, i) => {
+            const rank = (currentPage - 1) * PER_PAGE + i + 1;
+            const scoreClass = s.score >= 70 ? 'tp-score-high' : s.score >= 50 ? 'tp-score-mid' : 'tp-score-low';
+            const badges = [];
+            if (s.high_conviction) badges.push('<span class="tp-badge-hc">HC</span>');
+            if (s.is_golden) badges.push('<span class="tp-badge-golden">★</span>');
+            const trend = s.weekly_trend || '—';
+            const trendColor = trend === 'up' ? 'var(--success)' : trend === 'down' ? 'var(--danger)' : 'var(--text-muted)';
+            const trendIcon = trend === 'up' ? '↗' : trend === 'down' ? '↘' : '→';
+
+            const fmtChg = (v) => { const n = v || 0; const c = n >= 0 ? 'tp-change-up' : 'tp-change-down'; return '<span class="' + c + '">' + (n >= 0 ? '+' : '') + n.toFixed(1) + '%</span>'; };
+
+            const fa = s.first_analysis || {};
+            const trade = s.trade || {};
+            // Use locked thesis values if available (from recommendation_locks)
+            const entryLow = s.locked_entry_low || fa.entry_low || trade.entry_low || s.entry_low || 0;
+            const entryHigh = s.locked_entry_high || fa.entry_high || trade.entry_high || s.entry_high || 0;
+            const sl = s.locked_stop_loss || fa.stop_loss || s.stop_loss || 0;
+            const t1 = s.locked_target1 || fa.target_price || trade.target1 || s.target_price || 0;
+            const entryStr = entryLow > 0 ? '₹' + entryLow.toFixed(0) + '-' + entryHigh.toFixed(0) : '—';
+            const slStr = sl > 0 ? '₹' + sl.toFixed(0) : '—';
+            const tgStr = t1 > 0 ? '₹' + t1.toFixed(0) : '—';
+
+            // Thesis status badge
+            const ts = s.thesis_status || 'NONE';
+            let tsBadge = '';
+            if (ts === 'SL_HIT') tsBadge = '<span style="background:rgba(239,68,68,0.2);color:#ef4444;font-size:9px;font-weight:700;padding:2px 5px;border-radius:3px;margin-left:4px">SL HIT</span>';
+            else if (ts === 'TG_HIT') tsBadge = '<span style="background:rgba(16,185,129,0.2);color:#10b981;font-size:9px;font-weight:700;padding:2px 5px;border-radius:3px;margin-left:4px">TG HIT</span>';
+
+            const midEntry = (entryLow > 0 && entryHigh > 0) ? (entryLow + entryHigh) / 2 : (s.price || 0);
+            const risk = midEntry - sl;
+            const reward = t1 - midEntry;
+            let rrText = '—', rrClass = 'tp-rr-bad';
+            if (risk > 0 && reward > 0) {
+                const ratio = reward / risk;
+                rrText = ratio >= 1 ? '1:' + ratio.toFixed(1) : (1 / ratio).toFixed(1) + ':1';
+                rrClass = ratio >= 2 ? 'tp-rr-good' : ratio >= 1 ? 'tp-rr-ok' : 'tp-rr-bad';
+            }
+
+            return `<tr onclick="window.location='/stock/${s.symbol}'" data-symbol="${s.symbol}">
+            <td style="color:var(--text-muted);font-size:11px">${rank}</td>
+            <td><div class="tp-stock-cell"><div><div class="tp-stock-name">${s.symbol} ${badges.join(' ')} ${tsBadge}</div><div class="tp-stock-sector">${s.sector || ''} ${s.name ? '• ' + s.name.substring(0, 20) : ''}</div></div></div></td>
+            <td><span class="tp-score ${scoreClass}">${Math.round(s.score || 0)}</span></td>
+            <td class="tp-price" data-symbol="${s.symbol}" data-field="ltp">₹${(s.price || 0).toFixed(2)}</td>
+            <td class="tp-hide-mobile tp-mono">${fmtChg(s.pct_1d)}</td>
+            <td class="tp-hide-mobile tp-mono">${fmtChg(s.pct_1w)}</td>
+            <td class="tp-hide-mobile tp-mono">${fmtChg(s.pct_1m)}</td>
+            <td class="tp-hide-mobile tp-mono">${(s.adx || 0).toFixed(0)}</td>
+            <td class="tp-hide-mobile tp-entry">${entryStr}</td>
+            <td class="tp-hide-mobile tp-sl">${slStr}</td>
+            <td class="tp-hide-mobile tp-tg">${tgStr}</td>
+            <td><span class="tp-rr ${rrClass}">${rrText}</span></td>
+            <td class="tp-hide-mobile" style="color:${trendColor};font-weight:600">${trendIcon} ${trend}</td>
+        </tr>`;
+        }).join('');
+    }
+
+    // ── Filtering ───────────────────────────────────────
+    function getFilteredData() {
+        const search = (document.getElementById('tpSearch').value || '').toLowerCase();
+        const sector = document.getElementById('filterSector').value;
+        const type = document.getElementById('filterType').value;
+
+        return allResults.filter(s => {
+            if (search && !s.symbol.toLowerCase().includes(search) && !(s.name || '').toLowerCase().includes(search) && !(s.sector || '').toLowerCase().includes(search)) return false;
+            if (sector && s.sector !== sector) return false;
+            if (type === 'hc' && !s.high_conviction) return false;
+            if (type === 'golden' && !s.is_golden) return false;
+            if (type === 'breakout' && !s.is_breakout) return false;
+            return true;
+        });
+    }
+
+    function handleSearch() { renderTable(); }
+    function handleFilter() { renderTable(); }
+
+    // ── Sorting ─────────────────────────────────────────
+    function sortBy(field) {
+        if (currentSort === field) sortDesc = !sortDesc;
+        else { currentSort = field; sortDesc = true; }
+        loadResults(currentPage);
+    }
+
+    // ── Pagination ──────────────────────────────────────
+    function updatePagination() {
+        const pg = document.getElementById('tpPagination');
+        pg.style.display = totalPages > 1 ? 'flex' : 'none';
+        document.getElementById('pageInfo').textContent = `Page ${currentPage} / ${totalPages}`;
+        document.getElementById('btnPrev').disabled = currentPage <= 1;
+        document.getElementById('btnNext').disabled = currentPage >= totalPages;
+    }
+
+    function changePage(delta) {
+        const newPage = currentPage + delta;
+        if (newPage >= 1 && newPage <= totalPages) loadResults(newPage);
+    }
+
+    // ── Live Price Updates ──────────────────────────────
+    async function updateLivePrices() {
+        try {
+            const symbols = [...document.querySelectorAll('[data-symbol][data-field="ltp"]')].map(el => el.dataset.symbol);
+            if (symbols.length === 0) return;
+            const resp = await fetch('/api/live-prices');
+            if (!resp.ok) return;
+            const prices = await resp.json();
+            symbols.forEach(sym => {
+                const data = prices[sym] || prices[sym.replace('.NS', '')];
+                if (data && data.ltp) {
+                    const el = document.querySelector(`td[data-symbol="${sym}"][data-field="ltp"]`);
+                    if (el) {
+                        const old = parseFloat(el.textContent.replace('₹', '').replace(',', ''));
+                        el.textContent = '₹' + data.ltp.toFixed(2);
+                        if (data.ltp > old) { el.style.color = 'var(--success)'; setTimeout(() => el.style.color = '', 1500); }
+                        else if (data.ltp < old) { el.style.color = 'var(--danger)'; setTimeout(() => el.style.color = '', 1500); }
+                    }
+                }
+            });
+        } catch (e) { /* silent */ }
+    }
+
+    // ── Init ────────────────────────────────────────────
+    loadResults(1);
+    liveInterval = setInterval(updateLivePrices, 5000); // Tick every 5s
 </script>
 {% endblock %}

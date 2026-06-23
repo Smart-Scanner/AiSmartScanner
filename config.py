@@ -102,12 +102,12 @@ MAX_SCAN_WORKERS = int(os.getenv("MAX_SCAN_WORKERS", "6"))  # 6 parallel workers
 PROGRESSIVE_PUBLISH_INTERVAL = int(os.getenv("PROGRESSIVE_PUBLISH_INTERVAL", "25"))
 
 # Universe Eligibility Filters (Turnover = primary, Volume = secondary)
-UNIVERSE_MIN_MCAP_CR = float(os.getenv("UNIVERSE_MIN_MCAP_CR", "1000"))
-UNIVERSE_MIN_AVG_TURNOVER_CR = float(os.getenv("UNIVERSE_MIN_AVG_TURNOVER_CR", "10"))
-UNIVERSE_MIN_AVG_VOLUME = int(os.getenv("UNIVERSE_MIN_AVG_VOLUME", "10000"))
-UNIVERSE_MIN_PRICE = float(os.getenv("UNIVERSE_MIN_PRICE", "50"))
-UNIVERSE_MIN_DATA_COVERAGE = float(os.getenv("UNIVERSE_MIN_DATA_COVERAGE", "0.90"))
-UNIVERSE_MIN_LISTING_DAYS = int(os.getenv("UNIVERSE_MIN_LISTING_DAYS", "180"))  # IPO age filter
+UNIVERSE_MIN_MCAP_CR = float(os.getenv("UNIVERSE_MIN_MCAP_CR") or "1000")
+UNIVERSE_MIN_AVG_TURNOVER_CR = float(os.getenv("UNIVERSE_MIN_AVG_TURNOVER_CR") or "10")
+UNIVERSE_MIN_AVG_VOLUME = int(os.getenv("UNIVERSE_MIN_AVG_VOLUME") or "10000")
+UNIVERSE_MIN_PRICE = float(os.getenv("UNIVERSE_MIN_PRICE") or "50")
+UNIVERSE_MIN_DATA_COVERAGE = float(os.getenv("UNIVERSE_MIN_DATA_COVERAGE") or "0.90")
+UNIVERSE_MIN_LISTING_DAYS = int(os.getenv("UNIVERSE_MIN_LISTING_DAYS") or "180")  # IPO age filter
 
 # ═══════════════════════════════════════════════════════════════
 # Phase 5.6B/C: Liquidity Enrichment & Universe Governance

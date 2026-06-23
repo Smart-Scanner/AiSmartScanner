@@ -605,5 +605,127 @@ async function pollPaperTrades() {
 
 // Initial trigger
 pollPaperTrades();
+
+// ── Broker-App Style Live Price Ticker ──────────────────────
+// Fetches WS prices every 2s and updates LTP + P&L in DOM
+// Independent of the main trade polling (which fetches full trade data)
+let _livePriceTimer = null;
+
+async function tickLivePrices() {
+    const openTrades = globalPtTrades.filter(t => t.status === 'OPEN');
+    if (!openTrades.length) return;
+
+    const symbols = openTrades.map(t => (t.symbol || '').toUpperCase().replace('.NS', ''));
+    try {
+        // GET returns all WS-cached prices instantly (no DB queries)
+        const resp = await fetch('/api/live-prices');
+        if (!resp.ok) return;
+        const prices = await resp.json();
+
+        let portfolioPnl = 0, portfolioInvested = 0, portfolioValue = 0;
+
+        for (const t of openTrades) {
+            const sym = (t.symbol || '').toUpperCase().replace('.NS', '');
+            const priceData = prices[sym];
+            if (!priceData) continue;
+
+            const ltp = priceData.ltp || priceData.price || 0;
+            if (!ltp) continue;
+
+            const entry = Number(t.entry_price) || 0;
+            const qty = Number(t.quantity) || 0;
+            if (!entry) continue;
+
+            const returnPct = ((ltp - entry) / entry) * 100;
+            const pnlAmt = (ltp - entry) * qty;
+            const dayChg = priceData.change_pct || 0;
+
+            // Update cached trade data
+            t.current_price = ltp;
+            t.live_return_pct = returnPct;
+            t.live_pnl = pnlAmt;
+            t.day_change_pct = dayChg;
+            t.current_value = ltp * qty;
+
+            portfolioInvested += entry * qty;
+            portfolioValue += ltp * qty;
+            portfolioPnl += pnlAmt;
+
+            // DOM update
+            const row = document.getElementById(`trade-row-${t.symbol}`);
+            if (!row) continue;
+
+            const ltpEl = row.querySelector('.live-ltp');
+            if (ltpEl) {
+                const oldText = ltpEl.textContent;
+                const newText = '₹' + ltp.toFixed(2);
+                ltpEl.textContent = newText;
+                ltpEl.style.color = returnPct >= 0 ? 'var(--success)' : 'var(--danger)';
+                // Flash on price change
+                if (oldText !== newText && oldText !== '—') {
+                    ltpEl.style.transition = 'none';
+                    ltpEl.style.background = returnPct >= 0 ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)';
+                    setTimeout(() => { ltpEl.style.transition = 'background 0.5s'; ltpEl.style.background = 'transparent'; }, 300);
+                }
+            }
+
+            const chgEl = row.querySelector('.live-day-chg');
+            if (chgEl) {
+                chgEl.style.color = dayChg >= 0 ? 'var(--success)' : 'var(--danger)';
+                chgEl.textContent = dayChg ? (dayChg >= 0 ? '+' : '') + dayChg.toFixed(1) + '% today' : '';
+            }
+
+            const pnlEl = row.querySelector('.live-pnl');
+            if (pnlEl) {
+                pnlEl.className = `pt-pnl live-pnl ${returnPct >= 0 ? 'positive' : 'negative'}`;
+                pnlEl.textContent = (returnPct >= 0 ? '+' : '') + returnPct.toFixed(1) + '%';
+                pnlEl.style.fontSize = '14px';
+                pnlEl.style.fontWeight = '700';
+            }
+
+            const pnlAmtEl = row.querySelector('.live-pnl-amt');
+            if (pnlAmtEl) {
+                pnlAmtEl.style.color = pnlAmt >= 0 ? 'var(--success)' : 'var(--danger)';
+                pnlAmtEl.textContent = (pnlAmt >= 0 ? '+' : '') + '₹' + Math.abs(pnlAmt).toLocaleString('en-IN', {maximumFractionDigits: 0});
+            }
+        }
+
+        // Update portfolio banner totals
+        const pnlPct = portfolioInvested > 0 ? (portfolioPnl / portfolioInvested * 100) : 0;
+        const pfBanner = document.getElementById('portfolioBanner');
+        if (pfBanner && pfBanner.style.display !== 'none') {
+            const pnlValEl = pfBanner.querySelector('.pf-item:nth-child(3) .pf-value');
+            if (pnlValEl) {
+                const pnlSign = portfolioPnl >= 0 ? '+' : '';
+                pnlValEl.textContent = `${pnlSign}₹${Math.abs(portfolioPnl).toLocaleString('en-IN', {maximumFractionDigits: 0})}`;
+                pnlValEl.className = `pf-value ${portfolioPnl >= 0 ? 'positive' : 'negative'}`;
+            }
+            const pnlSubEl = pfBanner.querySelector('.pf-item:nth-child(3) .pf-sub');
+            if (pnlSubEl) {
+                pnlSubEl.textContent = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
+                pnlSubEl.className = `pf-sub ${pnlPct >= 0 ? 'positive' : 'negative'}`;
+            }
+        }
+    } catch(e) { /* silent */ }
+}
+
+function startLiveTicker() {
+    if (_livePriceTimer) clearInterval(_livePriceTimer);
+    _livePriceTimer = setInterval(tickLivePrices, 2000);
+}
+
+// Start ticker after first trade load
+setTimeout(startLiveTicker, 3000);
+
+// Stop ticker when tab is hidden, restart when visible
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        if (_livePriceTimer) { clearInterval(_livePriceTimer); _livePriceTimer = null; }
+    } else {
+        tickLivePrices();
+        startLiveTicker();
+    }
+});
+window.addEventListener('beforeunload', () => { if (_livePriceTimer) clearInterval(_livePriceTimer); });
 </script>
 {% endblock %}

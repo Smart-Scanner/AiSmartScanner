@@ -1000,6 +1000,9 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
             structural_sl = atr_stop
             
         strict_sl = round(structural_sl, 2)
+        # Guard: SL must always be below current price (at least 2% below)
+        if strict_sl >= current_price:
+            strict_sl = round(current_price * 0.98, 2)
         stop_loss_pct = round(((strict_sl - current_price) / current_price) * 100, 1)
         
         # 2. Target Price Strategy: based on structural resistances (R1, R2, Fib resistance)
@@ -1011,7 +1014,7 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         if adx > 25:
             base_mult += 0.5
             
-        risk_distance = current_price - strict_sl
+        risk_distance = max(current_price - strict_sl, current_price * 0.02)  # Floor: at least 2% of CMP
         default_target = current_price + (base_mult * risk_distance)
         target_candidates = [default_target]
         
@@ -1027,7 +1030,7 @@ def fetch_and_analyze(symbol: str, nifty_1m: float = 0, regime: str = "unknown",
         realistic = [t for t in target_candidates if t <= default_target * 1.5]
         target_price = max(realistic) if realistic else default_target
         target_pct = round(((target_price - current_price) / current_price) * 100, 1)
-        risk_reward = round((target_price - current_price) / risk_distance, 1) if risk_distance > 0 else 0
+        risk_reward = max(0, round((target_price - current_price) / risk_distance, 1)) if risk_distance > 0 else 0
         risk_score = calc_risk_score(rsi, atr_pct, dist_high, vol_ratio, pct_1m, below_ema200, adx)
 
         # 3. Target levels based on resistances:

@@ -207,21 +207,35 @@ def scan_status():
         t0 = time.time()
         state = scan_state.status()
 
-        # Phase C: Single aggregation query replaces 4 separate COUNT queries
-        # Uses COALESCE to handle empty tables safely (prevents NULL returns)
+        # Phase C: Lightweight aggregation using indexed columns only
+        # Avoids full-table JSONB scan that was causing 5-37s response times
         use_pg = db.is_postgresql() and not db.pg_cooldown_active()
         try:
-            if use_pg:
+            scan_id = db.get_latest_completed_scan_id() if hasattr(db, 'get_latest_completed_scan_id') else None
+            if use_pg and scan_id:
                 agg = db.execute_db("""
                     SELECT
                         COALESCE(SUM(high_conviction), 0) as hc_count,
                         COALESCE(SUM(CASE WHEN (data->>'is_golden')::text IN ('true','1') THEN 1 ELSE 0 END), 0) as golden_count,
-                        COALESCE(SUM(CASE WHEN COALESCE(NULLIF(data->>'change_pct',''),'0')::numeric > 0 OR COALESCE(NULLIF(data->>'price_change_pct',''),'0')::numeric > 0 THEN 1 ELSE 0 END), 0) as adv_count,
-                        COALESCE(SUM(CASE WHEN COALESCE(NULLIF(data->>'change_pct',''),'0')::numeric < 0 OR COALESCE(NULLIF(data->>'price_change_pct',''),'0')::numeric < 0 THEN 1 ELSE 0 END), 0) as dec_count
+                        COUNT(*) as total_count
+                    FROM scan_results_v2 WHERE scan_id = ?
+                """, (scan_id,), fetch="one")
+            elif use_pg:
+                agg = db.execute_db("""
+                    SELECT
+                        COALESCE(SUM(high_conviction), 0) as hc_count,
+                        COALESCE(SUM(CASE WHEN (data->>'is_golden')::text IN ('true','1') THEN 1 ELSE 0 END), 0) as golden_count,
+                        COUNT(*) as total_count
                     FROM scan_results
                 """, fetch="one")
             else:
                 raise Exception("use sqlite")
+            # adv/dec counts are too expensive on remote PG — estimate from cached results instead
+            if agg and isinstance(agg, dict):
+                agg.setdefault("adv_count", 0)
+                agg.setdefault("dec_count", 0)
+            else:
+                agg = {"hc_count": 0, "golden_count": 0, "adv_count": 0, "dec_count": 0}
         except Exception:
             log.exception("[STATUS PG QUERY FAILED]")
             agg = db.execute_db("""
@@ -335,6 +349,9 @@ def get_results():
     t_start = time.perf_counter()
     sort_by = request.args.get("sort", "score")
     order = request.args.get("order", "desc")
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 25, type=int)
+    per_page = min(per_page, 200)  # Safety cap per request
 
     timings = {"cache_hit": True, "load_results": 0.0, "status": 0.0, "universe": 0.0, "meta": 0.0}
 
@@ -342,7 +359,7 @@ def get_results():
         timings["cache_hit"] = False
         
         t0 = time.perf_counter()
-        results = db.load_results(DASHBOARD_MAX_RESULTS, slim=True)
+        results = db.load_results(5000, slim=True)  # Load all results (no artificial cap)
         timings["load_results"] = round((time.perf_counter() - t0) * 1000, 2)
         
         t0 = time.perf_counter()
@@ -380,7 +397,42 @@ def get_results():
     data = cache_layer.get_or_compute(cache_layer.results_cache, "results", _compute_results)
 
     t_slim_start = time.perf_counter()
-    slim = {**data, "results": _slim_results(data.get("results", []))}
+    raw_results = data.get("results", [])
+    slim_results = _slim_results(raw_results)
+    try:
+        locks = db.execute_db(
+            "SELECT symbol, thesis_status, entry_low, entry_high, stop_loss, target1 FROM recommendation_locks",
+            fetch="all"
+        )
+        locks_map = {}
+        if locks:
+            for row in locks:
+                if isinstance(row, dict):
+                    locks_map[row["symbol"].upper()] = row
+                else:
+                    locks_map[row[0].upper()] = {
+                        "symbol": row[0],
+                        "thesis_status": row[1],
+                        "entry_low": row[2],
+                        "entry_high": row[3],
+                        "stop_loss": row[4],
+                        "target1": row[5]
+                    }
+            for r in slim_results:
+                sym = r.get("symbol", "").upper()
+                if sym in locks_map:
+                    lock = locks_map[sym]
+                    r["thesis_status"] = lock.get("thesis_status", "ACTIVE")
+                    if lock.get("thesis_status") == "ACTIVE":
+                        r["locked_entry_low"] = lock.get("entry_low")
+                        r["locked_entry_high"] = lock.get("entry_high")
+                        r["locked_stop_loss"] = lock.get("stop_loss")
+                        r["locked_target1"] = lock.get("target1")
+                else:
+                    r["thesis_status"] = "NONE"
+    except Exception as exc:
+        log.warning("Failed to merge recommendation locks: %s", exc)
+    slim = {**data, "results": slim_results}
     t_slim_ms = round((time.perf_counter() - t_slim_start) * 1000, 2)
 
     t_sort_start = time.perf_counter()
@@ -389,12 +441,25 @@ def get_results():
         "delivery_pct", "risk_score", "rs_vs_nifty", "risk_reward", "target_pct",
         "atr_pct", "stoch_k", "bb_position",
     ]
+    all_results = slim["results"]
     if sort_by in valid_sorts and sort_by != "score":
-        sorted_results = sorted(slim["results"], key=lambda x: x.get(sort_by) or 0, reverse=(order == "desc"))
-        res_dict = {**slim, "results": sorted_results}
-    else:
-        res_dict = dict(slim)
+        all_results = sorted(all_results, key=lambda x: x.get(sort_by) or 0, reverse=(order == "desc"))
 
+    # Pagination
+    total_results = len(all_results)
+    total_pages = max(1, (total_results + per_page - 1) // per_page)
+    page = max(1, min(page, total_pages))
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    paginated_results = all_results[start_idx:end_idx]
+
+    res_dict = {**slim, "results": paginated_results}
+    res_dict["pagination"] = {
+        "page": page,
+        "per_page": per_page,
+        "total_results": total_results,
+        "total_pages": total_pages,
+    }
     res_dict["metrics"] = {
         "target_resolved_trade": counters.get("target_resolved_trade"),
         "target_resolved_scan": counters.get("target_resolved_scan"),
@@ -420,6 +485,7 @@ def get_results():
             log.warning("[PERFORMANCE] Dashboard total response budget exceeded: %.1f ms (budget: 500ms)", total_ms)
 
     return resp
+
 
 
 @api_bp.route("/api/export/csv")
@@ -635,6 +701,16 @@ def stock_data(symbol):
         except Exception:
             pass
 
+        # ── Thesis Lock Data ──
+        try:
+            locked_thesis = db.get_locked_thesis(clean)
+            if locked_thesis:
+                result["locked_thesis"] = locked_thesis
+                result["recommended_price"] = locked_thesis.get("recommended_price")
+                result["thesis_updates"] = locked_thesis.get("updates", [])
+        except Exception:
+            pass
+
         resp = make_response(jsonify(sanitize_nan(result)))
         resp.headers["Cache-Control"] = "max-age=900"
         return resp
@@ -647,6 +723,10 @@ def _build_scan_dict(cached: dict) -> dict:
     """Build scan sub-dict from cached DB result."""
     return {
         "score": cached["score"], "risk_score": cached["risk_score"],
+        "sector": cached.get("sector"),
+        "is_golden": cached.get("is_golden", False),
+        "first_analysis_date": cached.get("first_analysis_date"),
+        "rescan_count": cached.get("rescan_count"),
         # Factor sub-scores for drawer radar chart + confidence calc
         "technical_score": cached.get("technical_score", 0),
         "fundamental_score": cached.get("fundamental_score", 0),
@@ -732,8 +812,26 @@ def stock_financials(symbol):
         }), 500
 
 
-@api_bp.route("/api/live-prices", methods=["POST"])
+@api_bp.route("/api/live-prices", methods=["GET", "POST"])
 def live_prices():
+    # GET: return all cached WS prices (used by symbol_workspace, top_picks)
+    if request.method == "GET":
+        all_prices = live_feed.get_live_prices()
+        result = {}
+        for sym, data in all_prices.items():
+            price = data.get("ltp", 0)
+            if not price:
+                continue
+            result[sym] = {
+                "price": price, "ltp": price,
+                "open": data.get("open", 0), "high": data.get("high", 0),
+                "low": data.get("low", 0), "close": data.get("close", 0),
+                "change": data.get("change", 0), "change_pct": data.get("change_pct", 0),
+                "volume": data.get("volume", 0), "last_update": data.get("last_update", ""),
+            }
+        return jsonify(result)
+
+    # POST: filter by requested symbols (used by index.html, stock_detail.html)
     body = request.get_json(silent=True) or {}
     symbols = body.get("symbols", [])
     if not symbols:
@@ -1208,6 +1306,13 @@ def get_paper_trades():
         total_target_profit = 0
         total_sl_risk = 0
 
+        # WebSocket-only price fetch: subscribe + seed cache for missing symbols + get all prices
+        open_symbols = [t.get("symbol", "").upper().replace(".NS", "") for t in trades if t.get("status") == "OPEN"]
+        if open_symbols:
+            live_feed.subscribe(open_symbols)
+            live_feed.seed_cache(open_symbols)  # One-time REST fetch for symbols not in WS cache
+        ws_price_map = live_feed.get_live_prices(open_symbols) if open_symbols else {}
+
         # Inject live P&L + calculated fields for all trades
         for trade in trades:
             entry = trade.get("entry_price", 0) or 0
@@ -1223,8 +1328,9 @@ def get_paper_trades():
             trade["sl_pct"] = round(((sl - entry) / entry) * 100, 1) if sl and entry else 0
 
             if trade.get("status") == "OPEN":
-                live = live_feed.get_live_price(trade.get("symbol", ""))
+                sym = trade.get("symbol", "").upper().replace(".NS", "")
                 ltp = 0
+                live = ws_price_map.get(sym)
                 if live:
                     ltp = live.get("ltp", 0)
                     trade["current_price"] = ltp

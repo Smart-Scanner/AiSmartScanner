@@ -432,8 +432,43 @@ def get_live_price(symbol):
             tick["symbol"] = symbol.upper()
             return tick
 
-    # No fallback — WebSocket + Angel/Fyers historical covers all needs
+    # Fallback: return last scan price from DB so paper trades always have LTP
+    try:
+        scan_data = db.get_stock_from_results(clean)
+        if scan_data and scan_data.get("price"):
+            return {
+                "symbol": symbol.upper(),
+                "ltp": scan_data["price"],
+                "change_pct": scan_data.get("pct_1w", 0),
+                "last_update": scan_data.get("first_analysis_date", ""),
+                "_source": "scan_fallback",
+            }
+    except Exception:
+        pass
+
     return None
+
+def seed_cache(symbols):
+    """Fetch prices via REST API for symbols missing from WS cache and inject into _live_prices.
+    Called once on paper-trades load so the GET /api/live-prices ticker always has data."""
+    missing = []
+    with _prices_lock:
+        for s in symbols:
+            clean = s.upper().replace(".NS", "")
+            if clean not in _live_prices:
+                missing.append(clean)
+    if not missing:
+        return
+    try:
+        fetched = fetch_ltp_bulk(missing)
+        with _prices_lock:
+            for sym, data in fetched.items():
+                if sym not in _live_prices:
+                    _live_prices[sym] = data
+        if fetched:
+            log.info("[SEED CACHE] Seeded %d/%d missing symbols into WS cache", len(fetched), len(missing))
+    except Exception as exc:
+        log.debug("[SEED CACHE] Failed: %s", exc)
 
 def _on_data(wsapp, message):
     try:
