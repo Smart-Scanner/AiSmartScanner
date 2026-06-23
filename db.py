@@ -702,7 +702,8 @@ def _run_init_db_logic():
                         high_conviction INTEGER DEFAULT 0,
                         sector TEXT DEFAULT '',
                         scan_date TEXT NOT NULL,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        slim_data JSONB
                     );
                     
                     CREATE TABLE IF NOT EXISTS scan_results_v2 (
