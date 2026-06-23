@@ -694,6 +694,7 @@ def _run_init_db_logic():
             conn.autocommit = True
             try:
                 cur = conn.cursor()
+                # ── Phase 0: Core tables (each in its own execute for safety) ──
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS scan_results (
                         symbol TEXT PRIMARY KEY,
@@ -705,7 +706,8 @@ def _run_init_db_logic():
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         slim_data JSONB
                     );
-                    
+                """)
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS scan_results_v2 (
                         scan_id TEXT NOT NULL,
                         symbol TEXT NOT NULL,
@@ -718,13 +720,18 @@ def _run_init_db_logic():
                         slim_data JSONB,
                         PRIMARY KEY (scan_id, symbol)
                     );
-
-                    -- Migration: Clone legacy data safely if v2 is empty
-                    INSERT INTO scan_results_v2 (scan_id, symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
-                    SELECT 'scan_legacy_migration', symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data
-                    FROM scan_results
-                    ON CONFLICT DO NOTHING;
-
+                """)
+                # Migration: Clone legacy data safely if v2 is empty (non-fatal on fresh DB)
+                try:
+                    cur.execute("""
+                        INSERT INTO scan_results_v2 (scan_id, symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data)
+                        SELECT 'scan_legacy_migration', symbol, data, score, high_conviction, sector, scan_date, updated_at, slim_data
+                        FROM scan_results
+                        ON CONFLICT DO NOTHING;
+                    """)
+                except Exception as mig_exc:
+                    log.warning("Legacy data migration scan_results->v2 skipped (non-fatal): %s", mig_exc)
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS scan_meta (
                         key TEXT PRIMARY KEY,
                         value TEXT NOT NULL,
