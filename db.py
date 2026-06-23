@@ -852,7 +852,8 @@ def _run_init_db_logic():
                         eps_fwd REAL,
                         eps_trail REAL,
                         fund_score INTEGER,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        detailed_json JSONB
                     );
 
                     CREATE TABLE IF NOT EXISTS macro_events (
@@ -937,7 +938,21 @@ def _run_init_db_logic():
                         candidate_count INTEGER DEFAULT 0,
                         duration_seconds REAL,
                         error_message TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        -- Governance columns
+                        correlation_id TEXT,
+                        request_id TEXT,
+                        trigger_source TEXT DEFAULT 'manual',
+                        user_id TEXT DEFAULT 'system',
+                        scanner_version TEXT,
+                        scoring_version TEXT,
+                        recommendation_version TEXT,
+                        config_snapshot JSONB,
+                        parent_scan_id TEXT,
+                        degraded_data BOOLEAN DEFAULT FALSE,
+                        last_heartbeat TIMESTAMP,
+                        -- Phase 5.8
+                        universe_version TEXT
                     );
                     CREATE INDEX IF NOT EXISTS idx_scan_runs_status ON scan_runs(status);
 
@@ -1033,7 +1048,14 @@ def _run_init_db_logic():
                         -- R4 prep (NULL until calibrated)
                         probability_bucket TEXT,
                         expected_return_bucket TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        -- Release 4: Execution Engine columns
+                        entry_time TIMESTAMP,
+                        exit_time TIMESTAMP,
+                        order_id INTEGER,
+                        fill_price REAL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        execution_latency_ms INTEGER
                     );
                     CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
                     CREATE INDEX IF NOT EXISTS idx_paper_trades_symbol ON paper_trades(symbol);
@@ -1125,6 +1147,7 @@ def _run_init_db_logic():
                         provider_latency_ms INTEGER,
                         data_staleness_hours REAL,
                         scan_version TEXT,
+                        score_breakdown JSONB,
                         UNIQUE (symbol, scan_id)
                     );
                     CREATE INDEX IF NOT EXISTS idx_score_audit_symbol ON score_audit(symbol);
@@ -1213,7 +1236,43 @@ def _run_init_db_logic():
                         sector TEXT,
                         industry TEXT,
                         is_active BOOLEAN DEFAULT TRUE,
-                        last_scanned_at TIMESTAMP
+                        last_scanned_at TIMESTAMP,
+                        -- Phase 5.5: Universe Engine columns
+                        avg_volume_20d REAL DEFAULT 0,
+                        avg_turnover_20d REAL DEFAULT 0,
+                        instrument_type TEXT DEFAULT 'EQ',
+                        exchange TEXT DEFAULT 'NSE',
+                        price REAL DEFAULT 0,
+                        last_synced_at TIMESTAMP,
+                        first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        sync_fail_count INTEGER DEFAULT 0,
+                        -- Phase 5.6B/C: Liquidity Enrichment
+                        liquidity_synced_at TIMESTAMP,
+                        liquidity_sync_fail_count INTEGER DEFAULT 0,
+                        liquidity_excluded BOOLEAN DEFAULT FALSE,
+                        liquidity_excluded_reason TEXT,
+                        liquidity_excluded_at TIMESTAMP,
+                        -- Dhan Fundamental Data
+                        isin TEXT,
+                        pe REAL,
+                        pb REAL,
+                        roe REAL,
+                        roce REAL,
+                        eps REAL,
+                        div_yield REAL,
+                        industry_pe REAL,
+                        revenue REAL,
+                        free_cash_flow REAL,
+                        net_profit_margin REAL,
+                        high_52w REAL,
+                        low_52w REAL,
+                        pct_change_1m REAL,
+                        pct_change_1y REAL,
+                        rsi_14 REAL,
+                        sma_50 REAL,
+                        sma_200 REAL,
+                        dhan_sid TEXT,
+                        fundamentals_updated_at TIMESTAMP
                     );
 
                     CREATE TABLE IF NOT EXISTS universe_chunk_runs (
