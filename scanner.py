@@ -603,7 +603,7 @@ def run_full_scan(context: ScanContext = None, resume_from_scan_id: str = None):
                     db.log_scan_event(scan_id, f"CHUNK_{chunk_status}", f"Chunk: {c_name}, Processed: {c_processed}")
                     
                     if c_results:
-                        db.save_results(c_results)
+                        db.save_results(c_results, scan_id=scan_id)
                         
                 except Exception as exc:
                     db.end_chunk_run(chunk_run_id, "FAILED", 0, f"Worker exception: {str(exc)}")
@@ -657,7 +657,7 @@ def run_full_scan(context: ScanContext = None, resume_from_scan_id: str = None):
 
                 # Save batch to DB
                 if batch_results:
-                    db.save_results(batch_results)
+                    db.save_results(batch_results, scan_id=scan_id)
 
                 batch_num = batch_start // BATCH_SIZE + 1
                 log.info("[%s] Phase 2 batch %d: +%d scored", correlation_id[:12], batch_num, jugaad_scored)
@@ -741,7 +741,7 @@ def run_full_scan(context: ScanContext = None, resume_from_scan_id: str = None):
 
         # Final save — all results with sector strength applied
         db.log_scan_event(scan_id, "SAVE_RESULTS_STARTED", "")
-        db.save_results(results)
+        db.save_results(results, scan_id=scan_id)
         db.log_scan_event(scan_id, "SAVE_RESULTS_COMPLETED", "")
         
         # Phase 5: Snapshot Governance (Immutable Research Freeze)
