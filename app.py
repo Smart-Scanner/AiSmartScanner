@@ -222,11 +222,23 @@ if USE_UNIVERSE_ENGINE:
         log.info("[Phase 5.5] No pending resume state")
 
 # Start Angel One WebSocket for live prices
-try:
-    live_feed.start_websocket()
-    log.info("Angel One WebSocket started")
-except Exception as exc:
-    log.warning("WebSocket start failed (will use REST fallback): %s", exc)
+def _start_websocket_with_retry():
+    """Start WebSocket with retry — handles Railway network timeout on first boot."""
+    import time as _time
+    for attempt, delay in enumerate([0, 30, 90], start=1):
+        if delay > 0:
+            log.info("WebSocket retry #%d in %ds...", attempt, delay)
+            _time.sleep(delay)
+        try:
+            live_feed.start_websocket()
+            log.info("Angel One WebSocket started (attempt #%d)", attempt)
+            return
+        except Exception as exc:
+            log.warning("WebSocket attempt #%d failed: %s", attempt, exc)
+    log.error("WebSocket failed after 3 attempts — using REST fallback for live prices")
+
+import threading
+threading.Thread(target=_start_websocket_with_retry, name="ws-startup", daemon=True).start()
 
 # Load cached data or start fresh scan
 if has_valid_cache():
