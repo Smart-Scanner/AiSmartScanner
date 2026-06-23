@@ -3565,12 +3565,12 @@ def save_results(results: list[dict], scan_id: str = 'legacy_fallback', meta: di
     try:
         if is_postgresql() and not pg_cooldown_active():
             rows = execute_db(
-                "SELECT symbol FROM scan_results WHERE scan_date = ? AND (data->>'scan_mode') = 'deep'",
+                "SELECT symbol FROM scan_results_v2 WHERE scan_date = ? AND (data->>'scan_mode') = 'deep'",
                 (scan_date,), fetch="all"
             )
         else:
             rows = execute_db(
-                "SELECT symbol FROM scan_results WHERE scan_date = ? AND json_extract(data, '$.scan_mode') = 'deep'",
+                "SELECT symbol FROM scan_results_v2 WHERE scan_date = ? AND json_extract(data, '$.scan_mode') = 'deep'",
                 (scan_date,), fetch="all"
             )
         deep_scanned_symbols = {row["symbol"] for row in (rows or [])}
@@ -4338,8 +4338,8 @@ def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
             )
     else:
         fallback_rows = execute_db(
-            "SELECT data FROM scan_results ORDER BY score DESC LIMIT ?",
-            (limit,), fetch="all"
+            "SELECT data FROM scan_results_v2 WHERE scan_id = ? ORDER BY score DESC LIMIT ?",
+            (get_latest_completed_scan_id(), limit,), fetch="all"
         )
     t_query = round((time.perf_counter() - t0) * 1000, 2)
 
@@ -4833,7 +4833,7 @@ def get_stocks_map(symbols: list[str]) -> dict[str, dict]:
 
 def get_latest_completed_scan_id() -> str:
     """Get the scan_id of the most recent completed scan."""
-    row = execute_db("SELECT scan_id FROM scan_runs WHERE status = 'COMPLETED' ORDER BY end_time DESC LIMIT 1", fetch="one")
+    row = execute_db("SELECT scan_id FROM scan_runs WHERE LOWER(status) = 'completed' ORDER BY end_time DESC LIMIT 1", fetch="one")
     if row and row.get("scan_id"):
         return row["scan_id"]
     return "scan_legacy_migration"

@@ -127,6 +127,7 @@ def _warmup_compute():
     state = scan_state.status()
     use_pg = db.is_postgresql() and not db.pg_cooldown_active()
     try:
+        scan_id = db.get_latest_completed_scan_id()
         if use_pg:
             agg = db.execute_db("""
                 SELECT
@@ -134,8 +135,9 @@ def _warmup_compute():
                     COALESCE(SUM(CASE WHEN (data->>'is_golden')::text IN ('true','1') THEN 1 ELSE 0 END), 0) as golden_count,
                     COALESCE(SUM(CASE WHEN COALESCE(NULLIF(data->>'change_pct',''),'0')::numeric > 0 THEN 1 ELSE 0 END), 0) as adv_count,
                     COALESCE(SUM(CASE WHEN COALESCE(NULLIF(data->>'change_pct',''),'0')::numeric < 0 THEN 1 ELSE 0 END), 0) as dec_count
-                FROM scan_results
-            """, fetch="one")
+                FROM scan_results_v2
+                WHERE scan_id = %s
+            """, (scan_id,), fetch="one")
         else:
             raise Exception("use sqlite")
     except Exception:
@@ -145,8 +147,9 @@ def _warmup_compute():
                 COALESCE(SUM(CASE WHEN json_extract(data, '$.is_golden') IN (1, 'true') THEN 1 ELSE 0 END), 0) as golden_count,
                 COALESCE(SUM(CASE WHEN CAST(json_extract(data, '$.change_pct') AS REAL) > 0 THEN 1 ELSE 0 END), 0) as adv_count,
                 COALESCE(SUM(CASE WHEN CAST(json_extract(data, '$.change_pct') AS REAL) < 0 THEN 1 ELSE 0 END), 0) as dec_count
-            FROM scan_results
-        """, fetch="one")
+            FROM scan_results_v2
+            WHERE scan_id = ?
+        """, (db.get_latest_completed_scan_id(),), fetch="one")
     hc = agg.get("hc_count", 0) if isinstance(agg, dict) else 0
     golden = agg.get("golden_count", 0) if isinstance(agg, dict) else 0
     adv = agg.get("adv_count", 0) if isinstance(agg, dict) else 0
