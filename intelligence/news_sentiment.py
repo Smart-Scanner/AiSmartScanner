@@ -6,7 +6,7 @@ Architecture: 5-Layer Provider Hierarchy + Provider-Independent FinBERT
 Layer 1 (Macro):     GDELT + NSE Announcements
 Layer 2 (Stock):     Finnhub (Primary) + MarketAux (Enrichment)
 Layer 3 (Discovery): Google News RSS
-Layer 4 (Emergency): yfinance
+Layer 4 (Removed):   yfinance (removed — other layers sufficient)
 Layer 5 (Global):    NewsAPI (dashboard macro headlines only)
 
 All articles → Normalize → Deduplicate → FinBERT → News Impact → Scanner
@@ -29,7 +29,7 @@ import requests
 from datetime import datetime, timedelta
 
 from intelligence.news_gdelt_finbert import get_gdelt_sentiment
-from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_ticker
+# yfinance removed — news uses GDELT, Finnhub, MarketAux, Google RSS
 from intelligence import finbert_engine
 from intelligence import news_cache
 
@@ -323,37 +323,10 @@ def _fetch_google_rss_articles(symbol: str) -> list:
         return []
 
 
-# ──────────────────────────────────────────────────────────────
-# Layer 4 (Emergency): yfinance
-# ──────────────────────────────────────────────────────────────
-
+# Layer 4 removed — yfinance no longer used
 def _fetch_yfinance_articles(symbol: str) -> list:
-    """Zero-limit emergency fallback via yfinance .news. Guarded by yf_guard."""
-    if not yf_is_available():
-        log.debug("yf_guard OPEN -- skipping yfinance news for %s", symbol)
-        return []
-    try:
-        tk = get_yf_ticker(symbol + ".NS", source="news_sentiment")
-        news = tk.news or []
-        yf_record_success()
-        if not news:
-            return []
-        articles = [
-            {
-                "title": n.get("title", ""),
-                "source": "yfinance",
-                "date": "",
-                "age_hours": 12.0,
-            }
-            for n in news[:10] if n.get("title")
-        ]
-        news_cache.record_refresh_success("yahoo")
-        return articles
-    except Exception as exc:
-        log.debug("yfinance news failed for %s: %s", symbol, exc)
-        yf_record_failure(source="news_sentiment")
-        news_cache.record_refresh_failure("yahoo", str(exc))
-        return []
+    """Stub — yfinance removed. Returns empty list."""
+    return []
 
 
 # ──────────────────────────────────────────────────────────────
@@ -399,10 +372,7 @@ def fetch_news_sentiment(symbol: str, query_marketaux: bool = False, scan_mode: 
         rss_articles = _fetch_google_rss_articles(symbol)
         all_articles.extend(rss_articles)
 
-    # ── Layer 4: Emergency (yfinance — only if all others empty) ──
-    if len(all_articles) == 0:
-        yf_articles = _fetch_yfinance_articles(symbol)
-        all_articles.extend(yf_articles)
+    # ── Layer 4: (yfinance removed — 3 layers are sufficient) ──
 
     # ── Universal Pipeline: Normalize → Deduplicate → FinBERT → Impact ──
     result = finbert_engine.process_articles(all_articles)

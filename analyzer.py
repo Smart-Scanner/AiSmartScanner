@@ -132,7 +132,15 @@ def get_nifty50_benchmark():
         import live_feed
         df = live_feed.fetch_historical("NIFTYBEES", days=BENCHMARK_LOOKBACK_DAYS)
         if df is not None and not df.empty and len(df) >= 30:
-            return _calc_regime(df)
+            nifty_1m, regime = _calc_regime(df)
+            # Cache for fallback during outages
+            try:
+                import db
+                db.set_meta("cached_nifty_1m", str(nifty_1m))
+                db.set_meta("cached_regime", regime)
+            except Exception:
+                pass
+            return nifty_1m, regime
     except Exception as exc:
         log.warning("Benchmark Angel One failed: %s", exc)
     try:
@@ -140,9 +148,28 @@ def get_nifty50_benchmark():
         start_date = end_date - timedelta(days=BENCHMARK_LOOKBACK_DAYS)
         df = stock_df(symbol="NIFTYBEES", from_date=start_date, to_date=end_date)
         if not df.empty and len(df) >= 30:
-            return _calc_regime(df)
+            nifty_1m, regime = _calc_regime(df)
+            try:
+                import db
+                db.set_meta("cached_nifty_1m", str(nifty_1m))
+                db.set_meta("cached_regime", regime)
+            except Exception:
+                pass
+            return nifty_1m, regime
     except Exception as exc:
         log.warning("Benchmark jugaad_data failed: %s", exc)
+
+    # Fallback: use last cached benchmark (better than 'unknown')
+    try:
+        import db
+        cached_1m = db.get_meta("cached_nifty_1m")
+        cached_regime = db.get_meta("cached_regime")
+        if cached_1m and cached_regime:
+            log.info("Benchmark using cached values: %s%%, %s", cached_1m, cached_regime)
+            return float(cached_1m), cached_regime
+    except Exception:
+        pass
+
     return 0, "unknown"
 
 

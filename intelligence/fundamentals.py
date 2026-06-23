@@ -1,17 +1,14 @@
 """
-Fundamentals Engine — Phase 2 (Four-Level Cache + yf_guard)
+Fundamentals Engine — Phase 3 (Dhan.co + DB Cache, yfinance removed)
 -------------------------------------------------------------
-Scoring: P/E, P/B, ROE, ROA, EPS growth, D/E, promoter holding, free cash flow
-Strategy: low PE + high ROE + growing EPS + low D/E = bullish
+Scoring: P/E, P/B, ROE, ROCE, EPS, NPM, FCF, DivYield
+Strategy: low PE + high ROE + growing EPS + positive FCF = bullish
 
-Four-level cache hierarchy for get_fundamentals_yf():
+Data Source: Dhan.co → universe_catalog → fundamentals cache
   Level 1 — In-memory dict (_fund_cache) — TTL 6 hours
   Level 2 — Disk JSON  (cache/fundamentals/<SYM>.json) — TTL 6 hours
   Level 3 — Database   (fundamentals table)             — TTL 6 hours
-  Level 4 — yfinance   (live fetch)                     — ONLY when all 3 miss
-
-  cache_only=True: skip Level 4 entirely (Fast Scan mode)
-  yf_guard circuit: if circuit OPEN, Level 4 is also skipped
+  Level 4 — universe_catalog (Dhan data)                — always available
 
 Public API (unchanged for backward compatibility):
   get_fundamentals_yf(symbol, cache_only=False) -> dict
@@ -27,7 +24,14 @@ from datetime import datetime
 from pathlib import Path
 
 from metrics.timer import timed
-from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_ticker
+# yf_guard kept for backward compatibility — functions are no-ops now
+try:
+    from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_ticker
+except ImportError:
+    def yf_is_available(): return False
+    def yf_record_failure(**kw): pass
+    def yf_record_success(): pass
+    def get_yf_ticker(s, **kw): return None
 
 log = logging.getLogger("screener")
 
@@ -169,165 +173,148 @@ def get_fundamentals_yf(symbol: str, cache_only: bool = False) -> dict:
     except Exception as exc:
         log.debug("fund DB cache miss for %s: %s", sym, exc)
 
-    # ── Level 4: yfinance ─────────────────────────────────────────────────────
+    # ── Level 4: universe_catalog (Dhan fundamentals, replaces yfinance) ────────
     if cache_only:
         log.debug("fund cache miss %s — cache_only=True, returning empty", sym)
         return _empty_fundamentals()
 
-    if not yf_is_available():
-        log.debug("fund yf_guard OPEN for %s — skipping yfinance", sym)
-        return _empty_fundamentals()
-
-    try:
-        ticker = get_yf_ticker(sym + ".NS", source="fundamentals")
-        info = ticker.info
-        yf_record_success()
-    except Exception as exc:
-        log.debug("yfinance fundamentals failed for %s: %s", sym, exc)
-        yf_record_failure(source="fundamentals")
-        return _empty_fundamentals()
-
-    def safe(val, default=None):
-        return val if val is not None and val == val else default  # NaN check
-
-    pe      = safe(info.get("trailingPE"))
-    pb      = safe(info.get("priceToBook"))
-    roe     = safe(info.get("returnOnEquity"))
-    roa     = safe(info.get("returnOnAssets"))
-    rev_g   = safe(info.get("revenueGrowth"))
-    earn_g  = safe(info.get("earningsGrowth"))
-    de      = safe(info.get("debtToEquity"))
-    promo   = safe(info.get("heldPercentInsiders"))
-    mcap    = safe(info.get("marketCap"))
-    fcf     = safe(info.get("freeCashflow"))
-    fwd_eps = safe(info.get("forwardEps"))
-    tr_eps  = safe(info.get("trailingEps"))
-    sector  = info.get("sector", "Unknown") or "Unknown"
-    industry = info.get("industry", "") or ""
-    total_rev = safe(info.get("totalRevenue"))
-    capex   = safe(info.get("capitalExpenditures"))
-    fwd_pe  = safe(info.get("forwardPE"))
-
-    # ── Scoring ───────────────────────────────────────────────────────────────
-    fund_score = 0
-
-    if rev_g is not None and rev_g > 0.15:
-        fund_score += 5     # >15% revenue growth
-    if rev_g is not None and rev_g > 0.30:
-        fund_score += 3     # >30% extra
-
-    if earn_g is not None and earn_g > 0.20:
-        fund_score += 8     # >20% earnings growth
-    if earn_g is not None and earn_g > 0.40:
-        fund_score += 4     # >40% extra
-
-    # R1: PE scoring — growth-stock friendly for Indian markets
-    # Stocks like Trent, CDSL, Dixon, Persistent trade at PE 40-80 and still outperform
-    if pe is not None:
-        if pe < 0:
-            fund_score -= 2  # Negative PE = loss-making
-        elif pe <= 15:
-            fund_score += 5  # Deep value
-        elif pe <= 35:
-            fund_score += 4  # Fair to moderate PE
-        elif pe <= 60:
-            fund_score += 2  # Growth PE acceptable
-        elif pe <= 100:
-            fund_score += 0  # Richly valued, no bonus no penalty
-        else:
-            fund_score -= 2  # PE > 100 = extreme valuation risk
-
-    if roe is not None and roe > 0.15:
-        fund_score += 5     # >15% ROE = capital efficient
-    if roe is not None and roe > 0.25:
-        fund_score += 3     # >25% extra bonus
-
-    if de is not None and de < 0.5:
-        fund_score += 4     # Low debt
-    elif de is not None and de < 1.0:
-        fund_score += 2
-
-    if promo is not None and promo > 0.55:
-        fund_score += 3     # High promoter = skin in game
-    if promo is not None and promo > 0.70:
-        fund_score += 2     # Extra bonus
-
-    if roa is not None and roa > 0.10:
-        fund_score += 3     # Good asset utilization
-
-    if fcf is not None and fcf > 0:
-        fund_score += 2     # Positive free cash flow
-
-    # Downside filters
-    if de is not None and de > 2.5:
-        fund_score -= 3     # High leverage risk
-    if earn_g is not None and earn_g < 0 and (roe is None or roe < 0.10):
-        fund_score -= 4     # Earnings declining + low ROE = value trap
-
-    fund_score = min(max(fund_score, 0), 32)
-
-    def fmt(v, mult=1, digits=1):
-        if v is None:
-            return None
-        try:
-            return round(float(v) * mult, digits)
-        except Exception:
-            return None
-
-    result = {
-        "pe":              fmt(pe),
-        "pb":              fmt(pb),
-        "fwd_pe":          fmt(fwd_pe),
-        "roe":             fmt(roe, 100),
-        "roa":             fmt(roa, 100),
-        "revenue_growth":  fmt(rev_g, 100),
-        "earnings_growth": fmt(earn_g, 100),
-        "debt_to_equity":  fmt(de),
-        "promoter_pct":    fmt(promo, 100),
-        "market_cap":      mcap,
-        "free_cash_flow":  fcf,
-        "total_revenue":   total_rev,
-        "capex":           capex,
-        "eps_fwd":         fmt(fwd_eps),
-        "eps_trail":       fmt(tr_eps),
-        "sector":          sector,
-        "industry":        industry,
-        "fund_score":      fund_score,
-    }
-
-    # Persist to cache (L1 + L2) and database (L3 write-through)
-    _store_fund_cache(sym, result)
     try:
         import db
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        db.execute_db("""
-            INSERT INTO fundamentals (
-                symbol, pe, pb, fwd_pe, roe, roa, revenue_growth, earnings_growth,
-                debt_to_equity, promoter_pct, market_cap, free_cash_flow, total_revenue,
-                capex, eps_fwd, eps_trail, fund_score, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(symbol) DO UPDATE SET
-                pe=excluded.pe, pb=excluded.pb, fwd_pe=excluded.fwd_pe,
-                roe=excluded.roe, roa=excluded.roa,
-                revenue_growth=excluded.revenue_growth, earnings_growth=excluded.earnings_growth,
-                debt_to_equity=excluded.debt_to_equity, promoter_pct=excluded.promoter_pct,
-                market_cap=excluded.market_cap, free_cash_flow=excluded.free_cash_flow,
-                total_revenue=excluded.total_revenue, capex=excluded.capex,
-                eps_fwd=excluded.eps_fwd, eps_trail=excluded.eps_trail,
-                fund_score=excluded.fund_score, updated_at=excluded.updated_at
-        """, (
-            sym, result.get("pe"), result.get("pb"), result.get("fwd_pe"),
-            result.get("roe"), result.get("roa"), result.get("revenue_growth"),
-            result.get("earnings_growth"), result.get("debt_to_equity"),
-            result.get("promoter_pct"), result.get("market_cap"),
-            result.get("free_cash_flow"), result.get("total_revenue"),
-            result.get("capex"), result.get("eps_fwd"), result.get("eps_trail"),
-            result.get("fund_score"), now,
-        ))
-    except Exception as exc:
-        log.debug("fund DB write-through failed for %s: %s", sym, exc)
+        uc_row = db.execute_db(
+            """SELECT pe, pb, roe, roce, eps, div_yield, industry_pe,
+                      revenue, free_cash_flow, net_profit_margin,
+                      market_cap, sector, industry, fundamentals_updated_at
+               FROM universe_catalog
+               WHERE symbol = ? AND is_active = TRUE""",
+            (sym,), fetch="one"
+        )
+        if uc_row and uc_row.get("market_cap"):
+            pe      = uc_row.get("pe")
+            pb      = uc_row.get("pb")
+            roe_val = uc_row.get("roe")
+            roce    = uc_row.get("roce")
+            eps_val = uc_row.get("eps")
+            mcap    = uc_row.get("market_cap")
+            fcf     = uc_row.get("free_cash_flow")
+            total_rev = uc_row.get("revenue")
+            sector  = uc_row.get("sector") or "Unknown"
+            industry = uc_row.get("industry") or ""
+            npm     = uc_row.get("net_profit_margin")
 
-    return result
+            # ── Scoring (same logic, adapted for Dhan scale) ──
+            # Dhan ROE is in % (e.g. 25.0), not ratio (0.25)
+            fund_score = 0
+
+            # PE scoring
+            if pe is not None:
+                if pe < 0:
+                    fund_score -= 2
+                elif pe <= 15:
+                    fund_score += 5
+                elif pe <= 35:
+                    fund_score += 4
+                elif pe <= 60:
+                    fund_score += 2
+                elif pe <= 100:
+                    fund_score += 0
+                else:
+                    fund_score -= 2
+
+            # ROE scoring (Dhan gives % directly)
+            if roe_val is not None:
+                if roe_val > 25:
+                    fund_score += 8
+                elif roe_val > 15:
+                    fund_score += 5
+                elif roe_val > 10:
+                    fund_score += 3
+
+            # ROCE scoring (bonus from Dhan — not available in yfinance!)
+            if roce is not None and roce > 20:
+                fund_score += 3
+
+            # Net Profit Margin (Dhan gives % directly)
+            if npm is not None:
+                if npm > 20:
+                    fund_score += 4
+                elif npm > 10:
+                    fund_score += 2
+                elif npm < 0:
+                    fund_score -= 3
+
+            # Free Cash Flow
+            if fcf is not None and fcf > 0:
+                fund_score += 2
+
+            # Dividend Yield bonus
+            div_y = uc_row.get("div_yield")
+            if div_y is not None and div_y > 2:
+                fund_score += 2
+
+            fund_score = min(max(fund_score, 0), 32)
+
+            result = {
+                "pe":              pe,
+                "pb":              pb,
+                "fwd_pe":          None,  # Dhan doesn't provide forward PE
+                "roe":             roe_val,
+                "roa":             None,  # Dhan doesn't provide ROA
+                "revenue_growth":  None,  # Would need historical comparison
+                "earnings_growth": None,  # Would need historical comparison
+                "debt_to_equity":  None,  # Dhan doesn't provide D/E directly
+                "promoter_pct":    None,  # Dhan doesn't provide promoter %
+                "market_cap":      mcap,
+                "free_cash_flow":  fcf,
+                "total_revenue":   total_rev,
+                "capex":           None,
+                "eps_fwd":         None,
+                "eps_trail":       eps_val,
+                "sector":          sector,
+                "industry":        industry,
+                "fund_score":      fund_score,
+                # Dhan bonus fields
+                "roce":            roce,
+                "net_profit_margin": npm,
+                "div_yield":       div_y,
+                "industry_pe":     uc_row.get("industry_pe"),
+            }
+
+            # Persist to cache (L1 + L2) and database (L3 write-through)
+            _store_fund_cache(sym, result)
+            try:
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                db.execute_db("""
+                    INSERT INTO fundamentals (
+                        symbol, pe, pb, fwd_pe, roe, roa, revenue_growth, earnings_growth,
+                        debt_to_equity, promoter_pct, market_cap, free_cash_flow, total_revenue,
+                        capex, eps_fwd, eps_trail, fund_score, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol) DO UPDATE SET
+                        pe=excluded.pe, pb=excluded.pb, fwd_pe=excluded.fwd_pe,
+                        roe=excluded.roe, roa=excluded.roa,
+                        revenue_growth=excluded.revenue_growth, earnings_growth=excluded.earnings_growth,
+                        debt_to_equity=excluded.debt_to_equity, promoter_pct=excluded.promoter_pct,
+                        market_cap=excluded.market_cap, free_cash_flow=excluded.free_cash_flow,
+                        total_revenue=excluded.total_revenue, capex=excluded.capex,
+                        eps_fwd=excluded.eps_fwd, eps_trail=excluded.eps_trail,
+                        fund_score=excluded.fund_score, updated_at=excluded.updated_at
+                """, (
+                    sym, result.get("pe"), result.get("pb"), result.get("fwd_pe"),
+                    result.get("roe"), result.get("roa"), result.get("revenue_growth"),
+                    result.get("earnings_growth"), result.get("debt_to_equity"),
+                    result.get("promoter_pct"), result.get("market_cap"),
+                    result.get("free_cash_flow"), result.get("total_revenue"),
+                    result.get("capex"), result.get("eps_fwd"), result.get("eps_trail"),
+                    result.get("fund_score"), now,
+                ))
+            except Exception as exc:
+                log.debug("fund DB write-through failed for %s: %s", sym, exc)
+
+            return result
+    except Exception as exc:
+        log.debug("fund universe_catalog read failed for %s: %s", sym, exc)
+
+    return _empty_fundamentals()
 
 
 # ─── Detailed financials (on-demand, 7-day cache) ────────────────────────────
@@ -432,309 +419,19 @@ def extract_detailed_financials(
     if use_cache and cache_data:
         return cache_data
 
-    # 4. Refetch from yfinance (guarded)
-    if not yf_is_available():
-        log.warning("extract_detailed_financials: yf_guard OPEN for %s — returning empty", clean)
-        return {
-            "yearly": [], "quarterly": [],
-            "fin_health_score": 0,
-            "fin_health_verdict": "Stressed",
-            "fin_alerts": ["yfinance circuit breaker open — data unavailable"],
-        }
-
-    try:
-        ticker = get_yf_ticker(clean + ".NS", source="fundamentals_detailed")
-        fin_y = ticker.financials
-        if fin_y.empty:
-            ticker = get_yf_ticker(clean, source="fundamentals_detailed")
-            fin_y = ticker.financials
-        yf_record_success()
-    except Exception as exc:
-        log.warning("yfinance fetch failed for detailed financials %s: %s", clean, exc)
-        yf_record_failure(source="fundamentals_detailed")
-        return {
-            "yearly": [], "quarterly": [],
-            "fin_health_score": 0,
-            "fin_health_verdict": "Stressed",
-            "fin_alerts": ["Data fetch error"],
-        }
-
-    if fin_y.empty:
-        return {
-            "yearly": [], "quarterly": [],
-            "fin_health_score": 0,
-            "fin_health_verdict": "Stressed",
-            "fin_alerts": ["No financial data found"],
-        }
-
-    bs_y = ticker.balance_sheet
-    cf_y = ticker.cashflow
-    fin_q = ticker.quarterly_financials
-    bs_q = ticker.quarterly_balance_sheet
-    cf_q = ticker.quarterly_cashflow
-
-    def clean_val(v, default=None):
-        if v is None or pd.isna(v) or np.isinf(v) or v != v:
-            return default
-        return float(v)
-
-    def get_sorted_cols(df):
-        if df.empty:
-            return []
-        return sorted(list(df.columns))
-
-    years = get_sorted_cols(fin_y)
-    quarters = get_sorted_cols(fin_q)
-
-    def get_row_val(df, col, row_names):
-        if df.empty or col not in df.columns:
-            return None
-        for name in row_names:
-            if name in df.index:
-                val = clean_val(df.loc[name, col])
-                if val is not None:
-                    return val
-        return None
-
-    rev_names     = ["Total Revenue", "Operating Revenue"]
-    net_inc_names = ["Net Income", "Normalized Income", "Net Income From Continuing Operation Net Minority Interest"]
-    ebitda_names  = ["EBITDA", "Normalized EBITDA"]
-    eps_names     = ["Basic EPS", "Diluted EPS"]
-    debt_names    = ["Total Debt", "Net Debt", "Long Term Debt"]
-    equity_names  = ["Common Stock Equity", "Stockholders Equity", "Total Equity Gross Minority Interest"]
-    capex_names   = ["Capital Expenditure", "Purchase Of PPE", "Net PPE Purchase And Sale"]
-    fcf_names     = ["Free Cash Flow", "Operating Cash Flow"]
-
-    # Process annual
-    yearly_data = []
-    for i, col in enumerate(years):
-        date_str = col.strftime("%Y-%m-%d") if hasattr(col, "strftime") else str(col)[:10]
-        rev     = get_row_val(fin_y, col, rev_names)
-        net_inc = get_row_val(fin_y, col, net_inc_names)
-        ebitda  = get_row_val(fin_y, col, ebitda_names)
-        eps     = get_row_val(fin_y, col, eps_names)
-        debt    = get_row_val(bs_y, col, debt_names)
-        equity  = get_row_val(bs_y, col, equity_names)
-        capex   = get_row_val(cf_y, col, capex_names)
-        fcf     = get_row_val(cf_y, col, fcf_names)
-
-        ebitda_margin     = round((ebitda / rev) * 100, 2) if rev and ebitda else None
-        net_margin        = round((net_inc / rev) * 100, 2) if rev and net_inc else None
-        capex_to_revenue  = round((abs(capex) / rev) * 100, 2) if rev and capex else None
-        fcf_conversion    = round((fcf / net_inc) * 100, 2) if net_inc and fcf else None
-        debt_to_equity    = round(debt / equity, 2) if debt and equity and equity > 0 else None
-
-        rev_growth_yoy         = None
-        net_income_growth_yoy  = None
-        if i > 0:
-            prev_col = years[i - 1]
-            prev_rev = get_row_val(fin_y, prev_col, rev_names)
-            if prev_rev and rev:
-                rev_growth_yoy = round(((rev - prev_rev) / prev_rev) * 100, 2)
-            prev_net_inc = get_row_val(fin_y, prev_col, net_inc_names)
-            if prev_net_inc and net_inc:
-                net_income_growth_yoy = round(((net_inc - prev_net_inc) / prev_net_inc) * 100, 2)
-
-        yearly_data.append({
-            "date":                   date_str,
-            "revenue":                round(rev / 10000000, 2) if rev else None,
-            "net_income":             round(net_inc / 10000000, 2) if net_inc else None,
-            "ebitda":                 round(ebitda / 10000000, 2) if ebitda else None,
-            "eps":                    eps,
-            "debt":                   round(debt / 10000000, 2) if debt else None,
-            "equity":                 round(equity / 10000000, 2) if equity else None,
-            "capex":                  round(abs(capex) / 10000000, 2) if capex else None,
-            "fcf":                    round(fcf / 10000000, 2) if fcf else None,
-            "ebitda_margin":          ebitda_margin,
-            "net_margin":             net_margin,
-            "capex_to_revenue":       capex_to_revenue,
-            "fcf_conversion":         fcf_conversion,
-            "debt_to_equity":         debt_to_equity,
-            "rev_growth_yoy":         rev_growth_yoy,
-            "net_income_growth_yoy":  net_income_growth_yoy,
-        })
-
-    # Process quarterly
-    quarterly_data = []
-    for i, col in enumerate(quarters):
-        date_str = col.strftime("%Y-%m-%d") if hasattr(col, "strftime") else str(col)[:10]
-        rev     = get_row_val(fin_q, col, rev_names)
-        net_inc = get_row_val(fin_q, col, net_inc_names)
-        ebitda  = get_row_val(fin_q, col, ebitda_names)
-        eps     = get_row_val(fin_q, col, eps_names)
-
-        ebitda_margin = round((ebitda / rev) * 100, 2) if rev and ebitda else None
-        net_margin    = round((net_inc / rev) * 100, 2) if rev and net_inc else None
-
-        rev_growth_qoq        = None
-        net_income_growth_qoq = None
-        if i > 0:
-            prev_col = quarters[i - 1]
-            prev_rev = get_row_val(fin_q, prev_col, rev_names)
-            if prev_rev and rev:
-                rev_growth_qoq = round(((rev - prev_rev) / prev_rev) * 100, 2)
-            prev_net_inc = get_row_val(fin_q, prev_col, net_inc_names)
-            if prev_net_inc and net_inc:
-                net_income_growth_qoq = round(((net_inc - prev_net_inc) / prev_net_inc) * 100, 2)
-
-        quarterly_data.append({
-            "date":                   date_str,
-            "revenue":                round(rev / 10000000, 2) if rev else None,
-            "net_income":             round(net_inc / 10000000, 2) if net_inc else None,
-            "ebitda":                 round(ebitda / 10000000, 2) if ebitda else None,
-            "eps":                    eps,
-            "ebitda_margin":          ebitda_margin,
-            "net_margin":             net_margin,
-            "rev_growth_qoq":         rev_growth_qoq,
-            "net_income_growth_qoq":  net_income_growth_qoq,
-        })
-
-    # Sort descending (latest first)
-    yearly_data    = yearly_data[::-1]
-    quarterly_data = quarterly_data[::-1]
-
-    # Financial health scorecard
-    fin_health_score = 0
-    fin_alerts = []
-
-    latest_y = yearly_data[0] if yearly_data else {}
-    latest_q = quarterly_data[0] if quarterly_data else {}
-
-    if latest_y.get("rev_growth_yoy") and latest_y["rev_growth_yoy"] > 10:
-        fin_health_score += 1
-    else:
-        fin_alerts.append("Slowing yearly revenue growth")
-
-    if latest_y.get("net_income_growth_yoy") and latest_y["net_income_growth_yoy"] > 10:
-        fin_health_score += 1
-    else:
-        fin_alerts.append("Net Profit growth YoY is sluggish")
-
-    if latest_y.get("ebitda_margin") and latest_y["ebitda_margin"] > 15:
-        fin_health_score += 2
-    elif latest_y.get("ebitda_margin") and latest_y["ebitda_margin"] < 5:
-        fin_alerts.append("Extremely low operating margin (< 5%)")
-
-    de = latest_y.get("debt_to_equity")
-    if de is not None:
-        if de < 0.5:
-            fin_health_score += 2
-        elif de < 1.0:
-            fin_health_score += 1
-        elif de > 1.5:
-            fin_alerts.append(f"High Leverage Warning (D/E: {de})")
-    else:
-        fin_health_score += 1  # Assume low/no debt if fields are missing
-
-    if latest_y.get("fcf") and latest_y["fcf"] > 0:
-        fin_health_score += 1
-    else:
-        fin_alerts.append("Negative Free Cash Flow (Cash burn)")
-
-    if latest_y.get("fcf_conversion") and latest_y["fcf_conversion"] > 80:
-        fin_health_score += 1
-    else:
-        fin_alerts.append("Weak earnings-to-cash conversion")
-
-    if latest_q.get("rev_growth_qoq") and latest_q["rev_growth_qoq"] > 0:
-        fin_health_score += 1
-    else:
-        fin_alerts.append("Declining sequential quarterly sales")
-
-    if latest_q.get("net_income_growth_qoq") and latest_q["net_income_growth_qoq"] > 0:
-        fin_health_score += 1
-    else:
-        fin_alerts.append("Declining sequential quarterly profit")
-
-    if fin_health_score >= 8:
-        fin_health_verdict = "Excellent"
-    elif fin_health_score >= 6:
-        fin_health_verdict = "Strong"
-    elif fin_health_score >= 5:
-        fin_health_verdict = "Good"
-    elif fin_health_score >= 4:
-        fin_health_verdict = "Mixed"
-    elif fin_health_score >= 2:
-        fin_health_verdict = "Weak"
-    else:
-        fin_health_verdict = "Stressed"
-
-    comp_strength = (
-        "Fundamental study ke hisab se company strong aur stable hai." if fin_health_score >= 6 else (
-            "Company medium strength ki hai, kuch positive factors hain toh kuch parameters weak hain."
-            if fin_health_score >= 4
-            else "Company ke fundamentals weak aur stressed lag rahe hain, savdhan rahein."
-        )
-    )
-    rev_status = (
-        f"Revenues badh rahi hain. Yearly growth rate {latest_y.get('rev_growth_yoy') or '--'}% hai."
-        if (latest_y.get("rev_growth_yoy") or 0) > 0
-        else f"Revenues sluggish hain aur growth rate flat ya negative (-{abs(latest_y.get('rev_growth_yoy') or 0)}%) ho rahi hai."
-    )
-    profit_status  = (
-        "Profit growth stable aur margins control me hain."
-        if (latest_y.get("net_margin") or 0) > 10
-        else "Profit margin tight hai, company expenses control karne me struggle kar rahi hai."
-    )
-    debt_status    = (
-        "Debt (karz) manageable hai. D/E Ratio comfortable zone me hai."
-        if (de or 0) < 1.0
-        else "Debt (karz) ka pressure thoda zyada hai. Leverage risk pe nazar rakhna zaroori hai."
-    )
-    cash_flow_status = (
-        "Free cash flow positive hai, company cash generate karne me kamyab ho rahi hai."
-        if (latest_y.get("fcf") or 0) > 0
-        else "Free Cash Flow negative hai. Net profit toh hai par cash conversion weak hai."
-    )
-    entry_advice   = (
-        "Breakout validate ho toh fresh entry li ja sakti hai, strict stop loss ke sath."
-        if fin_health_score >= 5
-        else "Abhi fresh entry ke liye sahi samay nahi hai. Pullback ya stability ka wait karein."
-    )
-    suitability    = (
-        "Yeh company Long-term Quality investment ke liye behtar hai."
-        if fin_health_score >= 7
-        else (
-            "Yeh stock short-term momentum trade ke liye theek hai par long-term holdings me risk hai."
-            if fin_health_score >= 4
-            else "Strict trade-only ya avoid setup hai. Quality low hai."
-        )
-    )
-
-    hindi_explanation = {
-        "company_strength":  comp_strength,
-        "revenue_status":    rev_status,
-        "profit_status":     profit_status,
-        "debt_status":       debt_status,
-        "cash_flow_status":  cash_flow_status,
-        "entry_advice":      entry_advice,
-        "suitability":       suitability,
+    # 4. Data unavailable — return from cache or empty
+    log.debug("extract_detailed_financials: no live data source for %s — returning cached or empty", clean)
+    return {
+        "yearly": [], "quarterly": [],
+        "fin_health_score": 0,
+        "fin_health_verdict": "Stressed",
+        "fin_alerts": ["Detailed financial data unavailable (yfinance removed)"],
     }
 
-    output_data = {
-        "yearly":             yearly_data,
-        "quarterly":          quarterly_data,
-        "fin_health_score":   fin_health_score,
-        "fin_health_verdict": fin_health_verdict,
-        "fin_alerts":         fin_alerts,
-        "hindi_explanation":  hindi_explanation,
-    }
 
-    # Save to file cache
-    try:
-        tmp = cache_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(output_data), encoding="utf-8")
-        tmp.replace(cache_file)
-    except Exception:
-        pass
-
-    # Save to database
-    try:
-        db.save_detailed_fundamentals(clean, output_data)
-    except Exception:
-        pass
-
-    return output_data
+# Dead code removed — extract_detailed_financials previously used yfinance
+# to fetch quarterly/yearly financials. Now returns cached data or empty.
+# TODO: Implement via Dhan/Angel API if detailed financials are needed.
 
 
 # ─── Bulk prefill + invalidate utilities ─────────────────────────────────────

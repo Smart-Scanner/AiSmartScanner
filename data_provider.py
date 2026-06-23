@@ -244,8 +244,10 @@ class ProviderManager:
 
     def acquire_active_provider(self, required_role="RESEARCH") -> Optional[BrokerProvider]:
         """
-        Scheduler lock: Finds an ACTIVE, unused provider with the right role.
-        Fyers providers are checked first (higher priority).
+        Find an ACTIVE provider with the right role.
+        
+        RESEARCH providers: shared access (multiple workers can use simultaneously).
+        EXECUTION providers: exclusive access (in_use mutex prevents concurrent orders).
         """
         # Priority order: Fyers first, then Angel
         for name, p in self.providers.items():
@@ -265,13 +267,19 @@ class ProviderManager:
                 active_check = (state_val == "ACTIVE") if isinstance(state_val, str) else (p.state == ProviderState.ACTIVE)
                 role_check = p.role == required_role
                 
-                if active_check and not p.in_use and role_check:
-                    p.in_use = True
-                    return p
+                if active_check and role_check:
+                    # RESEARCH: shared access — skip in_use check (read-only, safe for concurrency)
+                    # EXECUTION: exclusive access — respect in_use mutex
+                    if required_role == "RESEARCH" or not p.in_use:
+                        if required_role != "RESEARCH":
+                            p.in_use = True  # Only lock for EXECUTION
+                        return p
         return None
 
     def release_provider(self, provider):
-        provider.in_use = False
+        """Release provider lock. Only meaningful for EXECUTION providers."""
+        if hasattr(provider, 'in_use'):
+            provider.in_use = False
 
     def get_telemetry(self) -> dict:
         telemetry = {}

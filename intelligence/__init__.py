@@ -16,7 +16,11 @@ import logging
 import threading
 import time
 from metrics.timer import timed
-from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_ticker
+# yf_guard stubs — yfinance removed
+try:
+    from intelligence.yf_guard import yf_is_available
+except ImportError:
+    def yf_is_available(): return False
 
 from intelligence.seasonal import get_seasonal_score
 from intelligence.order_book import get_order_book_proxy
@@ -85,7 +89,7 @@ def warmup_all(all_symbols: set = None):
 # ──────────────────────────────────────────────────────────────
 @timed("corporate_events")
 def get_upcoming_events(symbol: str, cache_only: bool = False) -> list:
-    """Corporate events from yfinance calendar, with 6-hour memory cache."""
+    """Corporate events cache. yfinance removed — returns cached data or empty."""
     sym = symbol.upper()
     # Level 1: Memory cache
     with _events_lock:
@@ -93,33 +97,8 @@ def get_upcoming_events(symbol: str, cache_only: bool = False) -> list:
         if entry and (time.time() - entry["ts"]) < _EVENTS_TTL:
             return entry["data"]
 
-    if cache_only:
-        log.debug("events cache miss %s — cache_only=True, returning empty", sym)
-        return []
-
-    if not yf_is_available():
-        log.debug("events yf_guard OPEN for %s — skipping", sym)
-        return []
-
-    # Level 2: yfinance fetch
-    try:
-        tk = get_yf_ticker(symbol + ".NS", source="events")
-        cal = tk.calendar
-        events = []
-        if cal is not None and not cal.empty:
-            for col in cal.columns:
-                vals = cal[col].tolist()
-                if vals:
-                    events.append({"event": col, "date": str(vals[0])[:10]})
-        result = events[:5]
-        yf_record_success()
-    except Exception:
-        yf_record_failure(source="events")
-        result = []
-
-    with _events_lock:
-        _events_cache[sym] = {"data": result, "ts": time.time()}
-    return result
+    # No live source (yfinance removed) — return empty
+    return []
 
 
 def invalidate_events_cache(symbol: str) -> None:
@@ -142,7 +121,7 @@ def run_all_layers(
 
     df: OHLCV DataFrame (columns: DATE/OPEN/HIGH/LOW/CLOSE/VOLUME)
     fundamentals: dict from get_fundamentals_yf() — passed in to avoid double-fetch
-    cache_only: if True, all yfinance-backed layers use cache only (Fast Scan mode)
+    cache_only: if True, use cached data only (Fast Scan mode)
     """
     result = {}
 

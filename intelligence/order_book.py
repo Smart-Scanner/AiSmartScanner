@@ -8,7 +8,7 @@ Order Book Proxy Engine
 """
 
 import logging
-from intelligence.yf_guard import yf_is_available, get_yf_ticker
+# yfinance removed — fundamentals dict from universe_catalog has all data
 
 log = logging.getLogger("screener")
 
@@ -18,8 +18,7 @@ def get_order_book_proxy(symbol: str, fundamentals: dict) -> dict:
     Estimates order book visibility.
     Returns {ob_to_mcap, ob_score, signals, capex, free_cash}.
 
-    Uses fundamentals dict already fetched (avoids double yfinance call).
-    Falls back to a yfinance fetch if fundamentals is empty.
+    Uses fundamentals dict already fetched from universe_catalog (Dhan data).
     """
     try:
         total_rev       = fundamentals.get("total_revenue") or 0
@@ -30,22 +29,6 @@ def get_order_book_proxy(symbol: str, fundamentals: dict) -> dict:
         mcap            = fundamentals.get("market_cap") or 0
         sector          = (fundamentals.get("sector") or "").lower()
         industry        = (fundamentals.get("industry") or "").lower()
-
-        # If missing key data, try quick yfinance fetch
-        if not total_rev or not mcap:
-            try:
-                if not yf_is_available():
-                    pass
-                else:
-                    info = get_yf_ticker(symbol + ".NS", source="order_book").info
-                total_rev       = info.get("totalRevenue") or 0
-                mcap            = info.get("marketCap") or 0
-                rev_growth_pct  = (info.get("revenueGrowth") or 0) * 100
-                rev_growth_rate = rev_growth_pct / 100
-                capex           = abs(info.get("capitalExpenditures") or 0)
-                free_cash       = info.get("freeCashflow") or 0
-            except Exception:
-                pass
 
         ob_score = 0
         signals = []

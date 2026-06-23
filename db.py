@@ -1387,6 +1387,28 @@ def _run_init_db_logic():
                     cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS liquidity_excluded_reason TEXT;")
                     cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS liquidity_excluded_at TIMESTAMP;")
 
+                    # ── Dhan Fundamental Data (replaces yfinance) ──
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS isin TEXT;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS pe REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS pb REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS roe REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS roce REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS eps REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS div_yield REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS industry_pe REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS revenue REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS free_cash_flow REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS net_profit_margin REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS high_52w REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS low_52w REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS pct_change_1m REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS pct_change_1y REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS rsi_14 REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS sma_50 REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS sma_200 REAL;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS dhan_sid TEXT;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS fundamentals_updated_at TIMESTAMP;")
+
                     # Universe Snapshot (append-only audit trail per build)
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS universe_snapshot (
@@ -2350,6 +2372,34 @@ def _init_sqlite():
             "ALTER TABLE universe_catalog ADD COLUMN liquidity_excluded INTEGER DEFAULT 0;",
             "ALTER TABLE universe_catalog ADD COLUMN liquidity_excluded_reason TEXT;",
             "ALTER TABLE universe_catalog ADD COLUMN liquidity_excluded_at TEXT;",
+        ]:
+            try:
+                conn.execute(col_sql)
+            except Exception as exc:
+                if "duplicate column name" in str(exc).lower():
+                    pass
+        # ── Dhan Fundamental Data columns (SQLite, replaces yfinance) ──
+        for col_sql in [
+            "ALTER TABLE universe_catalog ADD COLUMN isin TEXT;",
+            "ALTER TABLE universe_catalog ADD COLUMN pe REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN pb REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN roe REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN roce REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN eps REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN div_yield REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN industry_pe REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN revenue REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN free_cash_flow REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN net_profit_margin REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN high_52w REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN low_52w REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN pct_change_1m REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN pct_change_1y REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN rsi_14 REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN sma_50 REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN sma_200 REAL;",
+            "ALTER TABLE universe_catalog ADD COLUMN dhan_sid TEXT;",
+            "ALTER TABLE universe_catalog ADD COLUMN fundamentals_updated_at TEXT;",
         ]:
             try:
                 conn.execute(col_sql)
@@ -3382,12 +3432,42 @@ def _chunks(lst, n):
         yield lst[i:i + n]
 
 def _bulk_upsert_pg(table_name, sql_template, rows, cursor):
-    """Execute chunked bulk UPSERT via execute_values with per-table timing."""
+    """Execute chunked bulk UPSERT via execute_values with per-table timing.
+
+    Sanitizes all values to prevent numpy scalars (np.float64, np.int64 etc.)
+    from reaching psycopg2, which would render them as 'np.float64(...)' in SQL
+    and cause 'schema "np" does not exist' errors.
+    """
     from psycopg2.extras import execute_values
+
+    def _sanitize_value(v):
+        """Convert numpy scalars to Python native types."""
+        if v is None:
+            return None
+        # Fast path for common Python types
+        if isinstance(v, (int, float, str, bool)):
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                return None
+            return v
+        # numpy scalar → Python native
+        if hasattr(v, 'item'):
+            try:
+                native = v.item()
+                if isinstance(native, float) and (math.isnan(native) or math.isinf(native)):
+                    return None
+                return native
+            except Exception:
+                return float(v) if hasattr(v, '__float__') else str(v)
+        return v
+
+    def _sanitize_row(row):
+        return tuple(_sanitize_value(v) for v in row)
+
     total_rows = 0
     for chunk in _chunks(rows, DB_BATCH_SIZE):
+        sanitized_chunk = [_sanitize_row(r) for r in chunk]
         t0 = time.perf_counter()
-        execute_values(cursor, sql_template, chunk, page_size=DB_BATCH_SIZE)
+        execute_values(cursor, sql_template, sanitized_chunk, page_size=DB_BATCH_SIZE)
         dur = (time.perf_counter() - t0) * 1000
         total_rows += len(chunk)
         log.info("[UPSERT] table=%s duration=%sms rows=%s", table_name, round(dur), len(chunk))

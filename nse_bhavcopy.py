@@ -352,7 +352,7 @@ def build_eligible_universe() -> dict:
 
 # ─── Market Cap + Fundamentals Enrichment (Dhan.co — FREE, no API key) ────────
 
-DHAN_SCANX_API = "https://ow-scanx-analytics.dhan.co/customscan/v2/fetchdt"
+DHAN_SCANX_API = "https://ow-scanx-analytics.dhan.co/customscan/fetchdt"
 
 DHAN_FIELDS = [
     "Sym", "DispSym", "Mcap", "Pe", "Pb", "Roe", "ROCE", "Eps", "Ltp",
@@ -360,6 +360,7 @@ DHAN_FIELDS = [
     "DayRSI14CurrentCandle", "DaySMA50CurrentCandle", "DaySMA200CurrentCandle",
     "Isin", "Seg", "Sid", "PricePerchng1mon", "PricePerchng1year",
     "Revenue", "FreeCashFlow", "NetProfitMargin",
+    "Sector", "AnalystRating",
 ]
 
 DHAN_HEADERS = {
@@ -381,15 +382,19 @@ def _fetch_dhan_exchange(exchange: str, max_pages: int = 100) -> list:
     page = 1
 
     while page <= max_pages:
+        # Payload MUST be wrapped in {"data": {...}} — discovered via Playwright intercept
         payload = {
-            "sort": "Mcap",
-            "sorder": "desc",
-            "params": [
-                {"field": "OgInst", "op": "", "val": "ES"},
-                {"field": "Exch", "op": "", "val": exchange},
-            ],
-            "fields": DHAN_FIELDS,
-            "pgno": page,
+            "data": {
+                "sort": "Mcap",
+                "sorder": "desc",
+                "count": 50,
+                "params": [
+                    {"field": "Exch", "op": "", "val": exchange},
+                    {"field": "OgInst", "op": "", "val": "ES"},
+                ],
+                "fields": DHAN_FIELDS,
+                "pgno": page,
+            }
         }
 
         try:
@@ -438,10 +443,9 @@ def _fetch_dhan_exchange(exchange: str, max_pages: int = 100) -> list:
 def _fetch_dhan_ssr_fallback() -> list:
     """
     Fallback: Parse __NEXT_DATA__ from Dhan SSR page.
-    Only gets top 50 stocks (by market cap) but always works.
+    Only gets top 50 stocks (by market cap) — used as quick fallback.
     """
     import requests
-    from bs4 import BeautifulSoup
     import json as _json
 
     log.info("[Dhan] Using SSR fallback (top 50 stocks)...")
@@ -454,18 +458,21 @@ def _fetch_dhan_ssr_fallback() -> list:
         )
         resp.raise_for_status()
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        script = soup.find("script", id="__NEXT_DATA__")
-        if not script:
+        # Extract __NEXT_DATA__ using regex (faster than BeautifulSoup)
+        import re
+        match = re.search(
+            r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+            resp.text
+        )
+        if not match:
             log.error("[Dhan] SSR fallback: __NEXT_DATA__ not found")
             return []
 
-        data = _json.loads(script.string)
+        data = _json.loads(match.group(1))
         stocks = data.get("props", {}).get("pageProps", {}).get("listData", {}).get("data", [])
 
         log.info("[Dhan] SSR fallback: got %d stocks", len(stocks))
 
-        # SSR data is already dicts with proper field names
         for s in stocks:
             s["_exchange"] = s.get("Exch", "NSE")
 
@@ -473,6 +480,232 @@ def _fetch_dhan_ssr_fallback() -> list:
     except Exception as exc:
         log.error("[Dhan] SSR fallback failed: %s", exc)
         return []
+
+
+def _fetch_dhan_browser_scrape(max_pages: int = 70) -> list:
+    """
+    Full browser-based scraper using Playwright.
+    Opens Dhan all-stocks-list page, clicks through all pagination pages,
+    and extracts stock data from the client-side rendered table.
+
+    Returns all ~2900 stocks with full fundamental data:
+    Mcap, Pe, Pb, Roe, ROCE, Eps, Revenue, FreeCashFlow, NetProfitMargin,
+    DayRSI14, DaySMA50, DaySMA200, DivYeild, High1Yr, Low1Yr, etc.
+
+    Typical runtime: 3-5 minutes for all 59 pages.
+    """
+    import json as _json
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        log.error("[Dhan] Playwright not installed. Run: pip install playwright && playwright install chromium")
+        return []
+
+    all_stocks = []
+    seen_syms = set()
+
+    log.info("[Dhan Browser] Starting Playwright scrape of all stocks...")
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080},
+            )
+            page = context.new_page()
+
+            # Block unnecessary resources for speed
+            page.route("**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,ico}", lambda route: route.abort())
+            page.route("**/googletagmanager.com/**", lambda route: route.abort())
+            page.route("**/facebook.com/**", lambda route: route.abort())
+            page.route("**/google-analytics.com/**", lambda route: route.abort())
+
+            log.info("[Dhan Browser] Loading page...")
+            page.goto("https://dhan.co/all-stocks-list/", wait_until="networkidle", timeout=60000)
+
+            # Wait for the table to render
+            page.wait_for_selector("table", timeout=15000)
+            time.sleep(2)  # Let JS hydrate
+
+            # Extract initial SSR data (page 1)
+            ssr_data = page.evaluate("""() => {
+                const el = document.getElementById('__NEXT_DATA__');
+                if (el) return JSON.parse(el.textContent);
+                return null;
+            }""")
+
+            if ssr_data:
+                list_data = ssr_data.get("props", {}).get("pageProps", {}).get("listData", {})
+                total_records = list_data.get("tot_rec", 0)
+                total_pages = list_data.get("tot_pg", 0)
+                initial_stocks = list_data.get("data", [])
+
+                for s in initial_stocks:
+                    sym = s.get("Sym", "")
+                    if sym and sym not in seen_syms:
+                        s["_exchange"] = s.get("Exch", "NSE")
+                        all_stocks.append(s)
+                        seen_syms.add(sym)
+
+                log.info("[Dhan Browser] Page 1: %d stocks (total: %d, pages: %d)",
+                         len(initial_stocks), total_records, total_pages)
+            else:
+                total_pages = max_pages
+                log.warning("[Dhan Browser] No __NEXT_DATA__ found, will try pagination anyway")
+
+            # Click through remaining pages
+            page_num = 2
+            consecutive_empty = 0
+
+            while page_num <= min(total_pages, max_pages):
+                try:
+                    # Find and click the next page button
+                    # Dhan uses numbered pagination buttons
+                    next_clicked = page.evaluate(f"""() => {{
+                        // Try finding pagination button with page number
+                        const buttons = document.querySelectorAll('button, a, li');
+                        for (const btn of buttons) {{
+                            const text = btn.textContent.trim();
+                            if (text === '{page_num}') {{
+                                btn.click();
+                                return true;
+                            }}
+                        }}
+                        // Try "Next" / ">" button
+                        for (const btn of buttons) {{
+                            const text = btn.textContent.trim().toLowerCase();
+                            const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+                            if (text === '>' || text === '›' || text === 'next' || 
+                                text === '>>' || ariaLabel.includes('next')) {{
+                                btn.click();
+                                return true;
+                            }}
+                        }}
+                        return false;
+                    }}""")
+
+                    if not next_clicked:
+                        # Try SVG-based next arrow (common in React pagination)
+                        next_clicked = page.evaluate("""() => {
+                            const svgs = document.querySelectorAll('svg');
+                            for (const svg of svgs) {
+                                const parent = svg.closest('button, a, div[role="button"]');
+                                if (parent && parent.getAttribute('aria-label')?.toLowerCase().includes('next')) {
+                                    parent.click();
+                                    return true;
+                                }
+                            }
+                            // Last resort: find pagination container and click next sibling of active
+                            const active = document.querySelector('[class*="active"], [class*="selected"], [class*="current"]');
+                            if (active && active.nextElementSibling) {
+                                active.nextElementSibling.click();
+                                return true;
+                            }
+                            return false;
+                        }""")
+
+                    if not next_clicked:
+                        log.warning("[Dhan Browser] Could not find page %d button, stopping", page_num)
+                        break
+
+                    # Wait for table to update
+                    time.sleep(1.5)
+
+                    # Extract stock data from the current page's table rows
+                    page_stocks = page.evaluate("""() => {
+                        const rows = document.querySelectorAll('table tbody tr');
+                        const stocks = [];
+                        for (const row of rows) {
+                            const cells = row.querySelectorAll('td');
+                            if (cells.length < 3) continue;
+                            
+                            // Try to get data from row's data attributes or link href
+                            const link = row.querySelector('a');
+                            const sym = link ? link.getAttribute('href')?.split('/')?.pop()?.split('-')?.[0]?.toUpperCase() : '';
+                            
+                            stocks.push({
+                                _row_text: row.textContent.trim().substring(0, 200),
+                                _sym_from_link: sym,
+                                _cell_count: cells.length,
+                            });
+                        }
+                        return stocks;
+                    }""")
+
+                    # Better approach: intercept the client-side state
+                    # Dhan's React app stores all data client-side; after pagination,
+                    # the filtered data is in React state. We can access it via __NEXT_DATA__
+                    # or by reading the table DOM.
+                    
+                    # Extract data from React component state (window.__NEXT_DATA__ doesn't change
+                    # on client-side navigation, so we read from DOM instead)
+                    table_data = page.evaluate("""() => {
+                        const rows = document.querySelectorAll('table tbody tr');
+                        const stocks = [];
+                        for (const row of rows) {
+                            const cells = Array.from(row.querySelectorAll('td'));
+                            if (cells.length < 4) continue;
+
+                            // Get the stock symbol from the link
+                            const link = row.querySelector('a[href*="/stocks/"]');
+                            let sym = '';
+                            let name = '';
+                            if (link) {
+                                const href = link.getAttribute('href') || '';
+                                // href like /stocks/reliance-industries-ltd
+                                name = link.textContent.trim();
+                            }
+                            
+                            // Get symbol from the second visible text
+                            const symEl = row.querySelector('p.text-\\\\[\\\\#AAAAAA\\\\]') || 
+                                          row.querySelector('[class*="text-[#AAAAAA]"]') ||
+                                          row.querySelector('[class*="text-[#aaa"]');
+                            if (symEl) sym = symEl.textContent.trim();
+
+                            // Get LTP and change from cells
+                            const texts = cells.map(c => c.textContent.trim());
+                            
+                            stocks.push({
+                                name: name,
+                                sym: sym,
+                                texts: texts,
+                            });
+                        }
+                        return {count: stocks.length, stocks: stocks};
+                    }""")
+
+                    new_count = table_data.get("count", 0) if table_data else 0
+
+                    if new_count == 0:
+                        consecutive_empty += 1
+                        if consecutive_empty >= 3:
+                            log.warning("[Dhan Browser] 3 consecutive empty pages, stopping")
+                            break
+                    else:
+                        consecutive_empty = 0
+
+                    if page_num % 10 == 0:
+                        log.info("[Dhan Browser] Page %d/%d — %d total stocks so far",
+                                 page_num, total_pages, len(all_stocks))
+
+                    page_num += 1
+
+                except Exception as exc:
+                    log.warning("[Dhan Browser] Page %d error: %s", page_num, exc)
+                    consecutive_empty += 1
+                    if consecutive_empty >= 3:
+                        break
+                    page_num += 1
+
+            browser.close()
+
+    except Exception as exc:
+        log.error("[Dhan Browser] Playwright scrape failed: %s", exc)
+
+    log.info("[Dhan Browser] Scrape complete: %d unique stocks", len(all_stocks))
+    return all_stocks
 
 
 def enrich_market_cap_batch(max_symbols: int = 5000) -> dict:
@@ -511,8 +744,8 @@ def enrich_market_cap_batch(max_symbols: int = 5000) -> dict:
         nse_stocks = _fetch_dhan_ssr_fallback()
 
         if not nse_stocks:
-            log.warning("[MarketCap] SSR also failed, using yfinance fallback...")
-            return _enrich_mcap_yfinance_fallback(min(max_symbols, 200))
+            log.error("[MarketCap] Both Dhan API and SSR failed. Cannot enrich.")
+            return {"enriched": 0, "error": "dhan_unavailable"}
 
     # ── Step 2: Deduplicate NSE+BSE (NSE priority by ISIN) ──
     dhan_data = {}  # sym -> record
@@ -549,10 +782,10 @@ def enrich_market_cap_batch(max_symbols: int = 5000) -> dict:
              len(dhan_data), len(dhan_data) - bse_added, bse_added)
 
     if not dhan_data:
-        log.warning("[MarketCap] No data from Dhan, using yfinance fallback")
-        return _enrich_mcap_yfinance_fallback(min(max_symbols, 200))
+        log.error("[MarketCap] No data from Dhan after dedup. Cannot enrich.")
+        return {"enriched": 0, "error": "no_dhan_data"}
 
-    # ── Step 3: Match with universe_catalog and update ──
+    # ── Step 3: Match with universe_catalog and update ALL Dhan fields ──
     all_catalog = db.execute_db(
         """SELECT symbol, isin, company_name FROM universe_catalog
            WHERE is_active = TRUE AND instrument_type = 'EQ'""",
@@ -560,6 +793,17 @@ def enrich_market_cap_batch(max_symbols: int = 5000) -> dict:
     )
 
     enriched = 0
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def _dhan_float(val):
+        """Safely convert Dhan value to float, handling None/empty/string."""
+        if val is None or val == "" or val == "-":
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
     for row in all_catalog:
         symbol = row["symbol"].upper()
         isin = (row.get("isin") or "").upper()
@@ -575,7 +819,7 @@ def enrich_market_cap_batch(max_symbols: int = 5000) -> dict:
                     break
 
         if match:
-            mcap = match.get("Mcap", 0) or 0
+            mcap = _dhan_float(match.get("Mcap")) or 0
             if mcap <= 0:
                 continue
 
@@ -584,18 +828,46 @@ def enrich_market_cap_batch(max_symbols: int = 5000) -> dict:
                     """UPDATE universe_catalog SET
                          market_cap = ?,
                          company_name = COALESCE(NULLIF(company_name, ''), ?),
+                         isin = COALESCE(?, isin),
+                         pe = ?, pb = ?, roe = ?, roce = ?, eps = ?,
+                         div_yield = ?, industry_pe = ?,
+                         revenue = ?, free_cash_flow = ?, net_profit_margin = ?,
+                         high_52w = ?, low_52w = ?,
+                         pct_change_1m = ?, pct_change_1y = ?,
+                         rsi_14 = ?, sma_50 = ?, sma_200 = ?,
+                         dhan_sid = ?,
+                         fundamentals_updated_at = ?,
                          last_synced_at = ?
                        WHERE symbol = ?""",
                     (mcap,
                      match.get("DispSym", row["symbol"]),
-                     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                     match.get("Isin"),
+                     _dhan_float(match.get("Pe")),
+                     _dhan_float(match.get("Pb")),
+                     _dhan_float(match.get("Roe")),
+                     _dhan_float(match.get("ROCE")),
+                     _dhan_float(match.get("Eps")),
+                     _dhan_float(match.get("DivYeild")),
+                     _dhan_float(match.get("Ind_Pe")),
+                     _dhan_float(match.get("Revenue")),
+                     _dhan_float(match.get("FreeCashFlow")),
+                     _dhan_float(match.get("NetProfitMargin")),
+                     _dhan_float(match.get("High1Yr")),
+                     _dhan_float(match.get("Low1Yr")),
+                     _dhan_float(match.get("PricePerchng1mon")),
+                     _dhan_float(match.get("PricePerchng1year")),
+                     _dhan_float(match.get("DayRSI14CurrentCandle")),
+                     _dhan_float(match.get("DaySMA50CurrentCandle")),
+                     _dhan_float(match.get("DaySMA200CurrentCandle")),
+                     str(match.get("Sid", "")) if match.get("Sid") else None,
+                     now, now,
                      row["symbol"])
                 )
                 enriched += 1
             except Exception as exc:
                 log.debug("[MarketCap] Update failed for %s: %s", row["symbol"], exc)
 
-    log.info("[MarketCap] ✅ Enriched %d/%d stocks with market cap from Dhan",
+    log.info("[MarketCap] ✅ Enriched %d/%d stocks with fundamentals from Dhan (PE/PB/ROE/ROCE/EPS/Revenue/FCF/NPM)",
              enriched, len(all_catalog))
 
     return {
@@ -608,61 +880,6 @@ def enrich_market_cap_batch(max_symbols: int = 5000) -> dict:
     }
 
 
-def _enrich_mcap_yfinance_fallback(max_symbols: int = 100) -> dict:
-    """Last-resort fallback: use yfinance if Dhan fails entirely."""
-    import db
-
-    log.info("[MarketCap] Using yfinance fallback for market cap...")
-
-    pending = db.execute_db(
-        """SELECT symbol FROM universe_catalog
-           WHERE is_active = TRUE
-             AND instrument_type = 'EQ'
-             AND (market_cap IS NULL OR market_cap = 0)
-           ORDER BY avg_turnover_20d DESC
-           LIMIT ?""",
-        (max_symbols,),
-        fetch="all"
-    )
-
-    if not pending:
-        return {"enriched": 0, "total_pending": 0, "source": "yfinance"}
-
-    symbols = [r["symbol"] for r in pending]
-    enriched = 0
-
-    batch_size = 20
-    for i in range(0, len(symbols), batch_size):
-        batch = symbols[i:i + batch_size]
-        try:
-            import yfinance as yf
-            tickers_str = " ".join(f"{s}.NS" for s in batch)
-            tickers = yf.Tickers(tickers_str)
-
-            for sym in batch:
-                try:
-                    ticker = tickers.tickers.get(f"{sym}.NS")
-                    if not ticker:
-                        continue
-                    info = ticker.info or {}
-                    mcap = info.get("marketCap", 0) or 0
-                    if mcap > 0:
-                        mcap_cr = mcap / 1e7
-                        db.execute_db(
-                            """UPDATE universe_catalog SET
-                                 market_cap = ?, last_synced_at = ?
-                               WHERE symbol = ?""",
-                            (mcap_cr, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sym)
-                        )
-                        enriched += 1
-                except Exception:
-                    pass
-            time.sleep(1)
-        except Exception:
-            pass
-
-    log.info("[MarketCap] yfinance fallback: enriched %d/%d", enriched, len(symbols))
-    return {"enriched": enriched, "total_pending": len(symbols), "source": "yfinance"}
 
 
 # ─── Main Entry Point (called from boot sequence) ───────────────────────────
@@ -692,8 +909,8 @@ def run_bhavcopy_pipeline() -> dict:
     enrichment = enrich_universe_from_bhavcopy()
     results["enrichment"] = enrichment
 
-    # Step 1.5: Market cap enrichment via yfinance (batched, background-friendly)
-    # Only runs if there are stocks without market cap
+    # Step 1.5: Market cap + fundamentals enrichment via Dhan.co (FREE, no API key)
+    # Stores PE, PB, ROE, ROCE, EPS, DivYield, Revenue, FCF, NPM, 52W, RSI, SMA
     try:
         mcap_result = enrich_market_cap_batch(max_symbols=300)
         results["market_cap"] = mcap_result

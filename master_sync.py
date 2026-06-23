@@ -3,7 +3,7 @@ master_sync.py — Phase 5.5: Master Stock Registry Sync Job
 
 Populates universe_catalog (Stock Master Registry) from:
   1. Angel ScripMaster (angel_tokens.json) — all NSE EQ symbols
-  2. yfinance metadata — market_cap, sector, industry
+  2. Dhan.co — market_cap, PE, PB, ROE, ROCE, EPS, sector, industry (via nse_bhavcopy)
 
 Schedule: Every 14 days, Sunday, 18:00 IST
 Mode: Upsert only — no truncate
@@ -49,12 +49,9 @@ def run_master_sync():
     """
     Master Stock Registry Sync Job — Incremental Mode.
 
-    Phase 1: Upsert ALL NSE EQ symbols into universe_catalog (no yfinance).
+    Phase 1: Upsert ALL NSE EQ symbols into universe_catalog.
              This ensures new IPOs/delistings are captured immediately.
-    Phase 2: Fetch yfinance metadata ONLY for symbols where:
-             - last_synced_at IS NULL (never synced), OR
-             - last_synced_at > MASTER_SYNC_INTERVAL_DAYS days old
-             Limited to MASTER_SYNC_DAILY_BATCH_SIZE symbols per run (default 500).
+    Phase 2: Trigger Dhan enrichment to populate market_cap, PE, PB, ROE, etc.
     """
     import db
     from config import MASTER_SYNC_DAILY_BATCH_SIZE, MASTER_SYNC_INTERVAL_DAYS
@@ -152,151 +149,30 @@ def run_master_sync():
         except Exception:
             pass
 
-        # Phase 2: Resumable enrichment loop — process ALL pending symbols
-        # in batches of MASTER_SYNC_DAILY_BATCH_SIZE until none remain.
+        # Phase 2: Dhan enrichment (replaces yfinance Phase 2)
+        # Dhan provides market_cap, PE, PB, ROE, ROCE, EPS, sector, industry
         synced = 0
         failed = 0
-        skipped_provider_unavailable = 0
-        total_stale_processed = 0
-        batch_round = 0
-        batch_size = 20  # yfinance batch size
-        MAX_ENRICHMENT_ROUNDS = 5  # Guard: prevent infinite looping
-
-        while True:
-            # Guard 1: Max rounds cap
-            if batch_round >= MAX_ENRICHMENT_ROUNDS:
-                log.info("[MasterSync] Phase 2: Max enrichment rounds (%d) reached — exiting loop", MAX_ENRICHMENT_ROUNDS)
-                break
-
-            # Guard 2: Circuit breaker check BEFORE iterating stale symbols
-            from intelligence.yf_guard import yf_is_available
-            if not yf_is_available():
-                log.warning("[MasterSync] yfinance circuit OPEN — exiting Phase 2 enrichment loop (synced=%d, skipped=%d)",
-                            synced, skipped_provider_unavailable)
-                break
-
-            stale_symbols = _get_stale_symbols(MASTER_SYNC_INTERVAL_DAYS,
-                                               MASTER_SYNC_DAILY_BATCH_SIZE)
-
-            if not stale_symbols:
-                if batch_round == 0:
-                    log.info("[MasterSync] Phase 2: No stale symbols — skipping yfinance fetch")
-                else:
-                    log.info("[MasterSync] Phase 2: All stale symbols processed after %d rounds", batch_round)
-                break
-
-            batch_round += 1
-            round_count = len(stale_symbols)
-            total_stale_processed += round_count
-            log.info("[MasterSync] PHASE2_BATCH_START round=%d stale_count=%d total_so_far=%d",
-                     batch_round, round_count, total_stale_processed)
-
-            # Track if ANY symbol was actually synced this round
-            round_synced = 0
-
-            for i in range(0, len(stale_symbols), batch_size):
-                batch = stale_symbols[i:i + batch_size]
-                symbols_data = []
-
-                for sym in batch:
-                    if not yf_is_available():
-                        skipped_provider_unavailable += 1
-                        # Don't log every single symbol — just count
-                        continue
-
-                    try:
-                        meta = _fetch_symbol_metadata(sym)
-                        if meta:
-                            # Reset fail counter on success
-                            meta["sync_fail_count"] = 0
-                            symbols_data.append(meta)
-                            synced += 1
-                            round_synced += 1
-                        else:
-                            # Increment consecutive fail counter
-                            prev_fails = _get_sync_fail_count(sym)
-                            new_fails = prev_fails + 1
-
-                            if new_fails >= 3:
-                                # 3 consecutive failures → likely delisted, mark inactive
-                                log.warning("[MasterSync] %s failed %d consecutive syncs — marking INACTIVE (likely delisted)", sym, new_fails)
-                                symbols_data.append({
-                                    "symbol": sym,
-                                    "company_name": sym,
-                                    "market_cap": 0,
-                                    "market_cap_bucket": "Unknown Cap",
-                                    "sector": "",
-                                    "industry": "",
-                                    "is_active": False,
-                                    "instrument_type": "EQ",
-                                    "exchange": "NSE",
-                                    "sync_fail_count": new_fails,
-                                })
-                            else:
-                                # Still under threshold, keep active but record failure
-                                symbols_data.append({
-                                    "symbol": sym,
-                                    "company_name": sym,
-                                    "market_cap": 0,
-                                    "market_cap_bucket": "Unknown Cap",
-                                    "sector": "",
-                                    "industry": "",
-                                    "is_active": True,
-                                    "instrument_type": "EQ",
-                                    "exchange": "NSE",
-                                    "sync_fail_count": new_fails,
-                                })
-                            synced += 1
-                            round_synced += 1
-                    except Exception as exc:
-                        log.debug("[MasterSync] Metadata fetch failed for %s: %s", sym, exc)
-                        failed += 1
-
-                # Save batch immediately (resume support)
-                if symbols_data:
-                    db.upsert_universe_catalog(symbols_data)
-
-                # Rate limiting for yfinance
-                time.sleep(1)
-
-                # Progress logging
-                if (i + batch_size) % 100 == 0:
-                    log.info("[MasterSync] Progress: %d/%d synced in round %d, %d failed total",
-                             synced, round_count, batch_round, failed)
-
-            # Guard 3: If zero symbols were actually synced this round, exit
-            # (all were skipped due to circuit breaker opening mid-round)
-            if round_synced == 0:
-                log.warning("[MasterSync] Phase 2: Zero symbols synced in round %d — circuit breaker likely open. Exiting.", batch_round)
-                break
-
-            # Log coverage after each round
-            try:
-                cov = db.execute_db(
-                    "SELECT COUNT(*) as c FROM universe_catalog WHERE market_cap > 0",
-                    fetch="one"
-                )
-                mcap_count = cov["c"] if cov else 0
-                log.info("[MasterSync] PHASE2_BATCH_COMPLETE round=%d synced=%d failed=%d mcap_populated=%d",
-                         batch_round, synced, failed, mcap_count)
-            except Exception:
-                log.info("[MasterSync] PHASE2_BATCH_COMPLETE round=%d synced=%d failed=%d",
-                         batch_round, synced, failed)
+        try:
+            from nse_bhavcopy import enrich_market_cap_batch
+            dhan_result = enrich_market_cap_batch(max_symbols=len(all_symbols))
+            synced = dhan_result.get("enriched", 0)
+            log.info("[MasterSync] Phase 2: Dhan enrichment done — %d stocks enriched", synced)
+        except Exception as exc:
+            log.warning("[MasterSync] Phase 2: Dhan enrichment failed (non-fatal): %s", exc)
+            failed = 1
 
         duration = time.time() - start_time
-        log.info("[MASTER_SYNC_COMPLETED] %d synced, %d failed, %d rounds, %.1f seconds",
-                 synced, failed, batch_round, duration)
+        log.info("[MASTER_SYNC_COMPLETED] %d synced via Dhan, %d failed, %.1f seconds",
+                 synced, failed, duration)
 
         db.set_meta("master_sync_status", "completed")
         db.set_meta("master_sync_last_completed", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         db.set_meta("master_sync_synced_count", str(synced))
         db.set_meta("master_sync_failed_count", str(failed))
-        db.set_meta("master_sync_skipped_provider_unavailable", str(skipped_provider_unavailable))
         db.set_meta("master_sync_duration_s", str(round(duration)))
-        db.set_meta("master_sync_stale_count", str(total_stale_processed))
         db.log_scan_event(scan_id, "MASTER_SYNC_COMPLETED",
-                          f"synced={synced} failed={failed} skipped={skipped_provider_unavailable} rounds={batch_round} "
-                          f"stale={total_stale_processed} duration={round(duration)}s")
+                          f"synced={synced} failed={failed} duration={round(duration)}s source=dhan")
 
         return {"synced": synced, "failed": failed, "duration_s": round(duration)}
 
@@ -380,49 +256,35 @@ def _load_nse_symbols() -> list[str]:
 
 
 def _fetch_symbol_metadata(symbol: str) -> dict:
-    """Fetch metadata for a single symbol from yfinance.
+    """Fetch metadata for a single symbol from universe_catalog (Dhan data).
     Returns dict with keys: symbol, company_name, market_cap, market_cap_bucket,
                             sector, industry, is_active, instrument_type, exchange, price
+    Note: yfinance dependency removed. Dhan data is populated by enrich_market_cap_batch.
     """
-    from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_session, get_yf_ticker
-
-    if not yf_is_available():
-        return None
-
+    import db
     try:
-        import yfinance as yf
-        ticker = get_yf_ticker(f"{symbol}.NS", source="master_sync")
-        info = ticker.info
-
-        if not info or info.get("regularMarketPrice") is None:
-            return None
-
-        market_cap = info.get("marketCap", 0) or 0
-        market_cap_cr = market_cap / 1e7  # Convert to Crores
-
-        # Determine market cap bucket
-        bucket = _classify_market_cap(market_cap_cr)
-
-        result = {
-            "symbol": symbol,
-            "company_name": info.get("longName") or info.get("shortName") or symbol,
-            "market_cap": market_cap_cr,
-            "market_cap_bucket": bucket,
-            "sector": info.get("sector") or "",
-            "industry": info.get("industry") or "",
-            "is_active": True,
-            "instrument_type": _detect_instrument_type(info),
-            "exchange": "NSE",
-            "price": info.get("regularMarketPrice") or info.get("currentPrice") or 0,
-        }
-
-        yf_record_success()
-        return result
-
+        row = db.execute_db(
+            """SELECT symbol, company_name, market_cap, sector, industry, price
+               FROM universe_catalog WHERE symbol = ?""",
+            (symbol,), fetch="one"
+        )
+        if row and row.get("market_cap") and row["market_cap"] > 0:
+            mcap = row["market_cap"]
+            return {
+                "symbol": symbol,
+                "company_name": row.get("company_name") or symbol,
+                "market_cap": mcap,
+                "market_cap_bucket": _classify_market_cap(mcap),
+                "sector": row.get("sector") or "",
+                "industry": row.get("industry") or "",
+                "is_active": True,
+                "instrument_type": "EQ",
+                "exchange": "NSE",
+                "price": row.get("price") or 0,
+            }
     except Exception as exc:
-        log.debug("[MasterSync] yfinance failed for %s: %s", symbol, exc)
-        yf_record_failure(source="master_sync")
-        return None
+        log.debug("[MasterSync] DB lookup failed for %s: %s", symbol, exc)
+    return None
 
 
 def _classify_market_cap(mcap_cr: float) -> str:

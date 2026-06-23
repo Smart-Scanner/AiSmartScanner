@@ -17,7 +17,15 @@ import requests
 from SmartApi import SmartConnect
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 from metrics.timer import timed
-from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_session, get_yf_ticker
+# yf_guard stubs — yfinance removed, Angel/Fyers only
+try:
+    from intelligence.yf_guard import yf_is_available, yf_record_failure, yf_record_success, get_yf_session, get_yf_ticker
+except ImportError:
+    def yf_is_available(): return False
+    def yf_record_failure(**kw): pass
+    def yf_record_success(): pass
+    def get_yf_session(): return None
+    def get_yf_ticker(s, **kw): return None
 
 log = logging.getLogger("live_feed")
 
@@ -391,35 +399,7 @@ def get_live_price(symbol):
             tick["symbol"] = symbol.upper()
             return tick
 
-    # Fallback to yfinance if not in WebSocket cache
-    if not yf_is_available():
-        log.debug("get_live_price: yf_guard OPEN for %s", clean)
-        return None
-    try:
-        import yfinance as yf
-        ticker = get_yf_ticker(f"{clean}.NS", source="live_feed")
-        info = ticker.fast_info
-        ltp = info.get("lastPrice") or info.get("last_price")
-        if ltp:
-            tick = {
-                "symbol": symbol.upper(),
-                "ltp": round(float(ltp), 2),
-                "open": round(float(info.get("open", ltp)), 2),
-                "high": round(float(info.get("high", ltp)), 2),
-                "low": round(float(info.get("low", ltp)), 2),
-                "close": round(float(info.get("previousClose", ltp)), 2),
-                "change": round(float(info.get("dayPercentChange", 0.0) * ltp / 100), 2),
-                "change_pct": round(float(info.get("dayPercentChange", 0.0) * 100), 2),
-                "volume": int(info.get("lastVolume", 0)),
-                "last_update": datetime.now().isoformat(timespec="seconds"),
-            }
-            with _prices_lock:
-                _live_prices[clean] = tick.copy()
-            yf_record_success()
-            return tick
-    except Exception as exc:
-        log.debug("yfinance live fallback failed for %s: %s", clean, exc)
-        yf_record_failure(source="live_feed")
+    # No fallback — WebSocket + Angel/Fyers historical covers all needs
     return None
 
 def _on_data(wsapp, message):
