@@ -1162,8 +1162,6 @@ def _run_init_db_logic():
                     "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS parent_scan_id TEXT;",
                     "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS degraded_data BOOLEAN DEFAULT FALSE;",
                     "ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS last_heartbeat TIMESTAMP;",
-                    "ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS chunk_last_activity TIMESTAMP;",
-                    "ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS last_symbol TEXT;",
                 ]:
                     try:
                         cur.execute(col_def)
@@ -1227,7 +1225,9 @@ def _run_init_db_logic():
                         symbols_processed INTEGER DEFAULT 0,
                         error_message TEXT,
                         started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        completed_at TIMESTAMP
+                        completed_at TIMESTAMP,
+                        chunk_last_activity TIMESTAMP,
+                        last_symbol TEXT
                     );
                     CREATE INDEX IF NOT EXISTS idx_ucr_scan_id ON universe_chunk_runs(scan_id);
 
@@ -1282,6 +1282,8 @@ def _run_init_db_logic():
                 cur.execute("ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS symbols_processed INTEGER DEFAULT 0;")
                 cur.execute("ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS error_message TEXT;")
                 cur.execute("ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;")
+                cur.execute("ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS chunk_last_activity TIMESTAMP;")
+                cur.execute("ALTER TABLE universe_chunk_runs ADD COLUMN IF NOT EXISTS last_symbol TEXT;")
                 log.info("Governance schema additions verified (scan_state_transitions, context columns, chunks, snapshots, advisories)")
 
                 # ── Phase 5.5: Universe Engine Schema ──────────────────────
