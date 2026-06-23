@@ -1355,6 +1355,7 @@ def _run_init_db_logic():
                     cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS price REAL DEFAULT 0;")
                     cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP;")
                     cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+                    cur.execute("ALTER TABLE universe_catalog ADD COLUMN IF NOT EXISTS sync_fail_count INTEGER DEFAULT 0;")
 
                     # Eligible Universe (versioned, filtered subset)
                     cur.execute("""
