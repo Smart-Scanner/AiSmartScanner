@@ -77,11 +77,13 @@ class FyersProvider:
         # Option 1: Use pre-generated access token (recommended for server)
         if self.access_token:
             try:
+                cache_path = os.path.join(os.path.dirname(__file__), "cache")
+                os.makedirs(cache_path, exist_ok=True)
                 self._fyers = fyersModel.FyersModel(
                     token=self.access_token,
                     is_async=False,
                     client_id=self.app_id,
-                    log_path=os.path.join(os.path.dirname(__file__), "cache")
+                    log_path=cache_path
                 )
                 # Test connection
                 profile = self._fyers.get_profile()

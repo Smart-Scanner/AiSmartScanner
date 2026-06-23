@@ -45,6 +45,7 @@ for d in [os.path.expanduser("~/.cache/nsehistory-stock"),
 import db
 import auth_db
 import live_feed
+live_feed.load_token_map()  # Ensure angel_tokens.json exists before universe_sync runs
 import cache_layer
 from config import AUTO_SCAN_INTERVAL, FLASK_SECRET_KEY, DATA_LOOKBACK_DAYS
 from scanner import scan_state, has_valid_cache, run_full_scan, _shutdown_event

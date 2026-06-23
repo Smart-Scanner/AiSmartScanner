@@ -82,7 +82,8 @@ NSE_NAME_MAP = {
 # GDELT Bulk Pull
 # ──────────────────────────────────────────────────────────────
 GDELT_QUERIES = [
-    '("NSE" OR "Nifty" OR "India stock") (earnings OR profit OR revenue OR "order win" OR contract OR acquisition OR quarterly OR IPO OR merger OR buyback OR dividend)'
+    '("NSE" OR "Nifty" OR "India stock") (earnings OR profit OR revenue OR "order win" OR contract OR acquisition OR quarterly OR IPO OR merger OR buyback OR dividend)',
+    '("BSE" OR "Sensex" OR "Indian market") (earnings OR profit OR quarterly OR growth OR results)',
 ]
 GDELT_BASE = "https://api.gdeltproject.org/api/v2/doc/doc"
 
@@ -159,12 +160,12 @@ def fetch_gdelt_india_bulk(hours_back: int = 48) -> list:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
-            resp = requests.get(GDELT_BASE, params=params, headers=headers, timeout=10)
+            resp = requests.get(GDELT_BASE, params=params, headers=headers, timeout=20)
             
             if resp.status_code == 429:
                 log.debug("GDELT rate limited (429). Waiting 6 seconds and retrying...")
                 time.sleep(6)
-                resp = requests.get(GDELT_BASE, params=params, headers=headers, timeout=10)
+                resp = requests.get(GDELT_BASE, params=params, headers=headers, timeout=20)
                 
             if resp.status_code != 200:
                 log.debug("GDELT query failed with status %d: %s", resp.status_code, resp.text[:100])

@@ -238,6 +238,7 @@ def load_token_map():
             _token_map = json.loads(TOKEN_FILE.read_text())
             _reverse_map = {v: k for k, v in _token_map.items()}
             log.info("Loaded %d symbol tokens", len(_token_map))
+            _inject_index_tokens()
             return
         except Exception as exc:
             log.warning("Token file load failed: %s", exc)
@@ -256,6 +257,38 @@ def refresh_token_map():
         log.info("Refreshed %d symbol tokens", len(_token_map))
     except Exception as exc:
         log.error("Token refresh failed: %s", exc)
+    _inject_index_tokens()
+
+
+def _inject_index_tokens():
+    """Add NIFTY/BANKNIFTY and other well-known index tokens to the in-memory map.
+    
+    The Angel ScripMaster only contains -EQ (equity) symbols. Index tokens like
+    NIFTY (26000) and BANKNIFTY (26009) are missing, which causes
+    'Could not resolve token' errors and cascading failures in RRG/sector rotation.
+    """
+    global _token_map, _reverse_map
+    try:
+        from constants.index_tokens import ANGEL_INDEX_TOKENS
+        INDEX_ALIASES = {
+            "NIFTY": ANGEL_INDEX_TOKENS.get("NIFTY_50", "26000"),
+            "NIFTY50": ANGEL_INDEX_TOKENS.get("NIFTY_50", "26000"),
+            "NIFTY_50": ANGEL_INDEX_TOKENS.get("NIFTY_50", "26000"),
+            "BANKNIFTY": ANGEL_INDEX_TOKENS.get("Bank Nifty", "26009"),
+            "BANK_NIFTY": ANGEL_INDEX_TOKENS.get("Bank Nifty", "26009"),
+            "NIFTYBEES": _token_map.get("NIFTYBEES", ""),  # Keep existing if present
+        }
+        added = 0
+        for name, token in INDEX_ALIASES.items():
+            if token and name not in _token_map:
+                _token_map[name] = token
+                _reverse_map[token] = name
+                added += 1
+        if added:
+            log.info("Injected %d index tokens (NIFTY, BANKNIFTY, etc.)", added)
+    except Exception as exc:
+        log.warning("Failed to inject index tokens: %s", exc)
+
 
 def get_token(symbol: str):
     import db
