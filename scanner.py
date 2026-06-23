@@ -1401,7 +1401,8 @@ def _run_parallel_scan(context: ScanContext):
         if all_results:
             # Apply sector strength
             try:
-                all_results = apply_sector_strength(all_results)
+                heatmap = apply_sector_strength(all_results)  # modifies all_results in-place, returns heatmap
+                db.set_meta("heatmap", heatmap)  # save heatmap separately
             except Exception:
                 pass
 
@@ -1418,7 +1419,7 @@ def _run_parallel_scan(context: ScanContext):
                                  "universe_version": universe_version})
 
             # Subscribe to live feed
-            live_feed.subscribe([r["symbol"] for r in all_results])
+            live_feed.subscribe([r["symbol"] for r in all_results if r.get("symbol")])
 
         # Record performance metrics
         db.set_meta("scan_duration_s", str(round(elapsed)))
