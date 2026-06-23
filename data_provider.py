@@ -187,17 +187,22 @@ class ProviderManager:
         self.providers: Dict[str, BrokerProvider] = {}
 
     def discover_providers(self):
-        # ── Fyers Providers (higher priority — faster, less rate limiting) ──
-        try:
-            from fyers_provider import discover_fyers_providers
-            fyers_providers = discover_fyers_providers()
-            for name, provider in fyers_providers.items():
-                self.providers[name] = provider
-                logging.info(f"Registered Fyers provider: {name} (Role: RESEARCH)")
-        except ImportError:
-            logging.debug("fyers_provider module not available — skipping Fyers discovery")
-        except Exception as e:
-            logging.warning(f"Fyers discovery failed (non-fatal): {e}")
+        # ── Fyers Providers — skip if DISABLE_FYERS=1 or no FYERS_APP_ID ──
+        fyers_disabled = os.getenv("DISABLE_FYERS", "1") == "1"
+        fyers_app_id = os.getenv("FYERS_APP_ID", "")
+        if not fyers_disabled and fyers_app_id:
+            try:
+                from fyers_provider import discover_fyers_providers
+                fyers_providers = discover_fyers_providers()
+                for name, provider in fyers_providers.items():
+                    self.providers[name] = provider
+                    logging.info(f"Registered Fyers provider: {name} (Role: RESEARCH)")
+            except ImportError:
+                logging.debug("fyers_provider module not available — skipping Fyers discovery")
+            except Exception as e:
+                logging.warning(f"Fyers discovery failed (non-fatal): {e}")
+        else:
+            logging.info("Fyers provider disabled (DISABLE_FYERS=1 or FYERS_APP_ID not set) — Angel Only mode")
 
         # ── Angel Providers (fallback — existing logic) ──
         # Scan env for unique provider prefixes (by _TYPE or _API_KEY)

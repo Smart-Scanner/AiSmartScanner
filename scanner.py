@@ -518,15 +518,6 @@ def run_full_scan(context: ScanContext = None, resume_from_scan_id: str = None):
                         df = provider.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
                         api_duration = time.monotonic() - sym_start_time
                         
-                        # ── Fyers Fallback: if primary Angel provider fails, try Fyers ──
-                        if df is None:
-                            fyers_provider = provider_manager.acquire_active_provider(role="RESEARCH")
-                            if fyers_provider and fyers_provider.name != provider.name and "FYERS" in fyers_provider.name.upper():
-                                log.warning("[%s] Angel rate limit on %s — retrying via %s", correlation_id[:12], sym, fyers_provider.name)
-                                df = fyers_provider.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
-                                api_duration = time.monotonic() - sym_start_time
-                                provider_manager.release_provider(fyers_provider.name)
-                        
                         anal_start = time.monotonic()
                         if df is not None and not df.empty and len(df) >= 50:
                             r = fetch_and_analyze(sym, nifty_1m, regime, ext_df=df)
@@ -545,11 +536,7 @@ def run_full_scan(context: ScanContext = None, resume_from_scan_id: str = None):
                         db.log_scan_event(scan_id, "SYMBOL_FAILED", f"Sym: {sym}, Chunk: {chunk_name}, Error: {str(exc)}")
                     
                     chunk_processed += 1
-                    # Per-symbol delay for Angel One to reduce rate limit hits
-                    if "FYERS" not in provider.name.upper():
-                        time.sleep(0.5)  # 0.5s between Angel calls (~2 req/s max)
-                    else:
-                        time.sleep(0.2)  # Fyers is faster, less restrictive
+                    time.sleep(0.5)  # 0.5s between Angel calls (~2 req/s — within rate limit)
             finally:
                 provider_manager.release_provider(provider.name)
                 
