@@ -3544,38 +3544,38 @@ def save_results(results: list[dict], scan_id: str = 'legacy_fallback', meta: di
 
                     # 6. technical_indicators
                     technical_rows.append((
-                        sym, scan_date, r_sanitized.get("rsi"), r_sanitized.get("adx"),
-                        r_sanitized.get("macd_signal"), r_sanitized.get("volume_ratio"),
-                        r_sanitized.get("atr_pct"), r_sanitized.get("stoch_k"), r_sanitized.get("stoch_d"),
-                        r_sanitized.get("pct_1w"), r_sanitized.get("pct_2w"), r_sanitized.get("pct_1m"),
-                        r_sanitized.get("bb_position"), r_sanitized.get("dist_from_high"),
-                        r_sanitized.get("rs_vs_nifty"), r_sanitized.get("vwap_position"),
+                        sym, scan_date, _sf(r_sanitized.get("rsi")), _sf(r_sanitized.get("adx")),
+                        r_sanitized.get("macd_signal"), _sf(r_sanitized.get("volume_ratio")),
+                        _sf(r_sanitized.get("atr_pct")), _sf(r_sanitized.get("stoch_k")), _sf(r_sanitized.get("stoch_d")),
+                        _sf(r_sanitized.get("pct_1w")), _sf(r_sanitized.get("pct_2w")), _sf(r_sanitized.get("pct_1m")),
+                        _sf(r_sanitized.get("bb_position")), _sf(r_sanitized.get("dist_from_high")),
+                        _sf(r_sanitized.get("rs_vs_nifty")), _sf(r_sanitized.get("vwap_position")),
                         True if r_sanitized.get("is_breakout") else False,
                         True if r_sanitized.get("vp_divergence") else False,
                         r_sanitized.get("weekly_trend", "flat"),
                         True if r_sanitized.get("below_ema200") else False,
-                        r_sanitized.get("high_52w"), r_sanitized.get("low_52w"),
-                        r_sanitized.get("pullback_pct"), now
+                        _sf(r_sanitized.get("high_52w")), _sf(r_sanitized.get("low_52w")),
+                        _sf(r_sanitized.get("pullback_pct")), now
                     ))
 
                     # 7. fundamentals
                     fundamentals_rows.append((
-                        sym, f.get("pe"), f.get("pb"), f.get("fwd_pe"),
-                        f.get("roe"), f.get("roa"), f.get("revenue_growth"),
-                        f.get("earnings_growth"), f.get("debt_to_equity"),
-                        f.get("promoter_pct"), f.get("market_cap"),
-                        f.get("free_cash_flow"), f.get("total_revenue"),
-                        f.get("capex"), f.get("eps_fwd"), f.get("eps_trail"),
-                        f.get("fund_score", 0), now
+                        sym, _sf(f.get("pe")), _sf(f.get("pb")), _sf(f.get("fwd_pe")),
+                        _sf(f.get("roe")), _sf(f.get("roa")), _sf(f.get("revenue_growth")),
+                        _sf(f.get("earnings_growth")), _sf(f.get("debt_to_equity")),
+                        _sf(f.get("promoter_pct")), _sf(f.get("market_cap")),
+                        _sf(f.get("free_cash_flow")), _sf(f.get("total_revenue")),
+                        _sf(f.get("capex")), _sf(f.get("eps_fwd")), _sf(f.get("eps_trail")),
+                        _sf(f.get("fund_score", 0)), now
                     ))
 
                     # 8. final_scores
                     final_scores_rows.append((
-                        sym, scan_date, r_sanitized.get("news_sentiment_score", 0.0),
-                        r_sanitized.get("news_spike_score", 0.0), r_sanitized.get("technical_score", 0.0),
-                        r_sanitized.get("fundamental_score", 0.0), r_sanitized.get("macro_score", 0.0),
-                        r_sanitized.get("marketaux_catalyst_score", 0.0),
-                        r_sanitized.get("score", 0), r_sanitized.get("grade", ""),
+                        sym, scan_date, _sf(r_sanitized.get("news_sentiment_score", 0.0)),
+                        _sf(r_sanitized.get("news_spike_score", 0.0)), _sf(r_sanitized.get("technical_score", 0.0)),
+                        _sf(r_sanitized.get("fundamental_score", 0.0)), _sf(r_sanitized.get("macro_score", 0.0)),
+                        _sf(r_sanitized.get("marketaux_catalyst_score", 0.0)),
+                        _sf(r_sanitized.get("score", 0)), r_sanitized.get("grade", ""),
                         True if r_sanitized.get("high_conviction") else False,
                         True if r_sanitized.get("bear_play") else False,
                         True if r_sanitized.get("is_golden") else False, now
