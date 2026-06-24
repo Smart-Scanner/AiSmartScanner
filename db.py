@@ -662,6 +662,61 @@ def execute_db(query: str, params=None, fetch: str = None, require_pg: bool = Fa
     counters.inc("sqlite_fallback_used")
     return _execute_sqlite(query, params, fetch)
 
+def execute_many(query: str, params_list: list):
+    """
+    Execute a query multiple times using execute_batch for PostgreSQL,
+    or executemany for SQLite. Highly optimized for batch updates.
+    """
+    if not params_list:
+        return
+    
+    if is_postgresql() and not pg_cooldown_active():
+        pool = _get_pg_pool()
+        if pool:
+            conn = None
+            try:
+                from psycopg2.extras import execute_batch
+                conn = pool.getconn()
+                conn.autocommit = False # Use false so we can commit the batch atomically
+                query_pg = query.replace("?", "%s")
+                with conn.cursor() as cur:
+                    _t0 = time.perf_counter()
+                    execute_batch(cur, query_pg, params_list, page_size=500)
+                    conn.commit()
+                    _dur_ms = (time.perf_counter() - _t0) * 1000
+                    if _dur_ms > 1000:
+                        log.warning("[DB SLOW BATCH] %dms | %s (rows: %d)", round(_dur_ms), query_pg[:150], len(params_list))
+                return
+            except Exception as exc:
+                log.error("PG execute_many error: %s | Query: %.200s", exc, query)
+                if conn:
+                    try:
+                        conn.rollback()
+                        pool.putconn(conn, close=True)
+                    except Exception:
+                        pass
+                    conn = None
+            finally:
+                if conn:
+                    try:
+                        conn.autocommit = True
+                        pool.putconn(conn)
+                    except Exception:
+                        pass
+    
+    # SQLite fallback
+    try:
+        DB_PATH.parent.mkdir(exist_ok=True)
+        with sqlite3.connect(str(DB_PATH), timeout=10) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            cur = conn.cursor()
+            cur.executemany(query, params_list)
+            conn.commit()
+    except Exception as exc:
+        log.error("[SQLite execute_many] Failed: %s", exc)
+
+
 # ─── Database Initialisation ───
 
 _db_initialized = False
@@ -6244,8 +6299,17 @@ def save_eligible_universe(symbols_data: list, version: str):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     # Clear old universe data first
     execute_db("DELETE FROM eligible_universe WHERE 1=1")
+    
+    params_list = []
     for s in symbols_data:
-        execute_db(
+        params_list.append((
+            s["symbol"], s.get("market_cap_cr", 0), s.get("avg_volume_20d", 0),
+            s.get("avg_turnover_20d", 0), s.get("price", 0),
+            s.get("eligibility_reason", "FILTER_PASS"), version, now
+        ))
+        
+    if params_list:
+        execute_many(
             """INSERT INTO eligible_universe
                (symbol, market_cap_cr, avg_volume_20d, avg_turnover_20d,
                 price, eligibility_reason, universe_version, generated_at)
@@ -6258,10 +6322,9 @@ def save_eligible_universe(symbols_data: list, version: str):
                  eligibility_reason = EXCLUDED.eligibility_reason,
                  universe_version = EXCLUDED.universe_version,
                  generated_at = EXCLUDED.generated_at""",
-            (s["symbol"], s.get("market_cap_cr", 0), s.get("avg_volume_20d", 0),
-             s.get("avg_turnover_20d", 0), s.get("price", 0),
-             s.get("eligibility_reason", "FILTER_PASS"), version, now)
+            params_list
         )
+        
     set_meta("universe_version", version)
     set_meta("universe_stock_count", str(len(symbols_data)))
     set_meta("universe_generated_at", now)

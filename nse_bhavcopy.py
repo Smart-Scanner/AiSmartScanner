@@ -228,27 +228,30 @@ def enrich_universe_from_bhavcopy() -> dict:
         return {"nse_enriched": 0, "error": "no_nse_data"}
 
     # 2. Enrich universe_catalog — update price, volume, turnover
-    enriched = 0
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
+    
+    params_list = []
     for record in nse_data:
+        # Values for: price, avg_volume_20d, avg_turnover_20d, last_synced_at, symbol
+        params_list.append((
+            record["close"], record["volume"], record["turnover"], now, record["symbol"]
+        ))
+        
+    enriched = 0
+    if params_list:
         try:
-            # Use ? placeholders — execute_db translates to %s for PG
-            result = db.execute_db(
+            db.execute_many(
                 """UPDATE universe_catalog SET 
                      price = ?,
                      avg_volume_20d = ?,
                      avg_turnover_20d = ?,
                      last_synced_at = ?
                    WHERE symbol = ? AND is_active = TRUE""",
-                (record["close"], record["volume"], record["turnover"],
-                 now, record["symbol"]),
-                fetch="rowcount"
+                params_list
             )
-            if result and result > 0:
-                enriched += 1
+            enriched = len(params_list)
         except Exception as exc:
-            log.debug("[Bhavcopy] Failed to enrich %s: %s", record["symbol"], exc)
+            log.debug("[Bhavcopy] Failed to enrich batch: %s", exc)
 
     log.info("[Bhavcopy] ✅ Enriched %d/%d symbols from NSE bhavcopy", enriched, len(nse_data))
 
@@ -794,6 +797,7 @@ def enrich_market_cap_batch(max_symbols: int = 5000) -> dict:
 
     enriched = 0
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    params_list = []
 
     def _dhan_float(val):
         """Safely convert Dhan value to float, handling None/empty/string."""
@@ -823,49 +827,54 @@ def enrich_market_cap_batch(max_symbols: int = 5000) -> dict:
             if mcap <= 0:
                 continue
 
-            try:
-                db.execute_db(
-                    """UPDATE universe_catalog SET
-                         market_cap = ?,
-                         company_name = COALESCE(NULLIF(company_name, ''), ?),
-                         isin = COALESCE(?, isin),
-                         pe = ?, pb = ?, roe = ?, roce = ?, eps = ?,
-                         div_yield = ?, industry_pe = ?,
-                         revenue = ?, free_cash_flow = ?, net_profit_margin = ?,
-                         high_52w = ?, low_52w = ?,
-                         pct_change_1m = ?, pct_change_1y = ?,
-                         rsi_14 = ?, sma_50 = ?, sma_200 = ?,
-                         dhan_sid = ?,
-                         fundamentals_updated_at = ?,
-                         last_synced_at = ?
-                       WHERE symbol = ?""",
-                    (mcap,
-                     match.get("DispSym", row["symbol"]),
-                     match.get("Isin"),
-                     _dhan_float(match.get("Pe")),
-                     _dhan_float(match.get("Pb")),
-                     _dhan_float(match.get("Roe")),
-                     _dhan_float(match.get("ROCE")),
-                     _dhan_float(match.get("Eps")),
-                     _dhan_float(match.get("DivYeild")),
-                     _dhan_float(match.get("Ind_Pe")),
-                     _dhan_float(match.get("Revenue")),
-                     _dhan_float(match.get("FreeCashFlow")),
-                     _dhan_float(match.get("NetProfitMargin")),
-                     _dhan_float(match.get("High1Yr")),
-                     _dhan_float(match.get("Low1Yr")),
-                     _dhan_float(match.get("PricePerchng1mon")),
-                     _dhan_float(match.get("PricePerchng1year")),
-                     _dhan_float(match.get("DayRSI14CurrentCandle")),
-                     _dhan_float(match.get("DaySMA50CurrentCandle")),
-                     _dhan_float(match.get("DaySMA200CurrentCandle")),
-                     str(match.get("Sid", "")) if match.get("Sid") else None,
-                     now, now,
-                     row["symbol"])
-                )
-                enriched += 1
-            except Exception as exc:
-                log.debug("[MarketCap] Update failed for %s: %s", row["symbol"], exc)
+            params_list.append((
+                mcap,
+                match.get("DispSym", row["symbol"]),
+                match.get("Isin"),
+                _dhan_float(match.get("Pe")),
+                _dhan_float(match.get("Pb")),
+                _dhan_float(match.get("Roe")),
+                _dhan_float(match.get("ROCE")),
+                _dhan_float(match.get("Eps")),
+                _dhan_float(match.get("DivYeild")),
+                _dhan_float(match.get("Ind_Pe")),
+                _dhan_float(match.get("Revenue")),
+                _dhan_float(match.get("FreeCashFlow")),
+                _dhan_float(match.get("NetProfitMargin")),
+                _dhan_float(match.get("High1Yr")),
+                _dhan_float(match.get("Low1Yr")),
+                _dhan_float(match.get("PricePerchng1mon")),
+                _dhan_float(match.get("PricePerchng1year")),
+                _dhan_float(match.get("DayRSI14CurrentCandle")),
+                _dhan_float(match.get("DaySMA50CurrentCandle")),
+                _dhan_float(match.get("DaySMA200CurrentCandle")),
+                str(match.get("Sid", "")) if match.get("Sid") else None,
+                now, now,
+                row["symbol"]
+            ))
+
+    if params_list:
+        try:
+            db.execute_many(
+                """UPDATE universe_catalog SET
+                     market_cap = ?,
+                     company_name = COALESCE(NULLIF(company_name, ''), ?),
+                     isin = COALESCE(?, isin),
+                     pe = ?, pb = ?, roe = ?, roce = ?, eps = ?,
+                     div_yield = ?, industry_pe = ?,
+                     revenue = ?, free_cash_flow = ?, net_profit_margin = ?,
+                     high_52w = ?, low_52w = ?,
+                     pct_change_1m = ?, pct_change_1y = ?,
+                     rsi_14 = ?, sma_50 = ?, sma_200 = ?,
+                     dhan_sid = ?,
+                     fundamentals_updated_at = ?,
+                     last_synced_at = ?
+                   WHERE symbol = ?""",
+                params_list
+            )
+            enriched = len(params_list)
+        except Exception as exc:
+            log.warning(f"[Dhan] Error updating universe_catalog batch: {exc}")
 
     log.info("[MarketCap] ✅ Enriched %d/%d stocks with fundamentals from Dhan (PE/PB/ROE/ROCE/EPS/Revenue/FCF/NPM)",
              enriched, len(all_catalog))
