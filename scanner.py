@@ -392,8 +392,24 @@ def run_full_scan(context: ScanContext = None, resume_from_scan_id: str = None):
         
     eligible_rows = db.get_eligible_universe(universe_version)
     if not eligible_rows:
-        log.error("[%s] EMERGENCY FALLBACK: Frozen universe %s has 0 members.", correlation_id[:12], universe_version)
-        raise RuntimeError(f"EMERGENCY FALLBACK: Frozen universe {universe_version} has 0 members.")
+        log.warning("[%s] Frozen universe %s has 0 members — falling back to universe_catalog EQ", correlation_id[:12], universe_version)
+        try:
+            fallback_rows = db.execute_db(
+                """SELECT symbol FROM universe_catalog 
+                   WHERE is_active = TRUE 
+                   AND instrument_type = 'EQ'
+                   ORDER BY symbol""",
+                fetch="all"
+            )
+            eligible_rows = [{"symbol": r["symbol"]} for r in fallback_rows] if fallback_rows else []
+            universe_version = "FALLBACK_EQ"
+            log.info("[%s] FALLBACK universe: %d EQ stocks", correlation_id[:12], len(eligible_rows))
+        except Exception as exc:
+            log.error("[%s] FALLBACK universe query failed: %s", correlation_id[:12], exc)
+            eligible_rows = []
+    if not eligible_rows:
+        log.error("[%s] No stocks available even after fallback. Scan aborted.", correlation_id[:12])
+        return
         
     all_symbols = [row["symbol"] for row in eligible_rows]
     total = len(all_symbols)
@@ -1148,11 +1164,24 @@ def _run_parallel_scan(context: ScanContext):
                 
             eligible_rows = db.get_eligible_universe(universe_version)
             if not eligible_rows:
-                log.error("[%s] EMERGENCY FALLBACK: Frozen universe %s has 0 members.", correlation_id[:12], universe_version)
-                scan_state.complete(success=False, error_message=f"EMERGENCY FALLBACK: Frozen universe {universe_version} has 0 members.")
-                raise RuntimeError(f"EMERGENCY FALLBACK: Frozen universe {universe_version} has 0 members.")
-                
-            eligible = [row["symbol"] for row in eligible_rows]
+                # Instead of crashing, fall back to universe_catalog EQ stocks
+                log.warning("[%s] Frozen universe %s has 0 members — falling back to universe_catalog EQ", correlation_id[:12], universe_version)
+                try:
+                    fallback_rows = db.execute_db(
+                        """SELECT symbol FROM universe_catalog 
+                           WHERE is_active = TRUE 
+                           AND instrument_type = 'EQ'
+                           ORDER BY symbol""",
+                        fetch="all"
+                    )
+                    eligible = [r["symbol"] for r in fallback_rows] if fallback_rows else []
+                    universe_version = "FALLBACK_EQ"
+                    log.info("[%s] FALLBACK universe: %d EQ stocks", correlation_id[:12], len(eligible))
+                except Exception as exc:
+                    log.error("[%s] FALLBACK universe query also failed: %s", correlation_id[:12], exc)
+                    eligible = []
+            else:
+                eligible = [row["symbol"] for row in eligible_rows]
 
     MIN_UNIVERSE_SIZE = 100  # Lowered from 500 — enrichment may still be in progress
     if not eligible or len(eligible) < MIN_UNIVERSE_SIZE:

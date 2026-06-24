@@ -6348,7 +6348,7 @@ def acquire_scan_lock_v2(scan_id: str, owner_id: str, ttl_seconds: int = 300) ->
             try:
                 hb_dt = datetime.strptime(str(hb)[:19], "%Y-%m-%d %H:%M:%S")
                 age = (datetime.now() - hb_dt).total_seconds()
-                if age < ttl_seconds:
+                if 0 <= age < ttl_seconds:
                     log.warning("[ScanLock] Lock held by %s (age=%ds < ttl=%ds), cannot acquire",
                                lock.get("owner_id"), int(age), ttl_seconds)
                     return False
