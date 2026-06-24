@@ -13,10 +13,24 @@ log = logging.getLogger("screener")
 _fetch_locks = {}
 _lock_guard = threading.Lock()
 
+# Global Rate Limiter to prevent 429 Exceeding Access Rate
+_api_rate_lock = threading.Lock()
+_last_api_call = 0.0
+
 # Failure Backoff Tracking
 _refresh_backoff = {}  # token -> timestamp
 BACKOFF_MINUTES = 7
 HIST_CACHE_TTL_HOURS = int(os.environ.get("HIST_CACHE_TTL_HOURS", "24"))
+
+def _wait_for_rate_limit():
+    """Ensure we never exceed ~2.8 requests per second globally."""
+    global _last_api_call
+    with _api_rate_lock:
+        now = time.time()
+        elapsed = now - _last_api_call
+        if elapsed < 0.35:
+            time.sleep(0.35 - elapsed)
+        _last_api_call = time.time()
 
 def _record_provider_stat(provider_name: str):
     """Record historical_calls for the provider to satisfy Provider Utilization Audit."""
@@ -72,6 +86,9 @@ def get_daily_history(symbol_token: str, days: int, exchange: str = "NSE", allow
         try:
             fromdate = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M")
             todate = datetime.now().strftime("%Y-%m-%d %H:%M")
+            
+            # Enforce global rate limit before hitting the provider API
+            _wait_for_rate_limit()
             
             # Fetch via Angel API
             data = provider.fetch_historical(symbol_token, exchange=exchange, fromdate=fromdate, todate=todate, interval="ONE_DAY")
