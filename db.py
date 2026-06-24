@@ -4523,7 +4523,7 @@ def lock_thesis(symbol: str, data: dict) -> bool:
             "SELECT thesis_status FROM recommendation_locks WHERE symbol = %s",
             (symbol.upper(),), fetch="one"
         )
-        if existing and existing[0] == 'ACTIVE':
+        if existing and existing.get('thesis_status') == 'ACTIVE':
             return False  # Already locked, don't overwrite
 
         trade = data.get("trade", {})
