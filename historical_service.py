@@ -23,13 +23,13 @@ BACKOFF_MINUTES = 7
 HIST_CACHE_TTL_HOURS = int(os.environ.get("HIST_CACHE_TTL_HOURS", "24"))
 
 def _wait_for_rate_limit():
-    """Ensure we never exceed ~2.8 requests per second globally."""
+    """Ensure we never exceed ~2.2 requests per second globally."""
     global _last_api_call
     with _api_rate_lock:
         now = time.time()
         elapsed = now - _last_api_call
-        if elapsed < 0.35:
-            time.sleep(0.35 - elapsed)
+        if elapsed < 0.45:
+            time.sleep(0.45 - elapsed)
         _last_api_call = time.time()
 
 def _record_provider_stat(provider_name: str):
