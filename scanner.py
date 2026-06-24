@@ -531,7 +531,7 @@ def run_full_scan(context: ScanContext = None, resume_from_scan_id: str = None):
 
                     sym_start_time = time.monotonic()
                     try:
-                        df = provider.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
+                        df = live_feed.fetch_historical(sym, days=DATA_LOOKBACK_DAYS)
                         api_duration = time.monotonic() - sym_start_time
                         
                         anal_start = time.monotonic()
