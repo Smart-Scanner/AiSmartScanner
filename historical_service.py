@@ -15,7 +15,7 @@ _lock_guard = threading.Lock()
 
 # Failure Backoff Tracking
 _refresh_backoff = {}  # token -> timestamp
-BACKOFF_MINUTES = 15
+BACKOFF_MINUTES = 7
 HIST_CACHE_TTL_HOURS = int(os.environ.get("HIST_CACHE_TTL_HOURS", "24"))
 
 def _record_provider_stat(provider_name: str):
