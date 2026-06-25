@@ -1372,6 +1372,7 @@ def _run_parallel_scan(context: ScanContext):
             if batch_results:
                 try:
                     db.save_results(batch_results,
+                                   scan_id=scan_id,
                                    meta={"last_scan": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"),
                                          "scan_id": scan_id,
                                          "universe_version": universe_version})
@@ -1443,6 +1444,7 @@ def _run_parallel_scan(context: ScanContext):
 
             # Final save (ensures all results are persisted)
             db.save_results(all_results,
+                           scan_id=scan_id,
                            meta={"last_scan": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"),
                                  "scan_id": scan_id,
                                  "universe_version": universe_version})
@@ -1465,7 +1467,12 @@ def _run_parallel_scan(context: ScanContext):
         failed_count = (failed_batches or {}).get("cnt", 0)
 
         if failed_count > 0:
-            final_status = "completed_with_errors"
+            # RC2-A: 'completed_with_errors' is NOT a registered terminal in
+            # VALID_TRANSITIONS, so transition_scan_state silently rejected it and the
+            # scan stuck in 'running' (current_scan_state never reset). Use the valid
+            # 'completed' terminal; the failed-batch count is preserved via final_reason
+            # and the scan_failed_batches meta below.
+            final_status = "completed"
             final_reason = f"parallel_scan_completed_with_{failed_count}_failed_batches"
             log.warning("[%s] Scan completed with %d FAILED_PERMANENTLY batches",
                         correlation_id[:12], failed_count)
@@ -1474,12 +1481,14 @@ def _run_parallel_scan(context: ScanContext):
             final_reason = "parallel_scan_completed"
 
         # Phase 0A: Mark terminal state
-        transition_scan_state(
+        # RC2-A: capture the transition result. A rejected/raced transition returns
+        # False; we must NOT then mark the scan terminal, otherwise the finally-block
+        # recovery is skipped and current_scan_state stays stuck in 'running'.
+        _reached_terminal = transition_scan_state(
             scan_id=scan_id, from_status="running", to_status=final_status,
             reason=final_reason, actor=ACTOR_SYSTEM,
             correlation_id=correlation_id,
         )
-        _reached_terminal = True
         db.set_meta("scan_failed_batches", str(failed_count))
         db.log_scan_event(scan_id, f"SCAN_{final_status.upper()}",
                           f"Parallel: {len(all_results)} results, {elapsed:.0f}s, "
@@ -1495,8 +1504,9 @@ def _run_parallel_scan(context: ScanContext):
         # Guaranteed terminal state
         if not _reached_terminal:
             log.warning("[%s] Finally: forcing FAILED state", correlation_id[:12])
+            recovered = False
             try:
-                transition_scan_state(
+                recovered = transition_scan_state(
                     scan_id=scan_id, from_status="running", to_status="failed",
                     reason="finally_block_recovery", actor=ACTOR_SYSTEM,
                     correlation_id=correlation_id,
@@ -1504,7 +1514,10 @@ def _run_parallel_scan(context: ScanContext):
                 )
             except Exception as e:
                 log.error("[%s] Finally block transition failed: %s", correlation_id[:12], e)
-                # Force sync UI so it doesn't get stuck in RUNNING
+            # RC2-A: if recovery did not cleanly reach a terminal — whether it raised OR
+            # returned False (rejected/raced) — force current_scan_state back to idle so
+            # the UI/lock never stays stuck in RUNNING.
+            if not recovered:
                 db.execute_db("UPDATE current_scan_state SET status='idle', phase='' WHERE id=1")
 
         # Cleanup
@@ -1604,7 +1617,7 @@ def _persistent_scan_worker(worker_id: str, scan_id: str,
             # Progressive publish every publish_interval stocks (Rule 8 intent)
             if len(batch_publish_buffer) >= publish_interval:
                 try:
-                    db.save_results(batch_publish_buffer)
+                    db.save_results(batch_publish_buffer, scan_id=scan_id)
                     log.info("[%s][%s] Progressive publish: %d results (batch %d, %d/%d)",
                              correlation_id[:12], worker_id, len(batch_publish_buffer),
                              batch_idx, sym_idx + 1, len(symbols))
@@ -1616,7 +1629,7 @@ def _persistent_scan_worker(worker_id: str, scan_id: str,
         # Publish remaining results in buffer
         if batch_publish_buffer:
             try:
-                db.save_results(batch_publish_buffer)
+                db.save_results(batch_publish_buffer, scan_id=scan_id)
             except Exception as exc:
                 log.warning("[%s][%s] Final batch publish failed: %s",
                             correlation_id[:12], worker_id, exc)
