@@ -7,6 +7,27 @@ original analyzer values), proving the RO can reproduce the legacy surface.
 """
 
 
+def project_result_copy(result: dict, scan_id: str, generated_at_utc: str) -> dict:
+    """Return a COPY of an analyzer result with the RO TRADE LEVELS overlaid (approach A, P2).
+
+    ONLY trade levels are projected (entry/SL/TG1-3/RR, top-level + the `trade` sub-dict);
+    scoring/grade/engines/conviction stay legacy (P2 scope = trade levels only). The original
+    dict is never mutated — the shadow build and live_feed.subscribe read originals. Rejected/
+    invalid ROs yield None levels (no valid trade), surfaced via `_ro_status`.
+    """
+    from .builder import build_recommendation_object
+    ro = build_recommendation_object(result, scan_id=scan_id, generated_at_utc=generated_at_utc)
+    leg = project_legacy(ro)
+    r2 = dict(result)
+    r2["trade"] = {**(result.get("trade") or {}), **leg["trade"]}
+    r2["target_price"] = leg["target_price"]
+    r2["stop_loss"] = leg["stop_loss"]
+    r2["risk_reward"] = leg["risk_reward"]
+    r2["_ro_status"] = ro["meta"]["status"]
+    r2["_ro_projected"] = True
+    return r2
+
+
 def project_legacy(ro: dict) -> dict:
     """Return legacy top-level + trade-dict fields derived purely from the RO."""
     trade = ro.get("trade") or {}

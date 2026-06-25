@@ -44,7 +44,10 @@ RISK_ATR_CEILING_PCT = 12.0   # risk gate: max ATR% of price
 def _flag(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default) == "1"
 
-RO_BUILD_ENABLED = _flag("RE2_RO_BUILD")   # P0 shadow build (default OFF)
+RO_BUILD_ENABLED = _flag("RE2_RO_BUILD")     # P0 shadow build (default OFF)
+RO_PROJECT_ENABLED = _flag("RE2_RO_PROJECT")  # P2 (approach A): project RO trade levels into
+                                              # scan_results_v2 so consumers show/act on RO
+                                              # values. Default OFF — flip ON for the cutover.
 
 # Public API
 from .trade_engine import build_trade          # noqa: E402

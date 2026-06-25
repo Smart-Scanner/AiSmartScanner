@@ -3740,6 +3740,18 @@ def save_results(results: list[dict], scan_id: str = 'legacy_fallback', meta: di
                 set_meta(k, v)
         return
 
+    # ── RE-3 P2 (approach A): project Recommendation Object trade levels into the persisted
+    # results so consumers show/act on RO values. Gated (RE2_RO_PROJECT, default OFF),
+    # exception-isolated (falls back to legacy values), trade-levels-only (scoring untouched).
+    # Single point — covers every save_results caller (active/deep/marketaux/custom/sequential).
+    try:
+        import recommendation_engine
+        if recommendation_engine.RO_PROJECT_ENABLED:
+            to_save = [recommendation_engine.projection.project_result_copy(r, scan_id, now)
+                       if r.get("symbol") else r for r in to_save]
+    except Exception as _proj_exc:
+        log.warning("[RE3-P2] RO projection skipped (non-fatal, writing legacy): %s", _proj_exc)
+
     # ── Thesis Locking Integration ──
     try:
         init_recommendation_locks()
