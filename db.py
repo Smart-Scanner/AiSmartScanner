@@ -4782,9 +4782,10 @@ def load_breakout_results(limit: int = 100) -> list[dict]:
 
     try:
         query = pg_query if is_postgresql() and not pg_cooldown_active() else sqlite_query
-        rows = execute_db(query, (get_latest_completed_scan_id(), limit), fetch="all")
+        scan_id = get_latest_completed_scan_id()
+        rows = execute_db(query, (scan_id, limit), fetch="all")
     except Exception:
-        rows = _execute_sqlite(sqlite_query, (limit,), "all")
+        rows = _execute_sqlite(sqlite_query, (get_latest_completed_scan_id(), limit), "all")
     results = []
     for row in (rows or []):
         try:
@@ -4804,9 +4805,10 @@ def load_breakout_results(limit: int = 100) -> list[dict]:
         fallback_sqlite = "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND (json_extract(data, '$.is_breakout') = 1 OR json_extract(data, '$.is_breakout') = 'true') AND slim_data IS NULL ORDER BY score DESC LIMIT ?"
         try:
             f_query = fallback_pg if is_postgresql() and not pg_cooldown_active() else fallback_sqlite
-            f_rows = execute_db(f_query, (remaining,), fetch="all")
+            scan_id = get_latest_completed_scan_id()
+            f_rows = execute_db(f_query, (scan_id, remaining), fetch="all")
         except Exception:
-            f_rows = _execute_sqlite(fallback_sqlite, (remaining,), "all")
+            f_rows = _execute_sqlite(fallback_sqlite, (get_latest_completed_scan_id(), remaining), "all")
         for row in (f_rows or []):
             try:
                 r = _parse_data_column(row.get("data"))
