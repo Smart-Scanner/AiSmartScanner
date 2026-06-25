@@ -778,8 +778,9 @@
             document.getElementById('sdT3').textContent = t3 > 0 ? fmtINR(t3) : '\u2014';
 
             // R:R — 1:X format, calculated from Entry/SL/Target1
-            // RE-3 P2: R:R is the server (Recommendation Object) risk_reward \u2014 no client-side calc.
-            const rr = s.risk_reward || 0;
+            // RE-3 P2: server (Recommendation Object) R:R only \u2014 resolver entry_rr (server-computed)
+            // preferred, then top-level risk_reward. No client-side calc.
+            const rr = (tgt.entry_rr && tgt.entry_rr.t1) || s.risk_reward || 0;
             const rrEl = document.getElementById('sdRR');
             if (rr > 0) {
                 rrEl.textContent = '1:' + rr.toFixed(1);
