@@ -1,11 +1,10 @@
-"""RE-3 P0 shadow build + reconciliation (RE-2A §3 P0 gate).
+"""RE-3 P1 shadow build + supersession + reconciliation (RE-2A §3 / O1-O3).
 
-Builds ROs for a set of analyzer results, validates the RE-1 invariants (fail-closed),
-optionally persists, and returns a reconciliation summary:
-  * counts (total / eligible / rejected + reject-reason histogram),
-  * invariant violations among ELIGIBLE ROs  (gate: must be 0),
-  * legacy divergence (RO-derived vs original analyzer levels — expected, since the RO
-    repairs the dual-system defects).
+Builds ROs for a set of analyzer results with the SUPERSESSION POLICY owned by the RO
+pipeline (O1, Option A): same-day DEEP supersedes FAST, and no duplicate ROs for the same
+logical recommendation. Persists via the batched upsert (O2). Emits full build
+instrumentation (O3): built / rejected / duplicate / missing_symbol / superseded /
+persisted (+ eligible / invariant_violations / legacy_divergence).
 """
 import logging
 
@@ -16,7 +15,7 @@ from .trade_engine import _f
 
 log = logging.getLogger("recommendation_engine.reconcile")
 
-_GEN_AT = "1970-01-01 00:00:00"  # deterministic placeholder; caller stamps real time post-build
+_GEN_AT = "1970-01-01 00:00:00"
 
 
 def _invariants_hold(ro) -> bool:
@@ -29,45 +28,76 @@ def _invariants_hold(ro) -> bool:
             and rr is not None and rr >= 1.5)
 
 
+def _dedup_prefer_deep(results):
+    """Collapse duplicate symbols, DEEP winning over FAST (in-batch supersession, O1).
+
+    Returns (by_symbol, missing_symbol_count, duplicate_count).
+    """
+    by_symbol = {}
+    missing = 0
+    duplicate = 0
+    for r in results or []:
+        sym = r.get("symbol")
+        if not sym:
+            missing += 1
+            continue
+        sym = sym.upper()
+        if sym in by_symbol:
+            duplicate += 1
+            prev_deep = (by_symbol[sym].get("scan_mode") == "deep")
+            new_deep = (r.get("scan_mode") == "deep")
+            if new_deep and not prev_deep:        # DEEP supersedes FAST in-batch
+                by_symbol[sym] = r
+        else:
+            by_symbol[sym] = r
+    return by_symbol, missing, duplicate
+
+
 def shadow_build(results, scan_id, persist=True, generated_at_utc=_GEN_AT):
     if persist:
         try:
             store.init_recommendation_store()
         except Exception as exc:
-            log.warning("[RE3-P0] store init failed (continuing in-memory): %s", exc)
+            log.warning("[RE3-P1] store init failed (continuing in-memory): %s", exc)
             persist = False
 
-    summary = {"scan_id": scan_id, "total": 0, "eligible": 0, "rejected": 0,
-               "invariant_violations": 0, "persisted": 0, "reject_reasons": {},
-               "legacy_divergence": {"target": 0, "stop_loss": 0, "rr": 0, "compared": 0},
-               "violation_examples": []}
+    m = {"scan_id": scan_id, "total": 0, "built": 0, "eligible": 0, "rejected": 0,
+         "duplicate": 0, "missing_symbol": 0, "superseded": 0, "persisted": 0,
+         "invariant_violations": 0,
+         "legacy_divergence": {"target": 0, "stop_loss": 0, "rr": 0, "compared": 0},
+         "violation_examples": []}
 
-    for result in results or []:
-        if not result.get("symbol"):
+    by_symbol, m["missing_symbol"], m["duplicate"] = _dedup_prefer_deep(results)
+    m["total"] = len(by_symbol)
+
+    # Cross-scan supersession authority: symbols with a same-day DEEP analysis (O1).
+    # Read-only + fail-open (empty set ⇒ in-batch supersession still applies); independent
+    # of persist so the policy is consistent in shadow and in-memory replay alike.
+    today = (generated_at_utc or _GEN_AT)[:10]
+    deep_today = store.get_deep_symbols_today(today)
+
+    built_ros = []
+    for sym, result in by_symbol.items():
+        mode = result.get("scan_mode", "fast")
+        if mode != "deep" and sym in deep_today:      # FAST superseded by same-day DEEP RO
+            m["superseded"] += 1
             continue
-        summary["total"] += 1
         ro = build_recommendation_object(result, scan_id=scan_id, generated_at_utc=generated_at_utc)
-        eligible = ro["eligibility"]["eligible"]
-
-        if eligible:
-            summary["eligible"] += 1
+        m["built"] += 1
+        if ro["eligibility"]["eligible"]:
+            m["eligible"] += 1
             if not _invariants_hold(ro):
-                summary["invariant_violations"] += 1
-                if len(summary["violation_examples"]) < 5:
-                    summary["violation_examples"].append(ro["meta"]["symbol"])
+                m["invariant_violations"] += 1
+                if len(m["violation_examples"]) < 5:
+                    m["violation_examples"].append(ro["meta"]["symbol"])
         else:
-            summary["rejected"] += 1
-            for g in ro["eligibility"]["gates"]:
-                if not g["pass"]:
-                    summary["reject_reasons"][g["id"]] = summary["reject_reasons"].get(g["id"], 0) + 1
+            m["rejected"] += 1
 
-        # reconciliation vs original analyzer values
-        leg = project_legacy(ro)
+        leg = project_legacy(ro)            # reconciliation vs original analyzer values
         ot = _f((result.get("trade") or {}).get("target1"))
         osl = _f((result.get("trade") or {}).get("stop_loss"))
         orr = _f(result.get("risk_reward"))
-        d = summary["legacy_divergence"]
-        d["compared"] += 1
+        d = m["legacy_divergence"]; d["compared"] += 1
         if ot is not None and leg["target_price"] is not None and abs(ot - leg["target_price"]) > 0.01:
             d["target"] += 1
         if osl is not None and leg["stop_loss"] is not None and abs(osl - leg["stop_loss"]) > 0.01:
@@ -75,14 +105,16 @@ def shadow_build(results, scan_id, persist=True, generated_at_utc=_GEN_AT):
         if orr is not None and leg["risk_reward"] is not None and abs(orr - leg["risk_reward"]) > 0.05:
             d["rr"] += 1
 
-        if persist:
-            try:
-                store.save_recommendation(ro)
-                summary["persisted"] += 1
-            except Exception as exc:
-                log.warning("[RE3-P0] persist failed for %s: %s", ro["meta"]["symbol"], exc)
+        built_ros.append(ro)
 
-    log.info("[RE3-P0] shadow build scan=%s total=%d eligible=%d rejected=%d invariant_violations=%d persisted=%d",
-             scan_id, summary["total"], summary["eligible"], summary["rejected"],
-             summary["invariant_violations"], summary["persisted"])
-    return summary
+    if persist:
+        try:
+            m["persisted"] = store.save_recommendations_batch(built_ros)
+        except Exception as exc:
+            log.warning("[RE3-P1] batch persist failed: %s", exc)
+
+    log.info("[RE3-P1] shadow build scan=%s total=%d built=%d eligible=%d rejected=%d "
+             "duplicate=%d missing_symbol=%d superseded=%d persisted=%d invariant_violations=%d",
+             scan_id, m["total"], m["built"], m["eligible"], m["rejected"], m["duplicate"],
+             m["missing_symbol"], m["superseded"], m["persisted"], m["invariant_violations"])
+    return m
