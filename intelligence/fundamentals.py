@@ -18,6 +18,7 @@ Public API (unchanged for backward compatibility):
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -41,6 +42,13 @@ _FUND_TTL      = 6 * 3600          # 6 hours in seconds
 _FUND_DISK_DIR = Path(__file__).parent.parent / "cache" / "fundamentals"
 _fund_cache: dict = {}             # symbol → {data, ts}
 _fund_lock  = threading.Lock()
+
+# ─── Dhan fundamentals read-path restoration flag (default OFF; rollback = unset) ──
+# When ON: scans read live Dhan fundamentals from universe_catalog (Level 4 — a local DB
+# read) even in cache_only mode, AND treat empty/poisoned Level-3 cache rows as a miss so
+# they cannot mask valid Dhan data. No scoring / HC / schema / Recommendation-Engine change.
+# Read at import; toggled via env var (restart applies it). Rollback = set to 0 / unset.
+FUND_DHAN_FALLBACK = os.environ.get("FUND_DHAN_FALLBACK", "0") == "1"
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -168,15 +176,25 @@ def get_fundamentals_yf(symbol: str, cache_only: bool = False) -> dict:
                 }
                 db_data.setdefault("sector", "Unknown")
                 db_data.setdefault("industry", "")
-                _store_fund_cache(sym, db_data)
-                return db_data
+                # FUND_DHAN_FALLBACK: don't let an empty/poisoned cache row mask live Dhan data.
+                # If the L3 row carries no usable fundamentals, treat it as a MISS and fall
+                # through to Level 4 (universe_catalog) instead of returning zeros.
+                _fs = db_data.get("fund_score")
+                _poisoned = (not _fs) and db_data.get("pe") is None \
+                    and db_data.get("roe") is None and db_data.get("market_cap") is None
+                if not (FUND_DHAN_FALLBACK and _poisoned):
+                    _store_fund_cache(sym, db_data)
+                    return db_data
+                # poisoned row + flag ON → fall through to Level 4 (universe_catalog)
     except Exception as exc:
         log.debug("fund DB cache miss for %s: %s", sym, exc)
 
     # ── Level 4: universe_catalog (Dhan fundamentals, replaces yfinance) ────────
-    if cache_only:
+    if cache_only and not FUND_DHAN_FALLBACK:
         log.debug("fund cache miss %s — cache_only=True, returning empty", sym)
         return _empty_fundamentals()
+    # FUND_DHAN_FALLBACK ON: proceed to Level 4 (universe_catalog) even under cache_only —
+    # it is a local DB read of already-ingested Dhan data, not an external/slow call.
 
     try:
         import db
