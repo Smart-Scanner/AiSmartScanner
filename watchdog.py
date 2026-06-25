@@ -126,27 +126,27 @@ def _recover_stale_scans(db):
         if not stale_scans:
             return
 
-        now = datetime.now()
+        now = db.utc_now()
         for row in stale_scans:
             scan_id = row.get("scan_id", "")
-            # Use last_heartbeat, fallback to start_time if not available yet
-            updated_at = row.get("last_heartbeat") or row.get("start_time")
-            if not updated_at:
+            # Frozen design (RC1/ADR-009): depend ONLY on last_heartbeat, compared on the
+            # SAME canonical UTC clock it is written with (db.utc_now). last_heartbeat is
+            # initialized at scan creation, so it is always present for current scans. Never
+            # fall back to start_time — comparing the watchdog clock against a start_time
+            # written by a different clock was the timezone defect this fix removes.
+            last_hb = row.get("last_heartbeat")
+            if not last_hb:
+                # Legacy row created before heartbeat-init — cannot age safely; leave to drain.
+                log.debug("[WATCHDOG] No last_heartbeat (legacy row); skipping %s", scan_id)
                 continue
 
             try:
-                if isinstance(updated_at, datetime):
-                    last_update = updated_at
-                else:
-                    last_update = datetime.fromisoformat(str(updated_at))
-                
-                # Make naive for timezone-safe subtraction
+                last_update = last_hb if isinstance(last_hb, datetime) else datetime.fromisoformat(str(last_hb))
                 if last_update.tzinfo is not None:
                     last_update = last_update.replace(tzinfo=None)
-                
-                age_min = (now - last_update).total_seconds() / 60
+                age_min = (now - last_update).total_seconds() / 60.0
             except (ValueError, TypeError) as exc:
-                log.error("[WATCHDOG] Age check parse error: %s", exc)
+                log.error("[WATCHDOG] Heartbeat parse error for %s: %s", scan_id, exc)
                 continue
 
             if age_min > SCAN_TIMEOUT_MIN:

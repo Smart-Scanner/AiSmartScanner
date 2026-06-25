@@ -23,7 +23,7 @@ import threading
 import sqlite3
 import time
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from metrics.timer import timed
 
 log = logging.getLogger("db")
@@ -2753,6 +2753,19 @@ def _is_valid_transition(from_status: str, to_status: str) -> bool:
 # an append-only row in scan_state_transitions.
 # ═══════════════════════════════════════════════════════════════
 
+def utc_now() -> datetime:
+    """Canonical scan-lifecycle clock (ADR-009): timezone-naive UTC, independent of the
+    container's local timezone. Single source of truth for the scan_runs lifecycle
+    timestamps (start_time / created_at / last_heartbeat / end_time), scan_state_transitions,
+    the watchdog staleness comparison, and duration — so they are never compared cross-zone."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def utc_now_str() -> str:
+    """Canonical UTC timestamp in the scan_runs storage string format."""
+    return utc_now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def save_state_transition(scan_id: str, old_state: str, new_state: str,
                           reason: str = "", actor: str = "system",
                           correlation_id: str = ""):
@@ -2765,7 +2778,7 @@ def save_state_transition(scan_id: str, old_state: str, new_state: str,
     detection of deleted, modified, or out-of-order rows.
     """
     import hashlib
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = utc_now_str()
     try:
         # Fetch the hash_chain of the most recent transition
         prev_row = execute_db(
@@ -2815,7 +2828,7 @@ def transition_scan_state(scan_id: str, from_status: str, to_status: str,
         )
         return False
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = utc_now_str()
 
     # Atomic conditional UPDATE on scan_runs
     # P0.1D: require_pg=True — state transitions must never degrade to SQLite
@@ -2838,7 +2851,8 @@ def transition_scan_state(scan_id: str, from_status: str, to_status: str,
             duration = 0.0
             if row and row.get("start_time"):
                 st = datetime.fromisoformat(str(row["start_time"]))
-                duration = (datetime.now() - st).total_seconds()
+                # Canonical UTC clock on both ends: duration = end_time - start_time
+                duration = max(0.0, (utc_now() - st).total_seconds())
             execute_db("""
                 UPDATE scan_runs SET end_time=?, duration_seconds=? WHERE scan_id=?
             """, (now, round(duration, 1), scan_id))
@@ -2914,7 +2928,7 @@ def acquire_scan_lock(scan_context) -> bool:
     Returns:
         True if lock acquired, False if rejected (scan already running).
     """
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = utc_now_str()
     scan_id = scan_context.scan_id
 
     # Atomic conditional UPDATE — this IS the lock
@@ -2942,16 +2956,16 @@ def acquire_scan_lock(scan_context) -> bool:
     import json as _json
     execute_db("""
         INSERT INTO scan_runs
-        (scan_id, mode, status, phase, start_time, candidate_count, created_at,
+        (scan_id, mode, status, phase, start_time, last_heartbeat, candidate_count, created_at,
          correlation_id, request_id, trigger_source, user_id,
          scanner_version, scoring_version, recommendation_version,
          config_snapshot, parent_scan_id)
-        VALUES (?, ?, 'running', 'init', ?, 0, ?,
+        VALUES (?, ?, 'running', 'init', ?, ?, 0, ?,
                 ?, ?, ?, ?,
                 ?, ?, ?,
                 ?, ?)
     """, (
-        scan_id, scan_context.trigger_source, now, now,
+        scan_id, scan_context.trigger_source, now, now, now,
         scan_context.correlation_id, scan_context.request_id,
         scan_context.trigger_source, scan_context.user_id,
         scan_context.scanner_version, scan_context.scoring_version,
@@ -3011,7 +3025,7 @@ def update_scan_progress(scan_id: str, **kwargs):
 
 def update_scan_heartbeat(scan_id: str):
     """Update last_heartbeat for scanner liveness tracking."""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = utc_now_str()
     execute_db("UPDATE scan_runs SET last_heartbeat=? WHERE scan_id=?", (now, scan_id))
     execute_db("UPDATE current_scan_state SET updated_at=? WHERE id=1", (now,))
 
@@ -3167,11 +3181,11 @@ class ScanState:
 
         # Legacy path (backward compat for auto-scan and other callers)
         scan_id = f"scan_{mode}_{int(time.time())}_{_uuid.uuid4().hex[:6]}"
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = utc_now_str()
         execute_db("""
-            INSERT INTO scan_runs (scan_id, mode, status, phase, start_time, candidate_count, created_at)
-            VALUES (?, ?, 'running', 'init', ?, ?, ?)
-        """, (scan_id, mode, now, total, now))
+            INSERT INTO scan_runs (scan_id, mode, status, phase, start_time, last_heartbeat, candidate_count, created_at)
+            VALUES (?, ?, 'running', 'init', ?, ?, ?, ?)
+        """, (scan_id, mode, now, now, total, now))
         execute_db("""
             UPDATE current_scan_state SET
                 scan_id=?, mode=?, status='running', phase='init',
