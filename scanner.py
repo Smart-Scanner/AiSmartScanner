@@ -1452,6 +1452,18 @@ def _run_parallel_scan(context: ScanContext):
             # Subscribe to live feed
             live_feed.subscribe([r["symbol"] for r in all_results if r.get("symbol")])
 
+            # RE-3 P0 (RE-2A §3): shadow-build canonical Recommendation Objects.
+            # Flag-gated (RE2_RO_BUILD, default OFF) and fully exception-isolated — this
+            # is a non-consuming SHADOW step and must NEVER affect the scan.
+            try:
+                import recommendation_engine
+                if recommendation_engine.RO_BUILD_ENABLED:
+                    summary = recommendation_engine.shadow_build_results(
+                        all_results, scan_id, persist=True)
+                    log.info("[RE3-P0] shadow RO build: %s", summary)
+            except Exception as _ro_exc:
+                log.warning("[RE3-P0] shadow RO build skipped (non-fatal): %s", _ro_exc)
+
         # Record performance metrics
         db.set_meta("scan_duration_s", str(round(elapsed)))
         db.set_meta("scan_stocks_per_min", str(round(len(all_results) / elapsed * 60) if elapsed > 0 else 0))
