@@ -774,13 +774,40 @@ def run_full_scan(context: ScanContext = None, resume_from_scan_id: str = None):
         # Replaces the legacy 11 AM batch snapshot — orders are now PENDING immediately
         try:
             from execution_engine import submit_order
+            import recommendation_engine as _re
+            # W4 (ADR-001/002/003): when RE2_RO_EXEC is ON, execution consumes the projected
+            # Recommendation Object trade levels (Display == Execution), and REJECTED ROs are
+            # fail-closed (not submitted). Flag default OFF → unchanged legacy behavior.
+            _exec_ro = _re.RO_EXEC_ENABLED
+            _exec_gen = None
+            if _exec_ro:
+                from datetime import datetime, timezone
+                _exec_gen = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             _exec_submitted = 0
+            _exec_failclosed = 0
             for r in results:
                 if r.get("high_conviction") or r.get("score", 0) >= 65:
-                    if submit_order(r, {"scan_id": scan_id, "correlation_id": correlation_id}):
+                    r_exec = r
+                    if _exec_ro and r.get("symbol"):
+                        try:
+                            _proj = _re.projection.project_result_copy(r, scan_id, _exec_gen)
+                            if _proj.get("_ro_status") == "REJECTED":
+                                _exec_failclosed += 1
+                                continue  # ADR-003 fail-closed: do not submit ineligible setups
+                            # expose RO entry band at top-level (submit_order reads top-level keys)
+                            _tr = _proj.get("trade") or {}
+                            if _tr.get("entry_low") is not None:
+                                _proj["entry_low"] = _tr["entry_low"]
+                            if _tr.get("entry_high") is not None:
+                                _proj["entry_high"] = _tr["entry_high"]
+                            r_exec = _proj
+                        except Exception:
+                            r_exec = r  # fail-safe → legacy levels, never break the scan
+                    if submit_order(r_exec, {"scan_id": scan_id, "correlation_id": correlation_id}):
                         _exec_submitted += 1
-            if _exec_submitted > 0:
-                log.info("[%s] Execution Engine: %d signals submitted as PENDING orders", correlation_id[:12], _exec_submitted)
+            if _exec_submitted > 0 or _exec_failclosed > 0:
+                log.info("[%s] Execution Engine: %d signals submitted as PENDING orders (ro_exec=%s, fail_closed=%d)",
+                         correlation_id[:12], _exec_submitted, _exec_ro, _exec_failclosed)
         except Exception as exc:
             log.warning("[%s] Execution Engine signal submission failed (non-fatal): %s", correlation_id[:12], exc)
 

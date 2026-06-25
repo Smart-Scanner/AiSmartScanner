@@ -48,6 +48,11 @@ RO_BUILD_ENABLED = _flag("RE2_RO_BUILD")     # P0 shadow build (default OFF)
 RO_PROJECT_ENABLED = _flag("RE2_RO_PROJECT")  # P2 (approach A): project RO trade levels into
                                               # scan_results_v2 so consumers show/act on RO
                                               # values. Default OFF — flip ON for the cutover.
+RO_EXEC_ENABLED = _flag("RE2_RO_EXEC")        # W4 (ADR-001/002/003): execution engine consumes
+                                              # the projected RO trade levels + honors RO
+                                              # eligibility (fail-closed). Default OFF — the
+                                              # dedicated execution cutover flag, independent
+                                              # of the display flag RE2_RO_PROJECT.
 
 # Public API
 from .trade_engine import build_trade          # noqa: E402
