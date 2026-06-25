@@ -1623,7 +1623,8 @@ def _run_init_db_logic():
                             cancelled_at TIMESTAMP,
                             expires_at TIMESTAMP,
                             research_snapshot_id INTEGER,
-                            correlation_id TEXT
+                            correlation_id TEXT,
+                            recommendation_id TEXT
                         );
                         CREATE INDEX IF NOT EXISTS idx_paper_orders_status ON paper_orders(status);
                         CREATE INDEX IF NOT EXISTS idx_paper_orders_symbol ON paper_orders(symbol);
@@ -1637,6 +1638,9 @@ def _run_init_db_logic():
                         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS fill_price REAL;",
                         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;",
                         "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS execution_latency_ms INTEGER;",
+                        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS scan_id TEXT;",
+                        "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS recommendation_id TEXT;",
+                        "ALTER TABLE paper_orders ADD COLUMN IF NOT EXISTS recommendation_id TEXT;",
                     ]:
                         try:
                             cur.execute(col_def)
@@ -2241,7 +2245,8 @@ def _init_sqlite():
                 cancelled_at TEXT,
                 expires_at TEXT,
                 research_snapshot_id INTEGER,
-                correlation_id TEXT
+                correlation_id TEXT,
+                recommendation_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_paper_orders_status ON paper_orders(status);
             CREATE INDEX IF NOT EXISTS idx_paper_orders_symbol ON paper_orders(symbol);
@@ -2254,6 +2259,9 @@ def _init_sqlite():
             "ALTER TABLE paper_trades ADD COLUMN fill_price REAL;",
             "ALTER TABLE paper_trades ADD COLUMN updated_at TEXT DEFAULT (datetime('now'));",
             "ALTER TABLE paper_trades ADD COLUMN execution_latency_ms INTEGER;",
+            "ALTER TABLE paper_trades ADD COLUMN scan_id TEXT;",
+            "ALTER TABLE paper_trades ADD COLUMN recommendation_id TEXT;",
+            "ALTER TABLE paper_orders ADD COLUMN recommendation_id TEXT;",
         ]:
             try:
                 conn.execute(col_sql)

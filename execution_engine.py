@@ -553,6 +553,23 @@ def _flush_extremes(db, buffer: dict):
             log.debug("[EXEC Writer] Extreme update failed for %s: %s", tid, exc)
 
 
+def _derive_recommendation_id(symbol, scan_id):
+    """ADR-001 (W4): RO content-address join key = sha1(symbol|scan_id|SCHEMA_VERSION)[:16].
+
+    Deterministic, dependency-light; mirrors recommendation_engine.builder._rec_id so
+    a paper order/trade can be joined back to its Recommendation Object. Returns None when
+    inputs are absent (legacy rows). Never raises into the writer.
+    """
+    if not symbol or not scan_id:
+        return None
+    try:
+        from recommendation_engine import SCHEMA_VERSION as _sv
+    except Exception:
+        _sv = "1.0.0"
+    import hashlib
+    return hashlib.sha1(f"{symbol}|{scan_id}|{_sv}".encode("utf-8")).hexdigest()[:16]
+
+
 def _db_create_order(db, data: dict):
     """Persist a new pending order to paper_orders table."""
     order = data["order"]
@@ -569,8 +586,8 @@ def _db_create_order(db, data: dict):
                 score_at_signal, grade_at_signal,
                 scan_id, signal_source,
                 signal_time, order_created_at, expires_at,
-                correlation_id
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                correlation_id, recommendation_id
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         _order_params = (
             order["symbol"],
@@ -590,6 +607,7 @@ def _db_create_order(db, data: dict):
             datetime.now(_IST).isoformat(),
             order.get("expires_at"),
             scan_context.get("correlation_id", ""),
+            _derive_recommendation_id(order.get("symbol"), scan_context.get("scan_id", "")),
         )
         db.execute_db(_order_query, _order_params)
         
@@ -678,8 +696,9 @@ def _db_fill_order(db, data: dict):
                 high_conviction, is_golden, signals_json, earnings_signals_json,
                 weight_version, confidence_score, entry_rank,
                 breadth_advances, breadth_declines, breadth_ratio,
-                status, entry_time, order_id, fill_price, execution_latency_ms
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                status, entry_time, order_id, fill_price, execution_latency_ms,
+                scan_id, recommendation_id
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         _trade_params = (
             order_data.get("symbol", stock_data.get("symbol", "")),
@@ -720,6 +739,11 @@ def _db_fill_order(db, data: dict):
             order_id,
             fill_price,
             exec_latency_ms,
+            order_data.get("scan_context", {}).get("scan_id", ""),
+            _derive_recommendation_id(
+                order_data.get("symbol", stock_data.get("symbol", "")),
+                order_data.get("scan_context", {}).get("scan_id", ""),
+            ),
         )
         db.execute_db(_trade_query, _trade_params)
         
