@@ -512,14 +512,12 @@
             if (ts === 'SL_HIT') tsBadge = '<span style="background:rgba(239,68,68,0.2);color:#ef4444;font-size:9px;font-weight:700;padding:2px 5px;border-radius:3px;margin-left:4px">SL HIT</span>';
             else if (ts === 'TG_HIT') tsBadge = '<span style="background:rgba(16,185,129,0.2);color:#10b981;font-size:9px;font-weight:700;padding:2px 5px;border-radius:3px;margin-left:4px">TG HIT</span>';
 
-            const midEntry = (entryLow > 0 && entryHigh > 0) ? (entryLow + entryHigh) / 2 : (s.price || 0);
-            const risk = midEntry - sl;
-            const reward = t1 - midEntry;
+            // RE-3 P2: display the server (Recommendation Object) risk_reward — no client-side calc.
+            const rr = s.risk_reward || 0;
             let rrText = '—', rrClass = 'tp-rr-bad';
-            if (risk > 0 && reward > 0) {
-                const ratio = reward / risk;
-                rrText = ratio >= 1 ? '1:' + ratio.toFixed(1) : (1 / ratio).toFixed(1) + ':1';
-                rrClass = ratio >= 2 ? 'tp-rr-good' : ratio >= 1 ? 'tp-rr-ok' : 'tp-rr-bad';
+            if (rr > 0) {
+                rrText = '1:' + rr.toFixed(1);
+                rrClass = rr >= 2 ? 'tp-rr-good' : rr >= 1 ? 'tp-rr-ok' : 'tp-rr-bad';
             }
 
             return `<tr onclick="window.location='/stock/${s.symbol}'" data-symbol="${s.symbol}">

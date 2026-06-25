@@ -76,21 +76,7 @@ async function loadHC() {
         document.getElementById('hcCount').style.display = 'block';
         document.getElementById('hcGrid').style.display = 'grid';
 
-        function calcEntryRR(ts) {
-            if (!ts) return null;
-            const entryLow = parseFloat(ts.entry_low);
-            const entryHigh = parseFloat(ts.entry_high);
-            const sl = parseFloat(ts.stop_loss);
-            const t1 = parseFloat(ts.target1);
-            
-            if (isNaN(entryLow) || isNaN(entryHigh) || isNaN(sl) || isNaN(t1)) return null;
-            
-            const entryMid = (entryLow + entryHigh) / 2.0;
-            const risk = entryMid - sl;
-            if (risk <= 0) return null;
-            
-            return parseFloat(((t1 - entryMid) / risk).toFixed(1));
-        }
+        // RE-3 P2: calcEntryRR removed — R:R is the server (Recommendation Object) risk_reward.
 
         const THESIS_RULES = [
             {
@@ -160,8 +146,8 @@ async function loadHC() {
             const cl = conf >= 80 ? 'high' : conf >= 50 ? 'medium' : 'low';
             const clLabel = conf >= 80 ? 'HIGH' : conf >= 50 ? 'MED' : 'LOW';
             const sc = (s.score||0) >= 80 ? 'excellent' : (s.score||0) >= 65 ? 'good' : (s.score||0) >= 50 ? 'average' : 'poor';
-            const entryRRVal = calcEntryRR(s.trade_summary);
-            const rr = entryRRVal !== null ? '1:' + entryRRVal.toFixed(1) : ((s.risk_reward||0) > 0 ? '1:' + (s.risk_reward||0).toFixed(1) : '--');
+            // RE-3 P2: server (Recommendation Object) risk_reward only — no client-side calc.
+            const rr = (s.risk_reward||0) > 0 ? '1:' + (s.risk_reward||0).toFixed(1) : '--';
             const target = s.target_price ? '\u20b9' + s.target_price.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
             const sl = s.stop_loss ? '\u20b9' + s.stop_loss.toLocaleString('en-IN', {maximumFractionDigits:0}) : '\u2014';
 

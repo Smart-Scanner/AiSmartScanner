@@ -778,15 +778,12 @@
             document.getElementById('sdT3').textContent = t3 > 0 ? fmtINR(t3) : '\u2014';
 
             // R:R — 1:X format, calculated from Entry/SL/Target1
-            const midEntry = (entryLow > 0 && entryHigh > 0) ? (entryLow + entryHigh) / 2 : price;
-            const risk = midEntry - sl;
-            const reward = t1 - midEntry;
+            // RE-3 P2: R:R is the server (Recommendation Object) risk_reward \u2014 no client-side calc.
+            const rr = s.risk_reward || 0;
             const rrEl = document.getElementById('sdRR');
-            if (risk > 0 && reward > 0) {
-                const ratio = reward / risk;
-                if (ratio >= 1) { rrEl.textContent = '1:' + ratio.toFixed(1); }
-                else { rrEl.textContent = (1 / ratio).toFixed(1) + ':1'; }
-                rrEl.style.color = ratio >= 2 ? 'var(--success)' : ratio >= 1 ? 'var(--warning)' : 'var(--danger)';
+            if (rr > 0) {
+                rrEl.textContent = '1:' + rr.toFixed(1);
+                rrEl.style.color = rr >= 2 ? 'var(--success)' : rr >= 1 ? 'var(--warning)' : 'var(--danger)';
             } else { rrEl.textContent = '\u2014'; }
 
             // Key Metrics
