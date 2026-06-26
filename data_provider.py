@@ -301,7 +301,17 @@ class ProviderManager:
 provider_manager = ProviderManager()
 provider_manager.discover_providers()
 if provider_manager.providers:
-    logging.info("Initializing %d data providers (login)...", len(provider_manager.providers))
-    provider_manager.initialize_all()
+    # STARTUP RELIABILITY: generateSession() (the Angel broker login) is a slow, occasionally
+    # HANGING network call. Running it synchronously here — at module-import time — blocks
+    # `import data_provider`, which blocks the entire app.py import, so gunicorn's worker never
+    # finishes booting. Railway's health check then times out and SIGTERMs the container, producing
+    # a restart loop where the app is never reachable ("Application not found" at the edge).
+    # Fix: defer the login to a background daemon thread so the WSGI app imports immediately and the
+    # web server is responsive at once. Functionality is preserved — _do_fetch() already guards
+    # `if not self.api` (returns None until the async login sets it) and the auto-scan loop waits a
+    # 60s startup grace, by which the login has long completed.
+    import threading as _threading
+    logging.info("Initializing %d data providers (login) in background...", len(provider_manager.providers))
+    _threading.Thread(target=provider_manager.initialize_all, daemon=True, name="provider-login").start()
 
 
