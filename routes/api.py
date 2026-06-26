@@ -998,6 +998,22 @@ def debug_health():
     })
 
 
+@api_bp.route("/api/operations")
+def operations():
+    """Phase 1.5 (Change Set D): public operations/health probe.
+
+    Flag-gated (PHASE15_OPS_ENDPOINT; OFF => 404, production-identical). No auth, NO secrets,
+    never cached (Cache-Control: no-store). Body is db.scan_health() (always HTTP 200 when enabled,
+    even on degraded DB — verdict carries the failure so monitoring is never blinded).
+    """
+    import os
+    if os.environ.get("PHASE15_OPS_ENDPOINT") != "1":
+        return jsonify({"error": "not_enabled"}), 404
+    resp = jsonify(db.scan_health())
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @api_bp.route("/api/debug/perf-baseline")
 @admin_required
 def perf_baseline():

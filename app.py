@@ -307,6 +307,14 @@ def _auto_scan_loop():
         try:
             now = time.time()
 
+            # Phase 1.5 (Change Set D): scheduler liveness heartbeat. Flag-gated —
+            # PHASE15_OPS_ENDPOINT OFF => no write (production-identical). Epoch seconds.
+            if os.environ.get("PHASE15_OPS_ENDPOINT") == "1":
+                try:
+                    db.set_meta("scheduler_heartbeat_ts", str(now))
+                except Exception:
+                    pass
+
             # Grace period: skip if manual scan ran < 5 min ago
             last_any = _get_ts("last_scan_ts")
             if last_any and (now - last_any) < _GRACE_PERIOD:
@@ -677,6 +685,13 @@ def _stability_audit_loop():
 
 threading.Thread(target=_auto_scan_loop, daemon=True, name="auto-scan").start()
 log.info("Auto-scan enabled: every %d minutes", AUTO_SCAN_INTERVAL)
+
+# Phase 1.5 (Change Set D / P2-1): cache-generation freshness correctness (Change Sets A/B)
+# assumes a SINGLE web worker (per-worker in-memory cache). Warn if scaled out.
+_wc = os.environ.get("WEB_CONCURRENCY")
+if _wc and _wc.isdigit() and int(_wc) > 1:
+    log.warning("[Phase1.5] WEB_CONCURRENCY=%s (>1) -- Phase 1.5 cache-generation correctness "
+                "assumes --workers 1; per-worker caches may diverge.", _wc)
 
 threading.Thread(target=_portfolio_scan_loop, daemon=True, name="portfolio-scan").start()
 log.info("Portfolio-scan enabled: every 30 minutes")

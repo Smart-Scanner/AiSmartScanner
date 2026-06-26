@@ -5175,6 +5175,133 @@ def get_latest_completed_scan_id() -> str:
         return row["scan_id"]
     return "scan_legacy_migration"
 
+
+def scan_health() -> dict:
+    """Phase 1.5 (Change Set D): read-only operations/health aggregator for /api/operations.
+
+    No secrets. Timestamps are server-local (UTC on Railway), consistent with how scan_runs
+    stores end_time. Fail-safe: any error yields a degraded 'red' verdict and never raises.
+    `cache_generation` == the canonical latest-completed scan_id (A-5 enriches it with counters).
+    """
+    import os as _os
+    from datetime import datetime as _dt
+
+    def _envi(name, default):
+        try:
+            return int(_os.environ.get(name, default))
+        except Exception:
+            return default
+
+    AGE_YELLOW   = _envi("OPS_AGE_YELLOW_S", 5400)   # 90 min (market hours)
+    AGE_RED      = _envi("OPS_AGE_RED_S", 9000)      # 150 min (market hours)
+    SCHED_YELLOW = _envi("OPS_SCHED_YELLOW_S", 120)
+    SCHED_RED    = _envi("OPS_SCHED_RED_S", 300)
+    BOOT_GRACE   = _envi("OPS_BOOT_GRACE_S", 120)
+
+    try:
+        now = _dt.now()
+        now_epoch = time.time()
+
+        def _age_str(ts_str):
+            if not ts_str:
+                return None
+            try:
+                return int((now - _dt.strptime(str(ts_str)[:19], "%Y-%m-%d %H:%M:%S")).total_seconds())
+            except Exception:
+                return None
+
+        # Canonical generation = latest COMPLETED scan
+        row = execute_db(
+            "SELECT scan_id, end_time FROM scan_runs WHERE LOWER(status)='completed' "
+            "ORDER BY end_time DESC LIMIT 1", fetch="one")
+        last_scan_id = row["scan_id"] if (row and row.get("scan_id")) else None
+        last_end = row["end_time"] if row else None
+        last_age = _age_str(last_end)
+
+        # Running scan?
+        srow = execute_db("SELECT status, scan_id FROM current_scan_state WHERE id=1", fetch="one")
+        scanning = bool(srow and str(srow.get("status")).lower() == "running")
+        running_scan_id = srow.get("scan_id") if (srow and scanning) else None
+
+        # Scheduler heartbeat (epoch; written by _auto_scan_loop only when PHASE15_OPS_ENDPOINT=1)
+        hb = get_meta("scheduler_heartbeat_ts")
+        sched_age = None
+        if hb:
+            try:
+                sched_age = int(now_epoch - float(hb))
+            except Exception:
+                sched_age = None
+
+        _e = get_meta("auto_scan_enabled")
+        auto_enabled = True if _e is None else (str(_e) == "1")
+
+        market_open = None
+        try:
+            import live_feed as _lf
+            market_open = bool(_lf.is_market_open())
+        except Exception:
+            market_open = None
+
+        # next_scheduled_scan: best-effort, only meaningful when enabled AND market open
+        next_scheduled = None
+        try:
+            if auto_enabled and market_open:
+                from config import AUTO_SCAN_INTERVAL as _ASI
+                lf = get_meta("last_fast_scan_ts")
+                if lf:
+                    next_scheduled = _dt.fromtimestamp(float(lf) + _ASI * 60).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            next_scheduled = None
+
+        # ── verdict (market-hours-aware) ──
+        reasons, verdict = [], "green"
+        if last_scan_id is None:
+            verdict = "red"; reasons.append("no_completed_scan")
+        if sched_age is not None and sched_age > BOOT_GRACE:
+            if sched_age >= SCHED_RED:
+                verdict = "red"; reasons.append("scheduler_stalled")
+            elif sched_age >= SCHED_YELLOW and verdict != "red":
+                verdict = "yellow"; reasons.append("scheduler_lagging")
+        if market_open and last_age is not None:
+            if last_age >= AGE_RED:
+                verdict = "red"; reasons.append("scan_age_red")
+            elif last_age >= AGE_YELLOW and verdict != "red":
+                verdict = "yellow"; reasons.append("scan_age_yellow")
+        if market_open and not auto_enabled:
+            if verdict == "green":
+                verdict = "yellow"
+            reasons.append("auto_scan_disabled")
+        if not reasons:
+            reasons.append("ok")
+
+        return {
+            "last_scan_id": last_scan_id,
+            "last_scan_end": last_end,
+            "last_scan_age_s": last_age,
+            "scan_status": "running" if scanning else "idle",
+            "running_scan_id": running_scan_id,
+            "cache_generation": last_scan_id,
+            "scheduler_heartbeat_age_s": sched_age,
+            "next_scheduled_scan": next_scheduled,
+            "market_open": market_open,
+            "auto_scan_enabled": auto_enabled,
+            "health_verdict": verdict,
+            "verdict_reasons": reasons,
+            "generated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    except Exception as exc:
+        # Observability must never 500/blind monitoring; degrade to red. No secrets in the payload.
+        log.warning("[ops] scan_health failed: %s", exc)
+        return {
+            "last_scan_id": None, "last_scan_end": None, "last_scan_age_s": None,
+            "scan_status": "unknown", "running_scan_id": None, "cache_generation": None,
+            "scheduler_heartbeat_age_s": None, "next_scheduled_scan": None,
+            "market_open": None, "auto_scan_enabled": None,
+            "health_verdict": "red", "verdict_reasons": ["health_check_failed"],
+            "generated_at": None,
+        }
+
+
 def get_all_symbols() -> list[str]:
     """Get all symbols in scan_results_v2 for the latest scan."""
     scan_id = get_latest_completed_scan_id()
