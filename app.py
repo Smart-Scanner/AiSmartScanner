@@ -394,6 +394,13 @@ def _auto_scan_loop():
                     last_fast = time.time()
                     db.set_meta("last_fast_scan_ts", str(last_fast))
                     db.set_meta("last_scan_ts", str(last_fast))
+                    # Change Set D fix: refresh the scheduler heartbeat right after the blocking
+                    # scan so the post-scan window isn't read as stalled (flag-gated).
+                    if os.environ.get("PHASE15_OPS_ENDPOINT") == "1":
+                        try:
+                            db.set_meta("scheduler_heartbeat_ts", str(last_fast))
+                        except Exception:
+                            pass
                     needs_deep = True
                 else:
                     log.debug("[AutoScan] Fast scan scheduled but AUTO_SCAN_ENABLED is 0. Skipping.")
@@ -409,6 +416,11 @@ def _auto_scan_loop():
                         last_fast = time.time()
                         db.set_meta("last_fast_scan_ts", str(last_fast))
                         db.set_meta("last_scan_ts", str(last_fast))
+                        if os.environ.get("PHASE15_OPS_ENDPOINT") == "1":   # Change Set D fix: post-scan heartbeat
+                            try:
+                                db.set_meta("scheduler_heartbeat_ts", str(last_fast))
+                            except Exception:
+                                pass
                     else:
                         log.debug("[AutoScan] Initial scan pending but AUTO_SCAN_ENABLED is 0. Skipping.")
 

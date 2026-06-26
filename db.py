@@ -5257,7 +5257,10 @@ def scan_health() -> dict:
         reasons, verdict = [], "green"
         if last_scan_id is None:
             verdict = "red"; reasons.append("no_completed_scan")
-        if sched_age is not None and sched_age > BOOT_GRACE:
+        # Change Set D fix: the heartbeat goes stale WHILE a scan runs (the single-threaded
+        # _auto_scan_loop blocks inside run_full_scan), so only flag the scheduler when it is
+        # NOT scanning — a busy scheduler is not a stalled one.
+        if sched_age is not None and sched_age > BOOT_GRACE and not scanning:
             if sched_age >= SCHED_RED:
                 verdict = "red"; reasons.append("scheduler_stalled")
             elif sched_age >= SCHED_YELLOW and verdict != "red":

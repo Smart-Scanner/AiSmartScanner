@@ -109,6 +109,23 @@ def test_scheduler_stalled_red():
     assert h["scheduler_heartbeat_age_s"] >= 600
 
 
+# ── stale heartbeat BUT scan running -> scheduler NOT flagged (Change Set D fix) ──
+def test_scheduler_stale_but_scanning_not_flagged():
+    _seed_completed(age_s=30)
+    db.set_meta("scheduler_heartbeat_ts", str(time.time() - 600))   # stale (would be red if idle)
+    _set_market(False)
+    try:
+        db.execute_db("INSERT OR IGNORE INTO current_scan_state (id, status, scan_id) VALUES (1,'running','s')")
+        db.execute_db("UPDATE current_scan_state SET status='running', scan_id='s' WHERE id=1")
+    except Exception:
+        pytest.skip("current_scan_state schema not insertable in isolation")
+    h = db.scan_health()
+    assert h["scan_status"] == "running"
+    assert "scheduler_stalled" not in h["verdict_reasons"]   # busy scheduler != stalled
+    assert "scheduler_lagging" not in h["verdict_reasons"]
+    assert h["health_verdict"] != "red"
+
+
 # ── scheduler within boot grace -> not flagged (green) ───────────────────────
 def test_scheduler_boot_grace_green():
     _seed_completed(age_s=30)
