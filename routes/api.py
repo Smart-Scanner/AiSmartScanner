@@ -275,7 +275,7 @@ def scan_status():
             "is_terminal": state.get("is_terminal", True),
             "progress": state.get("progress", 0),
             "total": state.get("total", 0),
-            "last_scan": db.get_meta("last_scan"),
+            "last_scan": db.get_last_scan_display(scan_id),  # canonical: scan_runs.end_time of latest completed
             "market_regime": db.get_meta("market_regime", "unknown"),
             "login_status": db.get_meta("angel_login_status", {}),
             "hc_count": hc_count,
@@ -357,10 +357,10 @@ def get_results():
 
     def _compute_results():
         timings["cache_hit"] = False
-        # Change Set A: pin the generation ONCE per compute (flag-gated) so every read below
-        # resolves the SAME scan generation (prevents intra-request generation mixing).
-        _ph15 = os.environ.get("PHASE15_CANONICAL_FRESHNESS") == "1"
-        _gen = db.get_latest_completed_scan_id() if _ph15 else None
+        # Freshness (canonical, graduated to default): pin the latest-completed scan ONCE per
+        # compute so every read below (results, count, last_scan display) resolves the SAME
+        # generation — no intra-request mixing, and the displayed timestamp matches its rows.
+        _gen = db.get_latest_completed_scan_id()
 
         t0 = time.perf_counter()
         results = db.load_results(5000, slim=True, scan_id=_gen)  # Load all results (no artificial cap)
@@ -376,7 +376,7 @@ def get_results():
         timings["universe"] = round((time.perf_counter() - t0) * 1000, 2)
         
         t0 = time.perf_counter()
-        last_scan = db.get_last_scan_display(_gen) if _ph15 else db.get_meta("last_scan")
+        last_scan = db.get_last_scan_display(_gen)
         nifty50_1m = db.get_meta("nifty50_1m", 0)
         summary = db.get_meta("summary", "")
         heatmap = db.get_meta("heatmap", [])
@@ -1547,9 +1547,9 @@ def get_dashboard():
 
     def _compute():
         timings["was_computed"] = True
-        # Change Set A: pin the generation ONCE per compute (flag-gated).
-        _ph15 = os.environ.get("PHASE15_CANONICAL_FRESHNESS") == "1"
-        _gen = db.get_latest_completed_scan_id() if _ph15 else None
+        # Freshness (canonical, graduated to default): pin the latest-completed scan ONCE per
+        # compute so results/count and the last_scan display all bind to the same generation.
+        _gen = db.get_latest_completed_scan_id()
 
         # Status
         t0 = time.perf_counter()
@@ -1583,7 +1583,7 @@ def get_dashboard():
             "scanning": state["scanning"],
             "progress": state["progress"],
             "total": state["total"],
-            "last_scan": (db.get_last_scan_display(_gen) if _ph15 else db.get_meta("last_scan")),
+            "last_scan": db.get_last_scan_display(_gen),
             "market_regime": db.get_meta("market_regime", "unknown"),
         }
 

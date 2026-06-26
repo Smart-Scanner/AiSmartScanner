@@ -3154,7 +3154,11 @@ def get_scan_status() -> dict:
         pass
 
     # Timestamps & Progress Age
-    last_successful_scan = get_meta("last_scan") or ""
+    # Freshness: bind to scan_runs.end_time of the latest completed scan (canonical),
+    # not the drift-prone scan_meta 'last_scan' (which is bumped mid-scan and never reset
+    # on failure). get_last_scan_display() self-resolves the latest completed scan and
+    # falls back to the legacy meta only when that row has no end_time.
+    last_successful_scan = get_last_scan_display() or ""
     last_attempt = row.get("updated_at", "")
     if not last_attempt:
         last_attempt = row.get("start_time", "")
@@ -4591,11 +4595,17 @@ def load_results(limit: int = 750, slim: bool = False, scan_id: str = None) -> l
 
 
 def get_stock_from_results(symbol: str) -> dict | None:
-    """Fetch a single stock's data from latest scan results by symbol."""
+    """Fetch a single stock's data from the LATEST COMPLETED scan results by symbol.
+
+    Freshness fix: bind to scan_results_v2 pinned to get_latest_completed_scan_id()
+    (mirrors get_stock). The prior query hit the deprecated scan_results table with no
+    scan binding and a raw %s placeholder that breaks on the SQLite fallback path.
+    """
     try:
+        scan_id = get_latest_completed_scan_id()
         row = execute_db(
-            "SELECT data FROM scan_results WHERE symbol = %s LIMIT 1",
-            (symbol.upper(),),
+            "SELECT data FROM scan_results_v2 WHERE symbol = ? AND scan_id = ? LIMIT 1",
+            (symbol.upper(), scan_id),
             fetch="one",
         )
         if row:
