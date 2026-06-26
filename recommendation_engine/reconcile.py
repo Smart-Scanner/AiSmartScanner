@@ -64,6 +64,7 @@ def shadow_build(results, scan_id, persist=True, generated_at_utc=_GEN_AT):
     m = {"scan_id": scan_id, "total": 0, "built": 0, "eligible": 0, "rejected": 0,
          "duplicate": 0, "missing_symbol": 0, "superseded": 0, "persisted": 0,
          "invariant_violations": 0,
+         "persist_attempted": False, "persist_ok": None, "persist_error": None,  # RC3-B recovery
          "legacy_divergence": {"target": 0, "stop_loss": 0, "rr": 0, "compared": 0},
          "violation_examples": []}
 
@@ -108,13 +109,23 @@ def shadow_build(results, scan_id, persist=True, generated_at_utc=_GEN_AT):
         built_ros.append(ro)
 
     if persist:
+        # RC3-B recovery: a persist failure is ISOLATED here (never propagated to the scan) and
+        # self-heals on the next scan — re-running the same built set is a no-op on already-
+        # persisted recommendation_ids (RC3-A append-only) and the batch is atomic (no partial
+        # write: RC3-B), so the store is always either the prior state or fully updated.
+        m["persist_attempted"] = True
         try:
             m["persisted"] = store.save_recommendations_batch(built_ros)
+            m["persist_ok"] = True
         except Exception as exc:
-            log.warning("[RE3-P1] batch persist failed: %s", exc)
+            m["persist_ok"] = False
+            m["persist_error"] = str(exc)[:200]
+            log.warning("[RE3-P1] batch persist failed (recoverable on next scan): %s", exc)
 
     log.info("[RE3-P1] shadow build scan=%s total=%d built=%d eligible=%d rejected=%d "
-             "duplicate=%d missing_symbol=%d superseded=%d persisted=%d invariant_violations=%d",
+             "duplicate=%d missing_symbol=%d superseded=%d persisted=%d invariant_violations=%d "
+             "persist_ok=%s",
              scan_id, m["total"], m["built"], m["eligible"], m["rejected"], m["duplicate"],
-             m["missing_symbol"], m["superseded"], m["persisted"], m["invariant_violations"])
+             m["missing_symbol"], m["superseded"], m["persisted"], m["invariant_violations"],
+             m["persist_ok"])
     return m

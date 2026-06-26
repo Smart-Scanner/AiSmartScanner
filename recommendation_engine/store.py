@@ -127,26 +127,39 @@ def save_recommendations_batch(ros: list) -> int:
 
     from psycopg2.extras import execute_values
     pool = db._get_pg_pool()
+    if pool is None:                       # PG configured but pool unavailable (cooldown) →
+        for ro in ros:                     # safe per-row fallback; never crash the (shadow) caller
+            save_recommendation(ro)
+        return len(ros)
+
     conn = pool.getconn()
+    broken = False                         # track whether the pooled conn is safe to reuse (RC3-B)
     try:
         conn.autocommit = False
-        cur = conn.cursor()
         rows = [_to_row(ro) for ro in ros]
         sql = (f"INSERT INTO recommendations ({','.join(_COLS)}) VALUES %s "
                f"ON CONFLICT(recommendation_id) DO NOTHING")
-        for i in range(0, len(rows), 200):
-            execute_values(cur, sql, rows[i:i + 200], page_size=200)
+        with conn.cursor() as cur:         # atomic: every chunk commits together, or none at all
+            for i in range(0, len(rows), 200):
+                execute_values(cur, sql, rows[i:i + 200], page_size=200)
         conn.commit()
         return len(rows)
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()                # no partial persist — roll the whole batch back
+        except Exception:
+            broken = True                  # rollback failed ⇒ conn unusable; discard, don't poison pool
         raise
     finally:
+        if not broken:
+            try:
+                conn.autocommit = True     # restore pooled-conn default before returning it
+            except Exception:
+                broken = True
         try:
-            conn.autocommit = True      # restore pooled-conn default before returning it
+            pool.putconn(conn, close=broken)   # close=True discards a broken conn instead of reusing it
         except Exception:
             pass
-        pool.putconn(conn)
 
 
 def get_deep_symbols_today(today: str) -> set:
