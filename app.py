@@ -347,6 +347,13 @@ def _auto_scan_loop():
                     log.warning("[DailyRefresh] Daily universe refresh failed: %s", exc)
 
             market_open = live_feed.is_market_open()
+            # TEMP validation hook (RC3-B closeout): SCHEDULER_FORCE_MARKET_OPEN=1 forces ONLY the
+            # market-open check to True so one full scheduler cycle can run off-hours for deployment
+            # validation. Default "0" ⇒ behaviour IDENTICAL to production. Every other gate (interval,
+            # is_scanning, auto_scan_enabled, run_full_scan) still executes through the normal path.
+            # Disable (set to 0) immediately after validation to restore NSE-hours behaviour.
+            if os.environ.get("SCHEDULER_FORCE_MARKET_OPEN", "0") == "1":
+                market_open = True
 
             # 1. NEWS REFRESH — first in market hours
             if market_open and (now - last_news >= _NEWS_INTERVAL):
