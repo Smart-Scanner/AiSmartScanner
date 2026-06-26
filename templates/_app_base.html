@@ -950,6 +950,12 @@
                 pill.className = 'mos-status-pill ' + (isLive ? 'live' : 'closed');
                 document.getElementById('marketStatusText').textContent = isLive ? 'LIVE' : 'CLOSED';
                 const lastScan = data.last_scan || '—';
+                // Change Set E-2: when a NEW scan completes (auto OR manual), refresh page data
+                // ONCE — version-driven (only on change, not every poll, so no excess load).
+                if (data.last_scan && window._mosLastSeenScan && data.last_scan !== window._mosLastSeenScan) {
+                    if (typeof loadPageData === 'function') { try { loadPageData(); } catch (e) {} }
+                }
+                if (data.last_scan) window._mosLastSeenScan = data.last_scan;
                 const scanParts = lastScan.split(' ');
                 const scanTime = scanParts.length >= 2 ? scanParts[1] : lastScan;
                 document.getElementById('headerLastScan').textContent = scanTime !== '—' ? scanTime : '—';

@@ -63,18 +63,117 @@ custom_scan_limiter = TTLCache(maxsize=1, ttl=10)  # 10s cooldown
 
 
 
+# ── Phase 1.5 Change Set A: scan-id-versioned cache generation ──────────────
+# Cache entries for SCAN-DERIVED caches are keyed by "{key}:{generation}" where the
+# generation is the latest-completed scan_id. A new scan advances the generation, so a
+# prior generation's entry is structurally a MISS (correctness no longer depends on
+# invalidate_* firing). The generation is a 5s in-memory micro-cache (PULL) over
+# db.get_latest_completed_scan_id(), also PUSH-updated by Change Set B on scan completion.
+# Flag-gated by PHASE15_CANONICAL_FRESHNESS (default OFF => legacy behaviour, byte-identical).
+# Only SCAN-DERIVED caches are versioned; event-derived caches (stats/news/search) keep their
+# existing TTL + event invalidation (e.g. invalidate_stats clearing dashboard_cache stays
+# authoritative for trade/stats freshness).
+_VERSIONED_NAMES = {"results", "sector", "dashboard"}
+_VERSION_TTL = int(os.getenv("SCAN_VERSION_MICROCACHE_TTL", "5"))
+_cache_gen = None
+_cache_gen_at = 0.0
+_gen_lock = threading.Lock()
+_compute_locks = {}                      # per-versioned-key single-flight locks
+_compute_locks_guard = threading.Lock()
+
+
+def _phase15_on() -> bool:
+    return os.environ.get("PHASE15_CANONICAL_FRESHNESS") == "1"
+
+
+def _reset_compute_locks():
+    with _compute_locks_guard:
+        _compute_locks.clear()
+
+
+def set_cache_generation(gen):
+    """PUSH the current scan generation (Change Set B calls this on scan completion)."""
+    global _cache_gen, _cache_gen_at
+    with _gen_lock:
+        if gen != _cache_gen:
+            _reset_compute_locks()
+            counters.inc("cache_generation_switch")
+        _cache_gen = gen
+        _cache_gen_at = time.time()
+
+
+def current_cache_generation():
+    """The current scan generation (latest completed scan_id), 5s micro-cached PULL. Fail-open
+    to the last-known generation if the resolver errors (functional-but-stale, never raises)."""
+    global _cache_gen, _cache_gen_at
+    now = time.time()
+    if _cache_gen is not None and (now - _cache_gen_at) < _VERSION_TTL:
+        return _cache_gen
+    try:
+        import db
+        gen = db.get_latest_completed_scan_id()
+        with _gen_lock:
+            if gen != _cache_gen:
+                _reset_compute_locks()
+                counters.inc("cache_generation_switch")
+            _cache_gen = gen
+            _cache_gen_at = now
+        return gen
+    except Exception:
+        counters.inc("generation_query_failed")
+        return _cache_gen
+
+
+def _get_compute_lock(vkey):
+    with _compute_locks_guard:
+        lk = _compute_locks.get(vkey)
+        if lk is None:
+            lk = threading.Lock()
+            _compute_locks[vkey] = lk
+        return lk
+
+
+def cache_generation_status() -> dict:
+    """Observability snapshot for /api/operations (Change Set A-5)."""
+    return {
+        "phase15_canonical": _phase15_on(),
+        "cache_generation": _cache_gen,
+        "cache_generation_age_s": round(time.time() - _cache_gen_at) if _cache_gen_at else None,
+        "cache_generation_switch": counters.get("cache_generation_switch") or 0,
+        "cache_generation_hits": counters.get("cache_generation_hits") or 0,
+        "generation_query_failed": counters.get("generation_query_failed") or 0,
+        "stale_generation_served": counters.get("stale_generation_served") or 0,  # 0 by design
+    }
+
+
 def get_or_compute(cache, key, compute_fn):
     """Return cached value or compute + store it.
 
-    Args:
-        cache: TTLCache instance
-        key: Cache key string
-        compute_fn: Callable that returns the value to cache
-
-    Returns:
-        The cached or freshly computed value.
+    Phase 1.5 (Change Set A): when PHASE15_CANONICAL_FRESHNESS=1 and `cache` is scan-derived,
+    entries are generation-keyed (f"{key}:{gen}") with single-flight on miss. Otherwise the
+    legacy path runs unchanged.
     """
     name = _cache_name(cache)
+
+    if _phase15_on() and name in _VERSIONED_NAMES:
+        gen = current_cache_generation()
+        vkey = f"{key}:{gen}"
+        if vkey in cache:
+            counters.inc(f"{name}_cache_hits")
+            counters.inc("cache_generation_hits")
+            return cache[vkey]
+        lk = _get_compute_lock(vkey)
+        with lk:                                 # single-flight: prevent a stampede on switch
+            if vkey in cache:                    # double-check after acquiring the lock
+                counters.inc(f"{name}_cache_hits")
+                return cache[vkey]
+            counters.inc(f"{name}_cache_misses")
+            log.debug("[CACHE MISS] %s/%s", name, vkey)
+            value = compute_fn()
+            cache[vkey] = value
+            return value
+
+    # Legacy path (flag OFF or event-derived cache) — byte-identical to pre-A behaviour.
     if key in cache:
         counters.inc(f"{name}_cache_hits")
         log.debug("[CACHE HIT] %s/%s", name, key)

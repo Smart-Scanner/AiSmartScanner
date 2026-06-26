@@ -1860,8 +1860,9 @@
     // Auto-trigger certification run on page load
     mcRunCertifications();
 
-    // Auto-refresh every 30s
-    setInterval(mcRefreshAll, 30000);
+    // Auto-refresh every 30s — Change Set E-3: removed a DUPLICATE setInterval here that
+    // double-polled; the single canonical interval is registered after the mcRefreshAll
+    // redefinition further below.
 
     // ── Shadow Mode Tracker ─────────────────────────────────────
     async function renderShadowTracker() {

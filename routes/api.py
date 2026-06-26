@@ -357,9 +357,13 @@ def get_results():
 
     def _compute_results():
         timings["cache_hit"] = False
-        
+        # Change Set A: pin the generation ONCE per compute (flag-gated) so every read below
+        # resolves the SAME scan generation (prevents intra-request generation mixing).
+        _ph15 = os.environ.get("PHASE15_CANONICAL_FRESHNESS") == "1"
+        _gen = db.get_latest_completed_scan_id() if _ph15 else None
+
         t0 = time.perf_counter()
-        results = db.load_results(5000, slim=True)  # Load all results (no artificial cap)
+        results = db.load_results(5000, slim=True, scan_id=_gen)  # Load all results (no artificial cap)
         timings["load_results"] = round((time.perf_counter() - t0) * 1000, 2)
         
         t0 = time.perf_counter()
@@ -372,13 +376,13 @@ def get_results():
         timings["universe"] = round((time.perf_counter() - t0) * 1000, 2)
         
         t0 = time.perf_counter()
-        last_scan = db.get_meta("last_scan")
+        last_scan = db.get_last_scan_display(_gen) if _ph15 else db.get_meta("last_scan")
         nifty50_1m = db.get_meta("nifty50_1m", 0)
         summary = db.get_meta("summary", "")
         heatmap = db.get_meta("heatmap", [])
         regime = db.get_meta("market_regime", "unknown")
         login_status = db.get_meta("angel_login_status", {})
-        total_analyzed = db.get_result_count()
+        total_analyzed = db.get_result_count(scan_id=_gen)
         timings["meta"] = round((time.perf_counter() - t0) * 1000, 2)
         
         return {
@@ -896,6 +900,13 @@ def add_custom_stock():
     cache_layer.custom_scan_limiter["last_scan"] = True  # auto-expires in 10s
 
     db.add_custom_stock(symbol, "NSE", body.get("note", ""))
+    if os.environ.get("PHASE15_CACHE_GAPS") == "1":   # C-2: a new custom stock changes the search universe
+        try:
+            cache_layer.search_cache.clear()
+            from metrics import counters as _c
+            _c.inc("search_cache_invalidations")
+        except Exception:
+            pass
     try:
         nifty_1m = db.get_meta("nifty50_1m", 0)
         regime = db.get_meta("market_regime", "unknown")
@@ -1009,8 +1020,31 @@ def operations():
     import os
     if os.environ.get("PHASE15_OPS_ENDPOINT") != "1":
         return jsonify({"error": "not_enabled"}), 404
-    resp = jsonify(db.scan_health())
+    data = db.scan_health()
+    try:                                   # Change Set A-5: cache-generation observability (additive)
+        import cache_layer
+        data["cache"] = cache_layer.cache_generation_status()
+    except Exception:
+        pass
+    resp = jsonify(data)
     resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+_PHASE15_FE_NOSTORE_PATHS = ("/api/status", "/api/live-prices", "/api/results", "/api/dashboard")
+
+
+@api_bp.after_request
+def _phase15_fe_no_store(resp):
+    """Change Set E-1: prevent browser/CDN caching of freshness-critical endpoints so the
+    frontend always sees the latest generation (flag-gated; OFF = no header change)."""
+    try:
+        import os
+        from flask import request
+        if os.environ.get("PHASE15_FE_SYNC") == "1" and request.path in _PHASE15_FE_NOSTORE_PATHS:
+            resp.headers["Cache-Control"] = "no-store"
+    except Exception:
+        pass
     return resp
 
 
@@ -1513,6 +1547,9 @@ def get_dashboard():
 
     def _compute():
         timings["was_computed"] = True
+        # Change Set A: pin the generation ONCE per compute (flag-gated).
+        _ph15 = os.environ.get("PHASE15_CANONICAL_FRESHNESS") == "1"
+        _gen = db.get_latest_completed_scan_id() if _ph15 else None
 
         # Status
         t0 = time.perf_counter()
@@ -1521,8 +1558,8 @@ def get_dashboard():
 
         # Results (pre-sorted by score)
         t0 = time.perf_counter()
-        results = db.load_results(DASHBOARD_MAX_RESULTS, slim=True)
-        total_analyzed = db.get_result_count()
+        results = db.load_results(DASHBOARD_MAX_RESULTS, slim=True, scan_id=_gen)
+        total_analyzed = db.get_result_count(scan_id=_gen)
         timings["load_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
         # Sector rotation
@@ -1546,7 +1583,7 @@ def get_dashboard():
             "scanning": state["scanning"],
             "progress": state["progress"],
             "total": state["total"],
-            "last_scan": db.get_meta("last_scan"),
+            "last_scan": (db.get_last_scan_display(_gen) if _ph15 else db.get_meta("last_scan")),
             "market_regime": db.get_meta("market_regime", "unknown"),
         }
 

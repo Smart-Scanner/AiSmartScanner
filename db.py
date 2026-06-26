@@ -2883,13 +2883,37 @@ def transition_scan_state(scan_id: str, from_status: str, to_status: str,
     if from_status != to_status and to_status in ("running", "completed", "failed", "cancelled"):
         try:
             import cache_layer
+            # Phase 1.5 completion ordering (Change Sets B + C), all flag-gated (OFF = identical):
+            #   publish barrier (status committed above) -> version switch -> targeted detail
+            #   cleanup -> invalidate_all. The version switch (B) is the correctness anchor, so
+            #   invalidate_all becomes eager cleanup whose failure is observable, not silent.
+            if to_status == "completed" and os.environ.get("PHASE15_ATOMIC_FINALIZE") == "1":
+                try:
+                    cache_layer.set_cache_generation(scan_id)        # B-1: PUSH the new generation
+                except Exception:
+                    pass
+            if to_status == "completed" and os.environ.get("PHASE15_CACHE_GAPS") == "1":
+                try:
+                    cache_layer.cleanup_detail_cache()               # C-1: detail-cache parity (parallel path)
+                except Exception:
+                    pass
             cache_layer.invalidate_all()
             log.info("[CACHE_INVALIDATED] Scan state %s -> %s | scan=%s",
                      from_status, to_status, scan_id[:20])
             if to_status == "completed":
                 log.info("[SCAN_COMPLETED] scan_id=%s", scan_id[:20])
         except Exception as exc:
-            log.warning("[CACHE_INVALIDATED] Cache invalidation failed (non-fatal): %s", exc)
+            # B-2: observable invalidation (no longer silently swallowed) when atomic-finalize is on.
+            if os.environ.get("PHASE15_ATOMIC_FINALIZE") == "1":
+                try:
+                    from metrics import counters as _c
+                    _c.inc("cache_invalidate_failed")
+                except Exception:
+                    pass
+                log.error("[CACHE_INVALIDATED] invalidation FAILED (Phase 1.5; correctness preserved "
+                          "by versioning): %s", exc)
+            else:
+                log.warning("[CACHE_INVALIDATED] Cache invalidation failed (non-fatal): %s", exc)
 
     return True
 
@@ -4477,15 +4501,20 @@ def _parse_data_column(val):
             return {}
     return {}
 
-def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
+def load_results(limit: int = 750, slim: bool = False, scan_id: str = None) -> list[dict]:
     """Load scan results from DB, ordered by score.
 
     Sprint 1 Phase 1: When slim=True, query ONLY slim_data column (not both).
     This avoids transferring the full data JSONB (~6KB/row) from PG when
     slim_data (~600B/row) is sufficient. Falls back to data column only
     for rows where slim_data IS NULL.
+
+    Change Set A: `scan_id` pins the generation ONCE (also resolved once internally now,
+    not per-query) so a caller can thread a single generation across load_results +
+    get_result_count + get_last_scan_display, preventing intra-request generation mixing.
     """
     global _DB_USE_SLIM
+    _sid = scan_id or get_latest_completed_scan_id()
     use_slim = slim and is_slim_results_enabled() and _DB_USE_SLIM
     t0 = time.perf_counter()
     rows = []
@@ -4496,7 +4525,7 @@ def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
         try:
             rows = execute_db(
                 "SELECT slim_data FROM scan_results_v2 WHERE scan_id = ? AND slim_data IS NOT NULL ORDER BY score DESC LIMIT ?",
-                (get_latest_completed_scan_id(), limit,), fetch="all"
+                (_sid, limit,), fetch="all"
             )
             slim_count = len(rows) if rows else 0
             # If we got fewer than limit, fill remaining from data column
@@ -4504,7 +4533,7 @@ def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
                 remaining = limit - slim_count
                 fallback_rows = execute_db(
                     "SELECT data FROM scan_results_v2 WHERE scan_id = ? AND slim_data IS NULL ORDER BY score DESC LIMIT ?",
-                    (get_latest_completed_scan_id(), remaining,), fetch="all"
+                    (_sid, remaining,), fetch="all"
                 )
         except Exception as e:
             # If slim_data column does not exist (e.g. init_db failed or hasn't run)
@@ -4514,12 +4543,12 @@ def load_results(limit: int = 750, slim: bool = False) -> list[dict]:
             rows = []
             fallback_rows = execute_db(
                 "SELECT data FROM scan_results_v2 WHERE scan_id = ? ORDER BY score DESC LIMIT ?",
-                (get_latest_completed_scan_id(), limit,), fetch="all"
+                (_sid, limit,), fetch="all"
             )
     else:
         fallback_rows = execute_db(
             "SELECT data FROM scan_results_v2 WHERE scan_id = ? ORDER BY score DESC LIMIT ?",
-            (get_latest_completed_scan_id(), limit,), fetch="all"
+            (_sid, limit,), fetch="all"
         )
     t_query = round((time.perf_counter() - t0) * 1000, 2)
 
@@ -4866,9 +4895,26 @@ def load_high_conviction_results(limit: int = 100) -> list[dict]:
                 pass
     return results
 
-def get_result_count() -> int:
-    scan_id = get_latest_completed_scan_id()
-    return execute_db("SELECT COUNT(*) as cnt FROM scan_results_v2 WHERE scan_id = ?", (scan_id,), fetch="count")
+def get_result_count(scan_id: str = None) -> int:
+    sid = scan_id or get_latest_completed_scan_id()   # Change Set A: accept a pinned generation
+    return execute_db("SELECT COUNT(*) as cnt FROM scan_results_v2 WHERE scan_id = ?", (sid,), fetch="count")
+
+
+def get_last_scan_display(scan_id: str = None):
+    """Change Set A (canonical freshness): the authoritative 'last scan' display value, derived
+    from scan_runs.end_time of the (optionally pinned) completed scan — the single source of
+    truth, replacing the drift-prone scan_meta 'last_scan'. Falls back to the legacy meta if the
+    scan row has no end_time. Format matches the existing 'YYYY-MM-DD HH:MM:SS' contract.
+    """
+    try:
+        sid = scan_id or get_latest_completed_scan_id()
+        row = execute_db("SELECT end_time FROM scan_runs WHERE scan_id = ?", (sid,), fetch="one")
+        if row and row.get("end_time"):
+            et = row["end_time"]
+            return et.strftime("%Y-%m-%d %H:%M:%S") if not isinstance(et, str) else str(et)[:19]
+    except Exception:
+        pass
+    return get_meta("last_scan")
 
 def get_meta(key: str, default=None):
     """Get a metadata value. Served from memory cache when fresh."""

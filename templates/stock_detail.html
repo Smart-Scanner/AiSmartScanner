@@ -703,7 +703,7 @@
             <span class="sector-tag" id="stockSector">--</span>
             <span class="hc-badge" id="hcBadge">HC</span>
             <span class="topbar-regime regime-unknown" id="regimeBadge">REGIME: --</span>
-            <a href="https://www.tradingview.com/chart/?symbol=NSE:{{ symbol }}" target="_blank" rel="noopener"
+            <a href="https://www.tradingview.com/chart/?symbol=NSE:{{ symbol | urlencode }}" target="_blank" rel="noopener"
                style="margin-left:10px;padding:4px 10px;background:#2196F3;color:#fff;border-radius:4px;font-size:11px;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:4px">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 TradingView
